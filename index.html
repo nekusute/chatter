@@ -1,0 +1,1622 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#4f46e5" />
+  <title>Chatter</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%234f46e5'/%3E%3Cpath d='M7 10h10M7 14h6' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
+
+  <!-- Tailwind CSS (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Inter"', '"Hiragino Sans"', '"Hiragino Kaku Gothic ProN"', '"Noto Sans JP"', '"Yu Gothic UI"', 'Meiryo', 'system-ui', 'sans-serif'],
+          },
+          boxShadow: {
+            soft: '0 20px 50px -20px rgba(30, 41, 59, 0.25)',
+          },
+        },
+      },
+    };
+  </script>
+
+  <!-- 素の CSS（Tailwind の読み込み前から効かせたいもの・アニメーション） -->
+  <style>
+    html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+    body { -webkit-tap-highlight-color: transparent; }
+    [hidden] { display: none !important; }
+
+    /* スマホのアドレスバー・キーボードを考慮した高さ */
+    .app-h { height: 100vh; height: 100dvh; }
+    .has-vv .app-h { height: var(--app-h); }
+    .safe-bottom { padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); }
+
+    /* スマホ: リスト ⇔ チャット の切り替え */
+    @media (max-width: 767.98px) {
+      #app[data-view="list"] #chat-pane { display: none; }
+      #app[data-view="chat"] #sidebar { display: none; }
+    }
+
+    .scroll-thin { scrollbar-width: thin; scrollbar-color: rgb(203 213 225) transparent; }
+    .scroll-thin::-webkit-scrollbar { width: 6px; }
+    .scroll-thin::-webkit-scrollbar-thumb { background: rgb(203 213 225); border-radius: 9999px; }
+
+    .chat-bg {
+      background-color: #f5f6fb;
+      background-image: radial-gradient(rgba(99, 102, 241, 0.07) 1px, transparent 1px);
+      background-size: 18px 18px;
+    }
+
+    @keyframes msgIn { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+    .msg-in { animation: msgIn .22s ease-out both; }
+
+    @keyframes sheetIn { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: none; } }
+    @keyframes popIn { from { opacity: 0; transform: translateY(8px) scale(.96); } to { opacity: 1; transform: none; } }
+    .modal-panel { animation: sheetIn .25s cubic-bezier(.2, .8, .2, 1) both; }
+    @media (min-width: 640px) { .modal-panel { animation-name: popIn; } }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .fade-in { animation: fadeIn .2s ease-out both; }
+
+    @keyframes toastIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+    .toast { animation: toastIn .25s ease-out both; transition: opacity .25s, transform .25s; }
+    .toast-out { opacity: 0; transform: translateY(-10px); }
+
+    @keyframes float { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(40px, 30px) scale(1.08); } }
+    .blob { position: absolute; border-radius: 9999px; filter: blur(70px); animation: float 18s ease-in-out infinite; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+
+  <!-- Tailwind の @apply を使った共通コンポーネント -->
+  <style type="text/tailwindcss">
+    @layer components {
+      .btn-primary {
+        @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 font-semibold text-white
+               bg-gradient-to-r from-indigo-600 to-violet-600 shadow-lg shadow-indigo-500/25 transition
+               hover:from-indigo-500 hover:to-violet-500 active:scale-[.98]
+               disabled:opacity-60 disabled:pointer-events-none;
+      }
+      .btn-secondary {
+        @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 font-semibold text-slate-700
+               bg-slate-100 transition hover:bg-slate-200 active:scale-[.98] disabled:opacity-60;
+      }
+      .btn-danger {
+        @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 font-semibold text-white
+               bg-rose-600 shadow-lg shadow-rose-500/25 transition hover:bg-rose-500 active:scale-[.98] disabled:opacity-60;
+      }
+      .btn-danger-ghost {
+        @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 font-semibold text-rose-600
+               bg-rose-50 transition hover:bg-rose-100 active:scale-[.98];
+      }
+      .btn-chip {
+        @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-sm font-semibold transition active:scale-[.98];
+      }
+      .icon-btn {
+        @apply inline-grid place-items-center w-10 h-10 rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 active:scale-95;
+      }
+      .input {
+        @apply w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base text-slate-800 outline-none transition
+               placeholder:text-slate-400 focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/15;
+      }
+      .label { @apply block text-sm font-semibold text-slate-700 mb-1.5; }
+      .form-error { @apply text-sm text-rose-600 bg-rose-50 rounded-xl px-3 py-2 leading-relaxed; }
+      .tab-btn {
+        @apply relative flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold text-slate-500 transition hover:text-slate-700;
+      }
+      .tab-btn.is-active { @apply bg-white text-indigo-600 shadow-sm; }
+      .list-row {
+        @apply w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left transition cursor-pointer hover:bg-slate-50
+               focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400;
+      }
+      .list-row.is-active { @apply bg-indigo-50 hover:bg-indigo-50; }
+      .bubble {
+        @apply max-w-[78%] sm:max-w-[70%] px-3.5 py-2 text-[15px] leading-relaxed whitespace-pre-wrap break-words shadow-sm;
+        overflow-wrap: anywhere;
+      }
+      .bubble-mine { @apply rounded-2xl rounded-br-md bg-gradient-to-br from-indigo-500 to-violet-500 text-white; }
+      .bubble-other { @apply rounded-2xl rounded-bl-md bg-white text-slate-800 ring-1 ring-slate-200/70; }
+      .msg-time { @apply text-[10px] text-slate-400 mb-0.5 shrink-0 tabular-nums; }
+    }
+  </style>
+</head>
+
+<body class="bg-slate-100 text-slate-800 antialiased">
+  <!-- Tailwind CDN は DOM に現れたクラスだけ CSS を生成するため、JS で後から使う部品クラスを先に生成させておく -->
+  <div hidden class="bubble bubble-mine bubble-other msg-time list-row is-active btn-chip btn-secondary btn-danger btn-danger-ghost icon-btn"></div>
+
+  <!-- ===================== 初期設定が未完了 ===================== -->
+  <section id="screen-setup" class="screen app-h overflow-y-auto" hidden>
+    <div class="min-h-full flex items-center justify-center p-4">
+      <div class="w-full max-w-lg bg-white rounded-3xl shadow-soft p-6 sm:p-8">
+        <div class="flex items-center gap-3 mb-6">
+          <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white grid place-items-center shadow-lg shadow-indigo-500/30" data-icon="cog" data-icon-class="w-6 h-6"></div>
+          <div>
+            <h1 class="text-xl font-bold text-slate-900">Firebase の設定が必要です</h1>
+            <p class="text-sm text-slate-500">あと少しで使えるようになります</p>
+          </div>
+        </div>
+        <ol class="space-y-2.5 text-sm text-slate-600 list-decimal pl-5 leading-relaxed">
+          <li>Firebase コンソールでプロジェクトを作成し、ウェブアプリを登録する</li>
+          <li>Authentication で <b class="text-slate-800">匿名</b> ログインを有効にする</li>
+          <li>Firestore Database を作成し、README のセキュリティルールを公開する</li>
+          <li>この HTML 内の <code class="px-1.5 py-0.5 rounded bg-slate-100 text-indigo-600">firebaseConfig</code> を自分の値に書き換える</li>
+        </ol>
+        <pre class="mt-6 text-xs leading-relaxed bg-slate-900 text-slate-100 rounded-2xl p-4 overflow-x-auto"><span class="text-slate-500">// index.html の &lt;script type="module"&gt; 冒頭</span>
+const firebaseConfig = {
+  apiKey: <span class="text-amber-300">"YOUR_API_KEY"</span>,
+  authDomain: <span class="text-amber-300">"YOUR_PROJECT_ID.firebaseapp.com"</span>,
+  projectId: <span class="text-amber-300">"YOUR_PROJECT_ID"</span>,
+  ...
+};</pre>
+        <p class="mt-4 text-xs text-slate-400">詳しい手順は README.md を参照してください。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== エラー ===================== -->
+  <section id="screen-error" class="screen app-h overflow-y-auto" hidden>
+    <div class="min-h-full flex items-center justify-center p-4">
+      <div class="w-full max-w-md bg-white rounded-3xl shadow-soft p-8 text-center">
+        <div class="mx-auto w-14 h-14 rounded-2xl bg-rose-100 text-rose-600 grid place-items-center mb-4" data-icon="alert" data-icon-class="w-7 h-7"></div>
+        <h1 class="text-lg font-bold text-slate-900">接続できませんでした</h1>
+        <p id="error-message" class="text-sm text-slate-600 mt-2 leading-relaxed break-words"></p>
+        <button type="button" onclick="location.reload()" class="btn-primary w-full mt-6">再読み込み</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 読み込み中 ===================== -->
+  <section id="screen-loading" class="screen app-h flex items-center justify-center">
+    <div class="flex flex-col items-center gap-4 text-slate-500">
+      <div class="w-10 h-10 rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin"></div>
+      <p class="text-sm">接続中…</p>
+    </div>
+  </section>
+
+  <!-- ===================== ログイン ===================== -->
+  <section id="screen-login" class="screen app-h relative overflow-hidden bg-gradient-to-br from-indigo-600 via-violet-600 to-fuchsia-500" hidden>
+    <div class="blob w-80 h-80 bg-sky-400/40 -top-20 -left-20"></div>
+    <div class="blob w-96 h-96 bg-fuchsia-300/40 -bottom-28 -right-24" style="animation-delay: -9s"></div>
+    <div class="relative h-full overflow-y-auto">
+      <div class="min-h-full flex flex-col items-center justify-center px-4 py-10">
+        <div class="text-center text-white mb-8">
+          <div class="mx-auto w-16 h-16 rounded-2xl bg-white/15 backdrop-blur ring-1 ring-white/30 grid place-items-center mb-4 shadow-xl" data-icon="chat" data-icon-class="w-8 h-8"></div>
+          <h1 class="text-3xl font-bold tracking-tight">Chatter</h1>
+          <p class="text-white/80 mt-2 text-sm">ブラウザだけで動くリアルタイムチャット</p>
+        </div>
+
+        <div class="w-full max-w-md bg-white rounded-3xl shadow-2xl shadow-indigo-900/30 p-6 sm:p-8">
+          <div class="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-2xl mb-6">
+            <button type="button" data-login-tab="login" class="tab-btn is-active">ログイン</button>
+            <button type="button" data-login-tab="signup" class="tab-btn">新規登録</button>
+          </div>
+
+          <!-- 既存IDでログイン -->
+          <form id="form-login" class="space-y-4" novalidate>
+            <div>
+              <label for="login-id" class="label">ユーザーID</label>
+              <div class="relative">
+                <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">@</span>
+                <input id="login-id" name="id" class="input pl-9" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="your-id" required />
+              </div>
+            </div>
+            <p class="form-error" hidden></p>
+            <button type="submit" class="btn-primary w-full"><span data-icon="login"></span>ログイン</button>
+            <p class="text-center text-sm text-slate-500">はじめての方は
+              <button type="button" data-login-tab="signup" class="text-indigo-600 font-semibold hover:underline">新規登録</button>
+            </p>
+          </form>
+
+          <!-- 新規作成（ID自動発行 or 任意指定） -->
+          <form id="form-signup" class="space-y-4" novalidate hidden>
+            <div>
+              <label for="signup-name" class="label">表示名 <span class="text-slate-400 font-normal">（あとで変更できます）</span></label>
+              <input id="signup-name" name="name" class="input" maxlength="30" autocomplete="nickname" placeholder="例: たろう" />
+            </div>
+            <label class="flex items-center gap-2.5 text-sm text-slate-600 cursor-pointer select-none">
+              <input type="checkbox" id="signup-custom" name="custom" class="w-4 h-4 rounded accent-indigo-600" />
+              ユーザーIDを自分で決める
+            </label>
+            <div id="signup-id-wrap" hidden>
+              <div class="relative">
+                <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">@</span>
+                <input id="signup-id" name="id" class="input pl-9" maxlength="20" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="3〜20文字の英小文字・数字・_ -" />
+              </div>
+            </div>
+            <div id="signup-hint" class="rounded-2xl bg-indigo-50 text-indigo-700 text-xs leading-relaxed px-4 py-3">
+              ユーザーIDは自動で発行されます。発行されたIDを使えば、別の端末からも同じアカウントでログインできます。
+            </div>
+            <p class="form-error" hidden></p>
+            <button type="submit" id="signup-btn" class="btn-primary w-full">IDを発行してはじめる</button>
+          </form>
+        </div>
+
+        <p class="text-white/70 text-xs mt-6 text-center">ログイン状態はこのブラウザに保存されます</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== メインアプリ ===================== -->
+  <section id="screen-app" class="screen app-h" hidden>
+    <div id="app" data-view="list" class="h-full flex md:gap-4 md:p-4 lg:p-6 max-w-7xl mx-auto">
+
+      <!-- サイドバー（トーク一覧 / ユーザー / グループ） -->
+      <aside id="sidebar" class="w-full md:w-[340px] lg:w-[380px] shrink-0 flex flex-col bg-white md:rounded-3xl md:shadow-soft md:ring-1 md:ring-slate-200/70 overflow-hidden">
+        <div class="px-4 pt-4 pb-3 flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white grid place-items-center shadow-md shadow-indigo-500/30" data-icon="chat" data-icon-class="w-5 h-5"></div>
+          <h1 class="text-lg font-bold tracking-tight text-slate-900">Chatter</h1>
+          <button type="button" data-action="profile" class="ml-auto flex items-center gap-2 rounded-full pl-1 pr-3 py-1 hover:bg-slate-100 transition min-w-0" aria-label="プロフィール">
+            <span id="me-avatar"></span>
+            <span class="text-left leading-tight min-w-0">
+              <span id="me-name" class="block text-sm font-semibold text-slate-800 max-w-[120px] truncate"></span>
+              <span id="me-id" class="block text-[11px] text-slate-400 max-w-[120px] truncate"></span>
+            </span>
+          </button>
+        </div>
+
+        <div class="px-4">
+          <div class="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-2xl" role="tablist">
+            <button type="button" data-action="tab" data-tab="talk" class="tab-btn is-active" role="tab">
+              <span data-icon="chat" data-icon-class="w-4 h-4"></span>トーク
+              <span id="unread-badge" class="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold grid place-items-center" hidden></span>
+            </button>
+            <button type="button" data-action="tab" data-tab="users" class="tab-btn" role="tab">
+              <span data-icon="user" data-icon-class="w-4 h-4"></span>ユーザー
+            </button>
+            <button type="button" data-action="tab" data-tab="groups" class="tab-btn" role="tab">
+              <span data-icon="group" data-icon-class="w-4 h-4"></span>グループ
+            </button>
+          </div>
+        </div>
+
+        <div class="px-4 pt-3 pb-2">
+          <div class="relative">
+            <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" data-icon="search" data-icon-class="w-4 h-4"></span>
+            <input id="search" type="search" class="input pl-10 py-2.5 bg-slate-50 border-transparent" placeholder="検索" autocomplete="off" />
+          </div>
+        </div>
+
+        <div id="list" class="flex-1 overflow-y-auto px-2 pb-3 scroll-thin"></div>
+      </aside>
+
+      <!-- チャット画面 -->
+      <main id="chat-pane" class="flex-1 min-w-0 flex flex-col bg-white md:rounded-3xl md:shadow-soft md:ring-1 md:ring-slate-200/70 overflow-hidden">
+        <div id="chat-empty" class="flex-1 grid place-items-center p-8 text-center chat-bg">
+          <div>
+            <div class="mx-auto w-20 h-20 rounded-3xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white grid place-items-center shadow-xl shadow-indigo-500/30 mb-5" data-icon="chat" data-icon-class="w-10 h-10"></div>
+            <h2 class="text-xl font-bold text-slate-800">Chatter へようこそ</h2>
+            <p class="text-slate-500 mt-2 text-sm leading-relaxed">左のリストからトークを選ぶか、<br />ユーザーを選んで会話を始めましょう。</p>
+          </div>
+        </div>
+
+        <div id="chat-room" class="flex-1 min-h-0 flex flex-col" hidden>
+          <header class="flex items-center gap-1 px-2 sm:px-4 h-16 border-b border-slate-100 bg-white shrink-0">
+            <button type="button" data-action="back" class="icon-btn md:hidden" aria-label="戻る"><span data-icon="back"></span></button>
+            <div id="chat-header-main" class="flex items-center gap-3 min-w-0 flex-1 pl-1"></div>
+            <button type="button" data-action="room-info" class="icon-btn" aria-label="詳細"><span data-icon="info"></span></button>
+          </header>
+
+          <div class="relative flex-1 min-h-0 chat-bg">
+            <div id="messages" class="absolute inset-0 overflow-y-auto scroll-thin"></div>
+            <button type="button" id="new-msg-btn" data-action="scroll-bottom" class="absolute left-1/2 -translate-x-1/2 bottom-4 flex items-center gap-1.5 px-4 py-2 rounded-full bg-slate-900/85 backdrop-blur text-white text-xs font-semibold shadow-lg fade-in" hidden>
+              <span data-icon="down" data-icon-class="w-3.5 h-3.5"></span>新着メッセージ
+            </button>
+          </div>
+
+          <form id="composer" class="border-t border-slate-100 bg-white px-3 sm:px-4 pt-3 safe-bottom shrink-0">
+            <div class="max-w-3xl mx-auto flex items-end gap-2">
+              <div class="flex-1 min-w-0 bg-slate-100 rounded-3xl px-4 py-2.5 border border-transparent transition focus-within:bg-white focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-500/15">
+                <textarea id="msg-input" rows="1" maxlength="2000" class="block w-full resize-none bg-transparent outline-none text-base leading-6 max-h-36 placeholder:text-slate-400" placeholder="メッセージを入力"></textarea>
+              </div>
+              <button type="submit" id="send-btn" class="w-11 h-11 shrink-0 rounded-full grid place-items-center text-white bg-gradient-to-br from-indigo-600 to-violet-600 shadow-lg shadow-indigo-500/30 transition active:scale-95 disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none" aria-label="送信" disabled>
+                <span data-icon="send"></span>
+              </button>
+            </div>
+          </form>
+
+          <div id="join-bar" class="border-t border-slate-100 bg-white px-4 pt-3 safe-bottom shrink-0" hidden>
+            <div class="max-w-3xl mx-auto flex items-center gap-3">
+              <p class="text-sm text-slate-500 flex-1">グループに参加するとメッセージを送信できます</p>
+              <button type="button" data-action="join-current" class="btn-primary py-2.5 px-5">参加する</button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </section>
+
+  <!-- モーダル & トースト -->
+  <div id="modal-root" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4" hidden>
+    <div class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm fade-in" data-close></div>
+    <div id="modal-host" class="relative w-full sm:max-w-md"></div>
+  </div>
+  <div id="toast-root" class="fixed z-[60] top-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm flex flex-col items-center gap-2 pointer-events-none"></div>
+
+  <script type="module">
+    // ============================================================
+    // ★ Firebase 設定：Firebase コンソールでコピーした値に書き換えてください
+    // ============================================================
+    const firebaseConfig = {
+      apiKey: "AIzaSyChgAmQJQ40r22EUnrYMP8LqmHCYJC2NJk",
+      authDomain: "chatter-2mcd2.firebaseapp.com",
+      projectId: "chatter-2mcd2",
+      storageBucket: "chatter-2mcd2.firebasestorage.app",
+      messagingSenderId: "486329312730",
+      appId: "1:486329312730:web:3943e95cee5d39338b4ce3",
+    };
+
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import {
+      initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
+      doc, collection, getDoc, updateDoc, query, where, orderBy, limit, limitToLast,
+      onSnapshot, serverTimestamp, writeBatch, runTransaction, arrayUnion, arrayRemove,
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    // ============================================================
+    // 定数・状態
+    // ============================================================
+    const ID_RE = /^[a-z0-9_-]{3,20}$/;
+    const ROOM_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+    const MESSAGE_LIMIT = 100;              // 1ルームで読み込む最新メッセージ数
+    const MAX_TEXT = 2000;                  // 1メッセージの最大文字数
+    const ONLINE_MS = 6 * 60 * 1000;        // この時間内に操作があれば「オンライン」
+    const PRESENCE_INTERVAL = 5 * 60 * 1000; // 最終アクティブ時刻の更新間隔
+    const LS_USER = "chatter:userId";
+
+    let auth, db;
+    const state = {
+      uid: null,
+      me: null,               // { id, name }
+      users: new Map(),       // userId -> user
+      rooms: [],              // 自分が参加しているルーム
+      groups: [],             // 公開グループ一覧（グループタブ表示中のみ購読）
+      usersLoaded: false,
+      roomsLoaded: false,
+      groupsLoaded: false,
+      tab: "talk",
+      search: "",
+      activeRoomId: null,
+      activeRoomFallback: null, // まだ一覧に無いルーム（未作成のDMや未参加グループ）
+      messages: [],
+      messagesLoaded: false,
+      renderedIds: new Set(),
+      drafts: {},
+      unsub: { users: null, rooms: null, groups: null, messages: null },
+    };
+    let readMap = {};
+
+    // ============================================================
+    // ユーティリティ
+    // ============================================================
+    const $ = (sel) => document.querySelector(sel);
+    const isCoarse = () => matchMedia("(pointer: coarse)").matches;
+    const isMobile = () => matchMedia("(max-width: 767.98px)").matches;
+
+    const store = {
+      get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+      set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+      remove(k) { try { localStorage.removeItem(k); } catch {} },
+      json(k, fallback) { try { return JSON.parse(localStorage.getItem(k)) ?? fallback; } catch { return fallback; } },
+    };
+
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+    // エスケープ済みテキスト中の URL をリンク化
+    const linkify = (escaped, mine) =>
+      escaped.replace(/https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+/g, (url) =>
+        `<a href="${url}" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 ${mine ? "decoration-white/60" : "text-indigo-600"}">${url}</a>`);
+
+    const ICONS = {
+      chat: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
+      user: "M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z",
+      group: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z",
+      search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z",
+      plus: "M12 4v16m8-8H4",
+      link: "M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1",
+      send: "M4.5 12 3 4.5l18 7.5-18 7.5L4.5 12zm0 0H12",
+      back: "M15 19l-7-7 7-7",
+      info: "M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+      logout: "M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1",
+      login: "M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1",
+      copy: "M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z",
+      check: "M5 13l4 4L19 7",
+      x: "M6 18L18 6M6 6l12 12",
+      down: "M19 14l-7 7m0 0l-7-7m7 7V3",
+      alert: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z",
+      cog: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z",
+      chevron: "M9 5l7 7-7 7",
+    };
+    const icon = (name, cls = "w-5 h-5") =>
+      `<svg class="${cls}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
+    const hydrateIcons = (root = document) =>
+      root.querySelectorAll("[data-icon]").forEach((el) => { el.innerHTML = icon(el.dataset.icon, el.dataset.iconClass || "w-5 h-5"); });
+
+    const spinner = (cls = "w-5 h-5 border-2") => `<span class="inline-block ${cls} rounded-full border-current border-t-transparent animate-spin"></span>`;
+
+    // アバター
+    const GRADIENTS = [
+      "from-rose-400 to-pink-500", "from-orange-400 to-amber-500", "from-emerald-400 to-teal-500", "from-sky-400 to-blue-500",
+      "from-violet-400 to-purple-500", "from-indigo-400 to-blue-600", "from-fuchsia-400 to-pink-600", "from-lime-500 to-green-600",
+    ];
+    const hash = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.codePointAt(0)) | 0; return Math.abs(h); };
+    const gradientOf = (id) => GRADIENTS[hash(id) % GRADIENTS.length];
+    function avatar(id, name, size = "w-10 h-10 text-sm") {
+      const ch = [...String(name || id || "?").trim()][0]?.toUpperCase() || "?";
+      return `<div class="${size} shrink-0 rounded-full bg-gradient-to-br ${gradientOf(id)} text-white font-semibold grid place-items-center select-none shadow-sm">${esc(ch)}</div>`;
+    }
+    const groupAvatar = (id, size = "w-10 h-10") =>
+      `<div class="${size} shrink-0 rounded-2xl bg-gradient-to-br ${gradientOf(id)} text-white grid place-items-center shadow-sm">${icon("group", "w-1/2 h-1/2")}</div>`;
+    const withPresence = (html, online) => online
+      ? `<div class="relative shrink-0">${html}<span class="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-500 ring-2 ring-white"></span></div>`
+      : html;
+
+    // 日時
+    const toDate = (t) => (t?.toDate ? t.toDate() : t instanceof Date ? t : null);
+    const ms = (t) => toDate(t)?.getTime() ?? 0;
+    const pad = (n) => String(n).padStart(2, "0");
+    const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const sameDay = (a, b) => a.toDateString() === b.toDateString();
+    const yesterday = () => { const d = new Date(); d.setDate(d.getDate() - 1); return d; };
+    function shortTime(t) {
+      const d = toDate(t); if (!d) return "";
+      const now = new Date();
+      if (sameDay(d, now)) return hhmm(d);
+      if (sameDay(d, yesterday())) return "昨日";
+      if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}`;
+      return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+    }
+    function dayLabel(d) {
+      if (sameDay(d, new Date())) return "今日";
+      if (sameDay(d, yesterday())) return "昨日";
+      return d.toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric", weekday: "short" });
+    }
+    function relTime(t) {
+      const m = ms(t); if (!m) return "";
+      const diff = Date.now() - m;
+      if (diff < 60e3) return "たった今";
+      if (diff < 3600e3) return `${Math.floor(diff / 60e3)}分前`;
+      if (diff < 86400e3) return `${Math.floor(diff / 3600e3)}時間前`;
+      if (diff < 30 * 86400e3) return `${Math.floor(diff / 86400e3)}日前`;
+      return shortTime(t);
+    }
+    const isOnline = (u) => !!u && Date.now() - ms(u.lastSeen) < ONLINE_MS;
+
+    // エラーメッセージを日本語に
+    function errMsg(e) {
+      const code = e?.code || "";
+      const map = {
+        "permission-denied": "権限がありません。Firestore のセキュリティルールが正しく公開されているか確認してください。",
+        "unavailable": "サーバーに接続できません。ネットワーク接続と、Firestore データベースが作成済みかを確認してください。",
+        "not-found": "データが見つかりません。Firestore データベースが作成済みか確認してください。",
+        "failed-precondition": "Firestore の前提条件エラーです。データベースが作成済みか確認してください。",
+        "auth/operation-not-allowed": "匿名認証が無効です。Firebase コンソールの Authentication で「匿名」を有効にしてください。",
+        "auth/admin-restricted-operation": "匿名認証が無効です。Firebase コンソールの Authentication で「匿名」を有効にしてください。",
+        "auth/configuration-not-found": "Authentication が未設定です。Firebase コンソールで Authentication を開始し、「匿名」を有効にしてください。",
+        "auth/invalid-api-key": "APIキーが正しくありません。firebaseConfig を確認してください。",
+        "auth/api-key-not-valid.-please-pass-a-valid-api-key.": "APIキーが正しくありません。firebaseConfig を確認してください。",
+        "auth/unauthorized-domain": "このドメインは許可されていません。Authentication の「承認済みドメイン」に追加してください。",
+        "auth/network-request-failed": "ネットワークエラーが発生しました。接続を確認してください。",
+      };
+      return map[code] || e?.message || String(e);
+    }
+
+    // ============================================================
+    // 画面・トースト・モーダル
+    // ============================================================
+    function showScreen(name) {
+      document.querySelectorAll(".screen").forEach((s) => { s.hidden = s.id !== `screen-${name}`; });
+    }
+    function showError(e) {
+      console.error(e);
+      $("#error-message").textContent = errMsg(e);
+      showScreen("error");
+    }
+
+    function toast(msg, type = "info") {
+      const el = document.createElement("div");
+      el.className = `toast pointer-events-auto flex items-start gap-2 px-4 py-3 rounded-2xl shadow-lg text-sm font-medium text-white ${type === "error" ? "bg-rose-600" : "bg-slate-900/90 backdrop-blur"}`;
+      el.innerHTML = `${icon(type === "error" ? "alert" : "check", "w-4 h-4 mt-0.5 shrink-0")}<span class="leading-relaxed">${esc(msg)}</span>`;
+      $("#toast-root").appendChild(el);
+      setTimeout(() => { el.classList.add("toast-out"); setTimeout(() => el.remove(), 300); }, type === "error" ? 5000 : 2200);
+    }
+
+    let modalCloseCb = null;
+    function openModal(html, onClose = null) {
+      const prevCb = modalCloseCb; modalCloseCb = null; prevCb?.();
+      const host = $("#modal-host");
+      host.innerHTML = `<div class="modal-panel bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[88vh] overflow-y-auto scroll-thin safe-bottom">
+        <div class="sm:hidden mx-auto mt-2.5 w-10 h-1.5 rounded-full bg-slate-200"></div>${html}</div>`;
+      $("#modal-root").hidden = false;
+      modalCloseCb = onClose;
+      if (!isCoarse()) requestAnimationFrame(() => host.querySelector("[autofocus]")?.focus());
+    }
+    function closeModal() {
+      $("#modal-root").hidden = true;
+      $("#modal-host").innerHTML = "";
+      const cb = modalCloseCb; modalCloseCb = null; cb?.();
+    }
+    const modalHead = (title, sub = "") => `
+      <div class="flex items-start gap-3 px-6 pt-5 sm:pt-6 pb-4">
+        <div class="flex-1 min-w-0">
+          <h2 class="text-lg font-bold text-slate-900">${title}</h2>
+          ${sub ? `<p class="text-sm text-slate-500 mt-0.5 leading-relaxed">${sub}</p>` : ""}
+        </div>
+        <button type="button" data-close class="icon-btn -mr-2 -mt-1" aria-label="閉じる">${icon("x")}</button>
+      </div>`;
+
+    function confirmDialog({ title, message, ok = "OK", danger = false }) {
+      return new Promise((resolve) => {
+        openModal(`
+          <div class="p-6">
+            <h2 class="text-lg font-bold text-slate-900">${esc(title)}</h2>
+            <p class="text-sm text-slate-600 mt-2 leading-relaxed">${message}</p>
+            <div class="flex gap-3 mt-6">
+              <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
+              <button type="button" id="confirm-ok" class="${danger ? "btn-danger" : "btn-primary"} flex-1">${esc(ok)}</button>
+            </div>
+          </div>`, () => resolve(false));
+        $("#confirm-ok").addEventListener("click", () => { modalCloseCb = null; closeModal(); resolve(true); });
+      });
+    }
+
+    async function copyText(text, label = "コピーしました") {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const ta = Object.assign(document.createElement("textarea"), { value: text });
+        ta.style.cssText = "position:fixed;opacity:0";
+        document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+      }
+      toast(label);
+    }
+
+    // ============================================================
+    // ログイン / 新規登録 / ログアウト
+    // ============================================================
+    const normId = (raw) => String(raw ?? "").trim().replace(/^@/, "").toLowerCase();
+
+    function generateId() {
+      const chars = "abcdefghjkmnpqrstuvwxyz23456789"; // 紛らわしい文字(i,l,o,0,1)を除外
+      const buf = crypto.getRandomValues(new Uint32Array(8));
+      return Array.from(buf, (n) => chars[n % chars.length]).join("");
+    }
+
+    async function loginWithId(raw) {
+      const id = normId(raw);
+      if (!ID_RE.test(id)) throw new Error("ユーザーIDは3〜20文字の半角英小文字・数字・「_」「-」で入力してください。");
+      const snap = await getDoc(doc(db, "users", id));
+      if (!snap.exists()) throw new Error("このユーザーIDは登録されていません。「新規登録」から作成してください。");
+      await enterApp({ id, ...snap.data() });
+    }
+
+    async function signup(nameRaw, customRaw) {
+      const name = String(nameRaw ?? "").trim().slice(0, 30);
+      const custom = customRaw == null ? null : normId(customRaw);
+      if (custom !== null && !ID_RE.test(custom)) throw new Error("ユーザーIDは3〜20文字の半角英小文字・数字・「_」「-」で入力してください。");
+
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const id = custom ?? generateId();
+        const ref = doc(db, "users", id);
+        // 同じIDが同時に作られないよう、トランザクションで「存在しなければ作成」
+        const created = await runTransaction(db, async (tx) => {
+          if ((await tx.get(ref)).exists()) return false;
+          tx.set(ref, { name: name || id, createdAt: serverTimestamp(), lastSeen: serverTimestamp() });
+          return true;
+        });
+        if (created) {
+          await enterApp({ id, name: name || id });
+          showWelcome();
+          return;
+        }
+        if (custom) throw new Error("このユーザーIDはすでに使われています。別のIDを入力してください。");
+      }
+      throw new Error("IDの発行に失敗しました。もう一度お試しください。");
+    }
+
+    async function enterApp(user) {
+      state.me = { id: user.id, name: user.name || user.id };
+      store.set(LS_USER, user.id);
+      readMap = store.json(`chatter:read:${user.id}`, {});
+      touchPresence(true);
+      subscribeCore();
+      $("#app").dataset.view = "list";
+      showScreen("app");
+      renderSidebar();
+      handleJoinHash();
+    }
+
+    async function logout() {
+      const ok = await confirmDialog({
+        title: "ログアウトしますか？",
+        message: `再びログインするにはユーザーID <b class="text-slate-800">@${esc(state.me.id)}</b> が必要です。忘れないようにメモしておきましょう。`,
+        ok: "ログアウト",
+        danger: true,
+      });
+      if (!ok) return;
+      Object.values(state.unsub).forEach((u) => u?.());
+      Object.assign(state, {
+        me: null, users: new Map(), rooms: [], groups: [], usersLoaded: false, roomsLoaded: false, groupsLoaded: false,
+        tab: "talk", search: "", activeRoomId: null, activeRoomFallback: null, messages: [], messagesLoaded: false,
+        renderedIds: new Set(), drafts: {}, unsub: { users: null, rooms: null, groups: null, messages: null },
+      });
+      store.remove(LS_USER);
+      $("#search").value = "";
+      $("#chat-room").hidden = true;
+      $("#chat-empty").hidden = false;
+      document.title = "Chatter";
+      showScreen("login");
+    }
+
+    function showWelcome() {
+      openModal(`
+        <div class="p-6 sm:p-8 text-center">
+          <div class="text-5xl mb-3">🎉</div>
+          <h2 class="text-xl font-bold text-slate-900">ようこそ、${esc(state.me.name)} さん！</h2>
+          <p class="text-sm text-slate-500 mt-2 leading-relaxed">これがあなたのユーザーIDです。<br>別の端末やブラウザからログインするときに使うので、メモしておきましょう。</p>
+          <div class="mt-5 flex items-center gap-2 rounded-2xl bg-indigo-50 ring-1 ring-indigo-100 p-2 pl-5">
+            <span class="flex-1 text-left text-xl font-bold text-indigo-700 tracking-wide truncate">@${esc(state.me.id)}</span>
+            <button type="button" data-action="copy" data-copy="${esc(state.me.id)}" data-label="ユーザーIDをコピーしました" class="btn-chip bg-white text-indigo-600 shadow-sm hover:bg-indigo-100">${icon("copy", "w-4 h-4")}コピー</button>
+          </div>
+          <button type="button" data-close class="btn-primary w-full mt-6">はじめる</button>
+        </div>`);
+    }
+
+    // ============================================================
+    // 在席（最終アクティブ時刻）
+    // ============================================================
+    let lastTouch = 0;
+    function touchPresence(force = false) {
+      if (!state.me) return;
+      if (!force && (document.visibilityState !== "visible" || Date.now() - lastTouch < 60e3)) return;
+      lastTouch = Date.now();
+      updateDoc(doc(db, "users", state.me.id), { lastSeen: serverTimestamp() }).catch((e) => console.warn(e));
+    }
+
+    // ============================================================
+    // Firestore 購読
+    // ============================================================
+    const withId = (d) => ({ id: d.id, ...d.data({ serverTimestamps: "estimate" }) });
+    const onListenError = (e) => { console.error(e); toast(errMsg(e), "error"); };
+
+    function subscribeCore() {
+      state.unsub.users = onSnapshot(
+        query(collection(db, "users"), orderBy("lastSeen", "desc"), limit(300)),
+        (snap) => {
+          state.users = new Map(snap.docs.map((d) => [d.id, withId(d)]));
+          const mine = state.users.get(state.me.id);
+          if (mine) state.me.name = mine.name;
+          state.usersLoaded = true;
+          renderSidebar();
+          renderChatHeader();
+        },
+        onListenError,
+      );
+      // 複合インデックス不要にするため、並び替えはクライアント側で行う
+      state.unsub.rooms = onSnapshot(
+        query(collection(db, "rooms"), where("members", "array-contains", state.me.id)),
+        (snap) => {
+          state.rooms = snap.docs.map(withId).sort((a, b) => ms(b.updatedAt) - ms(a.updatedAt));
+          state.roomsLoaded = true;
+          renderSidebar();
+          renderChatHeader();
+        },
+        onListenError,
+      );
+    }
+
+    function subscribeGroups() {
+      state.groupsLoaded = false;
+      state.unsub.groups = onSnapshot(
+        query(collection(db, "rooms"), where("type", "==", "group"), limit(100)),
+        (snap) => {
+          state.groups = snap.docs.map(withId).sort((a, b) => ms(b.updatedAt) - ms(a.updatedAt));
+          state.groupsLoaded = true;
+          renderSidebar();
+          renderChatHeader();
+        },
+        onListenError,
+      );
+    }
+
+    // ============================================================
+    // ルーム関連のヘルパー
+    // ============================================================
+    const dmRoomId = (a, b) => "dm_" + [a, b].sort().join("~");
+    const partnerOf = (room) => room.members?.find((m) => m !== state.me.id) || state.me.id;
+    const userName = (id, fallback) => state.users.get(id)?.name || fallback || id;
+    const isMember = (room) => !!room?.members?.includes(state.me.id);
+
+    function currentRoom() {
+      const id = state.activeRoomId;
+      if (!id) return null;
+      return state.rooms.find((r) => r.id === id) || state.groups.find((r) => r.id === id) || state.activeRoomFallback;
+    }
+    function roomTitle(room) {
+      if (room.type === "dm") { const pid = partnerOf(room); return userName(pid, room.memberNames?.[pid]); }
+      return room.name || "(名称未設定)";
+    }
+    function roomAvatar(room, size) {
+      if (room.type === "dm") {
+        const pid = partnerOf(room);
+        return withPresence(avatar(pid, roomTitle(room), size), isOnline(state.users.get(pid)));
+      }
+      return groupAvatar(room.id, size.replace(/text-\S+/, ""));
+    }
+
+    // 既読管理（このブラウザの localStorage に保存）
+    function markRead(roomId) {
+      const room = state.rooms.find((r) => r.id === roomId);
+      const latest = Math.max(ms(room?.lastMessage?.createdAt), ms(state.messages.at(-1)?.createdAt));
+      readMap[roomId] = Math.max(Date.now(), latest); // 端末の時計ずれ対策
+      store.set(`chatter:read:${state.me.id}`, JSON.stringify(readMap));
+    }
+    function isUnread(room) {
+      const lm = room.lastMessage;
+      if (!lm || lm.senderId === state.me.id) return false;
+      if (room.id === state.activeRoomId && document.visibilityState === "visible") return false;
+      return ms(lm.createdAt || room.updatedAt) > (readMap[room.id] || 0);
+    }
+
+    // ============================================================
+    // 描画：サイドバー
+    // ============================================================
+    const skeleton = () => Array.from({ length: 5 }, () => `
+      <div class="flex items-center gap-3 px-3 py-3">
+        <div class="w-12 h-12 rounded-full bg-slate-100 animate-pulse"></div>
+        <div class="flex-1 space-y-2"><div class="h-3 w-1/2 bg-slate-100 rounded animate-pulse"></div><div class="h-3 w-3/4 bg-slate-100 rounded animate-pulse"></div></div>
+      </div>`).join("");
+
+    const emptyList = (iconName, title, sub = "", extra = "") => `
+      <div class="text-center px-6 py-14">
+        <div class="mx-auto w-14 h-14 rounded-2xl bg-slate-100 text-slate-400 grid place-items-center mb-3">${icon(iconName, "w-7 h-7")}</div>
+        <p class="font-semibold text-slate-600">${title}</p>
+        ${sub ? `<p class="text-sm text-slate-400 mt-1 leading-relaxed">${sub}</p>` : ""}
+        ${extra}
+      </div>`;
+
+    function renderSidebar() {
+      if (!state.me) return;
+      $("#me-avatar").innerHTML = avatar(state.me.id, state.me.name, "w-9 h-9 text-sm");
+      $("#me-name").textContent = state.me.name;
+      $("#me-id").textContent = "@" + state.me.id;
+
+      document.querySelectorAll("[data-tab]").forEach((b) => {
+        b.classList.toggle("is-active", b.dataset.tab === state.tab);
+        b.setAttribute("aria-selected", b.dataset.tab === state.tab);
+      });
+
+      const unread = state.rooms.filter(isUnread).length;
+      const badge = $("#unread-badge");
+      badge.hidden = unread === 0;
+      badge.textContent = unread > 99 ? "99+" : unread;
+      document.title = unread ? `(${unread}) Chatter` : "Chatter";
+
+      const q = state.search.trim().toLowerCase();
+      const list = $("#list");
+      list.innerHTML = state.tab === "talk" ? renderTalkList(q) : state.tab === "users" ? renderUserList(q) : renderGroupList(q);
+    }
+
+    function renderTalkList(q) {
+      if (!state.roomsLoaded) return skeleton();
+      const rooms = state.rooms.filter((r) => !q || roomTitle(r).toLowerCase().includes(q));
+      if (!rooms.length) {
+        return q
+          ? emptyList("search", "該当するトークはありません")
+          : emptyList("chat", "まだトークがありません", "ユーザーを選んで個人チャットを始めるか、<br>グループに参加してみましょう。", `
+            <div class="flex justify-center gap-2 mt-5">
+              <button type="button" data-action="tab" data-tab="users" class="btn-chip bg-indigo-50 text-indigo-600 hover:bg-indigo-100">${icon("user", "w-4 h-4")}ユーザーを探す</button>
+              <button type="button" data-action="tab" data-tab="groups" class="btn-chip bg-slate-100 text-slate-600 hover:bg-slate-200">${icon("group", "w-4 h-4")}グループ</button>
+            </div>`);
+      }
+      return rooms.map((r) => {
+        const unread = isUnread(r);
+        const lm = r.lastMessage;
+        let preview;
+        if (!lm) preview = r.type === "dm" ? "トークを始めましょう 👋" : "グループが作成されました";
+        else if (lm.type === "system") preview = lm.text;
+        else {
+          const who = lm.senderId === state.me.id ? "あなた" : r.type === "group" ? userName(lm.senderId, lm.senderName) : "";
+          preview = (who ? `${who}: ` : "") + lm.text;
+        }
+        return `
+          <button type="button" data-action="open-room" data-id="${esc(r.id)}" class="list-row ${r.id === state.activeRoomId ? "is-active" : ""}">
+            ${roomAvatar(r, "w-12 h-12 text-base")}
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5">
+                <span class="font-semibold truncate text-slate-800">${esc(roomTitle(r))}</span>
+                ${r.type === "group" ? `<span class="text-xs text-slate-400 shrink-0">(${r.members.length})</span>` : ""}
+                <span class="ml-auto pl-2 text-[11px] shrink-0 ${unread ? "text-indigo-600 font-semibold" : "text-slate-400"}">${shortTime(lm?.createdAt || r.updatedAt)}</span>
+              </div>
+              <div class="flex items-center gap-2 mt-0.5">
+                <span class="text-sm truncate ${unread ? "text-slate-800 font-medium" : "text-slate-500"}">${esc(preview)}</span>
+                ${unread ? `<span class="ml-auto w-2.5 h-2.5 rounded-full bg-indigo-500 shrink-0"></span>` : ""}
+              </div>
+            </div>
+          </button>`;
+      }).join("");
+    }
+
+    function renderUserList(q) {
+      if (!state.usersLoaded) return skeleton();
+      const users = [...state.users.values()]
+        .filter((u) => u.id !== state.me.id && (!q || u.name?.toLowerCase().includes(q) || u.id.includes(q)))
+        .sort((a, b) => (isOnline(b) - isOnline(a)) || ms(b.lastSeen) - ms(a.lastSeen));
+      if (!users.length) {
+        return q
+          ? emptyList("search", "該当するユーザーはいません")
+          : emptyList("user", "他のユーザーはまだいません", "このページのURLを友だちに送って、<br>登録してもらいましょう。");
+      }
+      const onlineCount = users.filter(isOnline).length;
+      return `<p class="px-3 pt-1 pb-2 text-xs font-medium text-slate-400">${users.length}人のユーザー ・ オンライン ${onlineCount}人</p>` +
+        users.map((u) => {
+          const online = isOnline(u);
+          return `
+            <button type="button" data-action="start-dm" data-id="${esc(u.id)}" class="list-row group ${dmRoomId(state.me.id, u.id) === state.activeRoomId ? "is-active" : ""}">
+              ${withPresence(avatar(u.id, u.name, "w-11 h-11 text-sm"), online)}
+              <div class="min-w-0 flex-1">
+                <div class="font-semibold truncate text-slate-800">${esc(u.name)}</div>
+                <div class="text-xs truncate text-slate-400">@${esc(u.id)} ・ ${online ? `<span class="text-emerald-600">オンライン</span>` : esc(relTime(u.lastSeen))}</div>
+              </div>
+              <span class="w-9 h-9 rounded-full grid place-items-center text-slate-300 group-hover:text-indigo-500 group-hover:bg-indigo-50 transition">${icon("chat", "w-5 h-5")}</span>
+            </button>`;
+        }).join("");
+    }
+
+    function renderGroupList(q) {
+      const toolbar = `
+        <div class="grid grid-cols-2 gap-2 px-2 pt-1 pb-3">
+          <button type="button" data-action="create-group" class="btn-chip text-white bg-gradient-to-r from-indigo-600 to-violet-600 shadow-md shadow-indigo-500/20 hover:from-indigo-500 hover:to-violet-500">${icon("plus", "w-4 h-4")}グループ作成</button>
+          <button type="button" data-action="open-join" class="btn-chip bg-slate-100 text-slate-700 hover:bg-slate-200">${icon("link", "w-4 h-4")}IDで参加</button>
+        </div>`;
+      if (!state.groupsLoaded) return toolbar + skeleton();
+      const groups = state.groups.filter((g) => !q || g.name?.toLowerCase().includes(q));
+      if (!groups.length) {
+        return toolbar + (q ? emptyList("search", "該当するグループはありません") : emptyList("group", "グループはまだありません", "最初のグループを作成してみましょう。"));
+      }
+      return toolbar + groups.map((g) => {
+        const joined = isMember(g);
+        return `
+          <div role="button" tabindex="0" data-action="open-room" data-id="${esc(g.id)}" class="list-row ${g.id === state.activeRoomId ? "is-active" : ""}">
+            ${groupAvatar(g.id, "w-12 h-12")}
+            <div class="min-w-0 flex-1">
+              <div class="font-semibold truncate text-slate-800">${esc(g.name)}</div>
+              <div class="text-xs text-slate-400 truncate">${g.members.length}人のメンバー ・ 最終更新 ${esc(relTime(g.updatedAt))}</div>
+            </div>
+            ${joined
+              ? `<span class="shrink-0 text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">参加中</span>`
+              : `<button type="button" data-action="join-group" data-id="${esc(g.id)}" class="shrink-0 btn-chip py-1.5 text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100">参加する</button>`}
+          </div>`;
+      }).join("");
+    }
+
+    function setTab(tab) {
+      state.tab = tab;
+      // グループ一覧はタブを開いている間だけ購読（読み取り回数の節約）
+      if (tab === "groups" && !state.unsub.groups) subscribeGroups();
+      if (tab !== "groups" && state.unsub.groups) { state.unsub.groups(); state.unsub.groups = null; }
+      renderSidebar();
+      $("#list").scrollTop = 0;
+    }
+
+    // ============================================================
+    // 描画：チャット画面
+    // ============================================================
+    function renderChatHeader() {
+      const room = currentRoom();
+      if (!room || !state.me) return;
+      let subtitle;
+      if (room.type === "dm") {
+        const pid = partnerOf(room);
+        const u = state.users.get(pid);
+        subtitle = isOnline(u)
+          ? `<span class="text-emerald-600 font-medium">● オンライン</span>`
+          : `@${esc(pid)}${u ? ` ・ 最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}`;
+      } else {
+        subtitle = `${room.members?.length ?? 0}人のメンバー`;
+      }
+      $("#chat-header-main").innerHTML = `
+        ${roomAvatar(room, "w-10 h-10 text-sm")}
+        <div class="min-w-0">
+          <div class="font-semibold text-slate-900 truncate">${esc(roomTitle(room))}</div>
+          <div class="text-xs text-slate-500 truncate">${subtitle}</div>
+        </div>`;
+      const member = isMember(room);
+      $("#composer").hidden = !member;
+      $("#join-bar").hidden = member;
+    }
+
+    function renderMessages(first = false) {
+      const box = $("#messages");
+      const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 150;
+      const isGroup = currentRoom()?.type === "group";
+      const prevIds = state.renderedIds;
+      const nextIds = new Set();
+      let html = "", lastDay = "", prev = null, hasNew = false, newFromMe = false;
+
+      for (const m of state.messages) {
+        nextIds.add(m.id);
+        const isNew = !first && !prevIds.has(m.id);
+        if (isNew) { hasNew = true; if (m.senderId === state.me.id) newFromMe = true; }
+        const d = toDate(m.createdAt) || new Date();
+
+        if (d.toDateString() !== lastDay) {
+          lastDay = d.toDateString();
+          prev = null;
+          html += `<div class="flex justify-center my-4"><span class="px-3 py-1 rounded-full bg-slate-200/70 text-slate-500 text-[11px] font-medium">${esc(dayLabel(d))}</span></div>`;
+        }
+        if (m.type === "system") {
+          html += `<div class="flex justify-center my-3 ${isNew ? "msg-in" : ""}"><span class="px-3 py-1 rounded-full bg-white/90 ring-1 ring-slate-200 text-slate-500 text-xs">${esc(m.text)}</span></div>`;
+          prev = null;
+          continue;
+        }
+
+        const mine = m.senderId === state.me.id;
+        const cont = prev && prev.senderId === m.senderId && d - prev.d < 5 * 60e3; // 連続投稿はまとめる
+        const body = linkify(esc(m.text), mine);
+        if (mine) {
+          html += `
+            <div class="flex justify-end items-end gap-1.5 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""}">
+              <span class="msg-time">${m.pending ? "送信中…" : hhmm(d)}</span>
+              <div class="bubble bubble-mine">${body}</div>
+            </div>`;
+        } else {
+          const name = userName(m.senderId, m.senderName);
+          html += `
+            <div class="flex items-start gap-2 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""}">
+              <div class="w-8 shrink-0">${cont ? "" : avatar(m.senderId, name, "w-8 h-8 text-xs")}</div>
+              <div class="min-w-0 flex-1">
+                ${!cont && isGroup ? `<div class="text-xs text-slate-500 mb-1 ml-1 truncate">${esc(name)}</div>` : ""}
+                <div class="flex items-end gap-1.5">
+                  <div class="bubble bubble-other">${body}</div>
+                  <span class="msg-time">${hhmm(d)}</span>
+                </div>
+              </div>
+            </div>`;
+        }
+        prev = { senderId: m.senderId, d };
+      }
+
+      if (!state.messages.length) {
+        html = `
+          <div class="min-h-[60vh] grid place-items-center text-center">
+            <div>
+              <div class="text-5xl mb-3">👋</div>
+              <p class="font-semibold text-slate-700">まだメッセージはありません</p>
+              <p class="text-sm text-slate-500 mt-1">最初のメッセージを送ってみましょう</p>
+            </div>
+          </div>`;
+      }
+      box.innerHTML = `<div class="max-w-3xl mx-auto px-3 sm:px-6 py-4">${html}</div>`;
+      state.renderedIds = nextIds;
+
+      if (first || newFromMe || nearBottom) scrollToBottom();
+      else if (hasNew) $("#new-msg-btn").hidden = false;
+    }
+
+    function scrollToBottom() {
+      const box = $("#messages");
+      box.scrollTop = box.scrollHeight;
+      requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; }); // CDN のスタイル反映後にもう一度
+      $("#new-msg-btn").hidden = true;
+    }
+
+    // ============================================================
+    // ルームを開く / 閉じる
+    // ============================================================
+    function openRoom(roomId, fallback = null) {
+      if (state.activeRoomId !== roomId) {
+        state.unsub.messages?.();
+        state.activeRoomId = roomId;
+        state.activeRoomFallback = fallback;
+        state.messages = [];
+        state.messagesLoaded = false;
+        state.renderedIds = new Set();
+        $("#chat-empty").hidden = true;
+        $("#chat-room").hidden = false;
+        $("#new-msg-btn").hidden = true;
+        $("#messages").innerHTML = `<div class="h-full grid place-items-center text-indigo-500">${spinner("w-8 h-8 border-[3px]")}</div>`;
+
+        const input = $("#msg-input");
+        input.value = state.drafts[roomId] || "";
+        autoGrow();
+        updateSendBtn();
+        renderChatHeader();
+
+        state.unsub.messages = onSnapshot(
+          query(collection(db, "rooms", roomId, "messages"), orderBy("createdAt", "asc"), limitToLast(MESSAGE_LIMIT)),
+          { includeMetadataChanges: true }, // 「送信中…」→ 送信完了 の表示切り替えのため
+          (snap) => {
+            if (state.activeRoomId !== roomId) return;
+            state.messages = snap.docs.map((d) => ({ ...withId(d), pending: d.metadata.hasPendingWrites }));
+            const first = !state.messagesLoaded;
+            state.messagesLoaded = true;
+            renderMessages(first);
+            if (document.visibilityState === "visible" && isMember(currentRoom())) markRead(roomId);
+            renderSidebar();
+          },
+          onListenError,
+        );
+      }
+      const app = $("#app");
+      if (app.dataset.view !== "chat") {
+        if (isMobile()) history.pushState({ chatter: "chat" }, ""); // スマホの「戻る」でリストへ
+        app.dataset.view = "chat";
+      }
+      autoGrow(); // スマホではここで初めて入力欄が表示される
+      renderSidebar();
+      if (!isCoarse() && isMember(currentRoom())) $("#msg-input").focus();
+    }
+
+    function closeRoom() {
+      state.unsub.messages?.();
+      state.unsub.messages = null;
+      state.activeRoomId = null;
+      state.activeRoomFallback = null;
+      state.messages = [];
+      $("#chat-room").hidden = true;
+      $("#chat-empty").hidden = false;
+      $("#app").dataset.view = "list";
+      renderSidebar();
+    }
+
+    function exitRoom() {
+      if (history.state?.chatter === "chat") history.back(); // popstate で closeRoom される
+      else closeRoom();
+    }
+
+    // ============================================================
+    // 個人チャット / グループ
+    // ============================================================
+    function startDM(userId) {
+      const id = dmRoomId(state.me.id, userId);
+      const existing = state.rooms.find((r) => r.id === id);
+      // DM ルームは最初のメッセージ送信時に作成する（空のトークが相手の一覧に出ないように）
+      openRoom(id, existing || {
+        id, type: "dm", draft: true,
+        members: [state.me.id, userId].sort(),
+        memberNames: { [state.me.id]: state.me.name, [userId]: userName(userId) },
+      });
+    }
+
+    async function createGroup(nameRaw, memberIds) {
+      const name = String(nameRaw ?? "").trim();
+      if (!name) throw new Error("グループ名を入力してください。");
+      if (name.length > 50) throw new Error("グループ名は50文字以内で入力してください。");
+      const members = [...new Set([state.me.id, ...memberIds])];
+      const roomRef = doc(collection(db, "rooms"));
+      const text = `${state.me.name} さんがグループ「${name}」を作成しました`;
+      const batch = writeBatch(db);
+      batch.set(roomRef, {
+        type: "group", name, members, createdBy: state.me.id,
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        lastMessage: { type: "system", text, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() },
+      });
+      batch.set(doc(collection(roomRef, "messages")), systemMessage(text));
+      await batch.commit();
+      closeModal();
+      toast("グループを作成しました");
+      openRoom(roomRef.id, { id: roomRef.id, type: "group", name, members });
+    }
+
+    const systemMessage = (text) => ({
+      type: "system", text, senderId: state.me.id, senderName: state.me.name, senderUid: state.uid, createdAt: serverTimestamp(),
+    });
+
+    function parseJoinCode(raw) {
+      const s = String(raw ?? "").trim();
+      const id = s.match(/join=([A-Za-z0-9_-]+)/)?.[1] || s;
+      if (!ROOM_ID_RE.test(id)) throw new Error("招待リンクまたはグループIDの形式が正しくありません。");
+      return id;
+    }
+
+    const pendingJoins = new Set();
+    async function joinGroup(roomId) {
+      if (pendingJoins.has(roomId)) return; // 連打による二重参加を防ぐ
+      pendingJoins.add(roomId);
+      try {
+        await joinGroupOnce(roomId);
+      } finally {
+        pendingJoins.delete(roomId);
+      }
+    }
+
+    async function joinGroupOnce(roomId) {
+      const ref = doc(db, "rooms", roomId);
+      const snap = await getDoc(ref);
+      if (!snap.exists() || snap.data().type !== "group") throw new Error("グループが見つかりませんでした。");
+      const room = withId(snap);
+      if (!room.members.includes(state.me.id)) {
+        if (room.members.length >= 100) throw new Error("このグループは満員です（最大100人）。");
+        const text = `${state.me.name} さんが参加しました`;
+        const batch = writeBatch(db);
+        batch.update(ref, {
+          members: arrayUnion(state.me.id),
+          lastMessage: { type: "system", text, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() },
+          updatedAt: serverTimestamp(),
+        });
+        batch.set(doc(collection(ref, "messages")), systemMessage(text));
+        await batch.commit();
+        room.members = [...room.members, state.me.id];
+        toast(`「${room.name}」に参加しました`);
+      }
+      closeModal();
+      if (state.activeRoomId === roomId) { state.activeRoomFallback = room; renderChatHeader(); }
+      else openRoom(roomId, room);
+    }
+
+    async function leaveGroup() {
+      const room = currentRoom();
+      if (!room || room.type !== "group") return;
+      const ok = await confirmDialog({
+        title: "グループを退出しますか？",
+        message: `「${esc(room.name)}」から退出します。あとから再び参加することもできます。`,
+        ok: "退出する",
+        danger: true,
+      });
+      if (!ok) return;
+      const ref = doc(db, "rooms", room.id);
+      const text = `${state.me.name} さんが退出しました`;
+      const batch = writeBatch(db);
+      batch.update(ref, {
+        members: arrayRemove(state.me.id),
+        lastMessage: { type: "system", text, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() },
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(doc(collection(ref, "messages")), systemMessage(text));
+      await batch.commit();
+      exitRoom();
+      toast("グループを退出しました");
+    }
+
+    async function updateName(raw) {
+      const name = String(raw ?? "").trim();
+      if (!name) throw new Error("表示名を入力してください。");
+      if (name.length > 30) throw new Error("表示名は30文字以内で入力してください。");
+      await updateDoc(doc(db, "users", state.me.id), { name });
+      state.me.name = name;
+      renderSidebar();
+      closeModal();
+      toast("表示名を変更しました");
+    }
+
+    function handleJoinHash() {
+      const m = location.hash.match(/join=([A-Za-z0-9_-]+)/);
+      if (!m) return;
+      history.replaceState(null, "", location.pathname + location.search);
+      joinGroup(m[1]).catch((e) => toast(errMsg(e), "error"));
+    }
+    const inviteUrl = (roomId) => `${location.origin}${location.pathname}#join=${roomId}`;
+
+    // ============================================================
+    // メッセージ送信
+    // ============================================================
+    async function send() {
+      const input = $("#msg-input");
+      const text = input.value.trim();
+      const room = currentRoom();
+      if (!text || !isMember(room)) return;
+      if (text.length > MAX_TEXT) return toast(`メッセージは${MAX_TEXT}文字以内で入力してください`, "error");
+
+      input.value = "";
+      state.drafts[room.id] = "";
+      autoGrow();
+      updateSendBtn();
+
+      const roomRef = doc(db, "rooms", room.id);
+      const msgRef = doc(collection(roomRef, "messages"));
+      const message = { type: "text", text, senderId: state.me.id, senderName: state.me.name, senderUid: state.uid, createdAt: serverTimestamp() };
+      const roomUpdate = {
+        lastMessage: { type: "text", text: text.slice(0, 100), senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() },
+        updatedAt: serverTimestamp(),
+      };
+      try {
+        if (state.rooms.some((r) => r.id === room.id)) {
+          const batch = writeBatch(db);
+          batch.set(msgRef, message);
+          batch.update(roomRef, roomUpdate);
+          await batch.commit();
+        } else {
+          // 未作成の DM：ルームが無ければ作成してから送信
+          await runTransaction(db, async (tx) => {
+            const snap = await tx.get(roomRef);
+            if (snap.exists()) tx.update(roomRef, roomUpdate);
+            else tx.set(roomRef, {
+              type: "dm", members: room.members, memberNames: room.memberNames || {}, createdBy: state.me.id,
+              createdAt: serverTimestamp(), ...roomUpdate,
+            });
+            tx.set(msgRef, message);
+          });
+        }
+      } catch (e) {
+        console.error(e);
+        toast(errMsg(e), "error");
+        if (!input.value && state.activeRoomId === room.id) { input.value = text; autoGrow(); updateSendBtn(); }
+      }
+    }
+
+    function autoGrow() {
+      const input = $("#msg-input");
+      if (!input.offsetParent) { input.style.height = ""; return; } // 非表示中は高さを測れない
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 144) + "px";
+    }
+    const updateSendBtn = () => { $("#send-btn").disabled = !$("#msg-input").value.trim(); };
+
+    // ============================================================
+    // モーダル各種
+    // ============================================================
+    function openProfile() {
+      openModal(`
+        ${modalHead("プロフィール")}
+        <div class="px-6 pb-6">
+          <div class="flex flex-col items-center text-center">
+            ${avatar(state.me.id, state.me.name, "w-20 h-20 text-3xl")}
+            <div class="mt-3 font-bold text-lg text-slate-900">${esc(state.me.name)}</div>
+          </div>
+          <div class="mt-5 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
+            <div class="text-xs font-semibold text-slate-500">あなたのユーザーID</div>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="flex-1 text-lg font-bold text-indigo-700 truncate">@${esc(state.me.id)}</span>
+              <button type="button" data-action="copy" data-copy="${esc(state.me.id)}" data-label="ユーザーIDをコピーしました" class="btn-chip bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100">${icon("copy", "w-4 h-4")}コピー</button>
+            </div>
+            <p class="text-xs text-slate-400 mt-1.5">別の端末からはこのIDでログインできます</p>
+          </div>
+          <form id="form-profile" class="mt-5 space-y-3">
+            <label class="label" for="profile-name">表示名</label>
+            <div class="flex gap-2">
+              <input id="profile-name" name="name" class="input" maxlength="30" value="${esc(state.me.name)}" required />
+              <button type="submit" class="btn-primary shrink-0 px-5">保存</button>
+            </div>
+            <p class="form-error" hidden></p>
+          </form>
+          <button type="button" data-action="logout" class="btn-danger-ghost w-full mt-6">${icon("logout", "w-5 h-5")}ログアウト</button>
+        </div>`);
+    }
+
+    function openCreateGroup() {
+      const users = [...state.users.values()].filter((u) => u.id !== state.me.id).sort((a, b) => (isOnline(b) - isOnline(a)) || String(a.name).localeCompare(String(b.name), "ja"));
+      openModal(`
+        ${modalHead("グループを作成", "メンバーは招待リンクからあとで参加することもできます")}
+        <form id="form-create-group" class="pb-6">
+          <div class="px-6 space-y-4">
+            <div>
+              <label class="label" for="cg-name">グループ名</label>
+              <input id="cg-name" name="name" class="input" maxlength="50" required autofocus placeholder="例: 週末キャンプ部" />
+            </div>
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="label mb-0">メンバーを招待</span>
+                <span id="cg-count" class="text-xs font-semibold text-indigo-600">0人選択中</span>
+              </div>
+              <div class="relative">
+                <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">${icon("search", "w-4 h-4")}</span>
+                <input id="cg-search" type="search" class="input pl-10 py-2.5 bg-slate-50 border-transparent" placeholder="ユーザーを検索" autocomplete="off" />
+              </div>
+            </div>
+          </div>
+          <div id="cg-list" class="mt-2 px-3 max-h-64 overflow-y-auto scroll-thin">
+            ${users.map((u) => `
+              <label class="cg-row flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-50 cursor-pointer" data-search="${esc((u.name + " " + u.id).toLowerCase())}">
+                ${withPresence(avatar(u.id, u.name, "w-10 h-10 text-sm"), isOnline(u))}
+                <div class="min-w-0 flex-1">
+                  <div class="font-medium text-slate-800 truncate">${esc(u.name)}</div>
+                  <div class="text-xs text-slate-400 truncate">@${esc(u.id)}</div>
+                </div>
+                <input type="checkbox" name="members" value="${esc(u.id)}" class="w-5 h-5 rounded-md accent-indigo-600" />
+              </label>`).join("") || `<p class="text-sm text-slate-400 text-center py-6">他のユーザーはまだいません</p>`}
+          </div>
+          <div class="px-6 pt-4">
+            <p class="form-error mb-3" hidden></p>
+            <button type="submit" class="btn-primary w-full">${icon("plus", "w-5 h-5")}作成する</button>
+          </div>
+        </form>`);
+    }
+
+    function openJoinModal() {
+      openModal(`
+        ${modalHead("グループに参加", "招待リンクまたはグループIDを入力してください")}
+        <form id="form-join" class="px-6 pb-6 space-y-4">
+          <input name="code" class="input" required autofocus autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://…#join=xxxx または グループID" />
+          <p class="form-error" hidden></p>
+          <button type="submit" class="btn-primary w-full">参加する</button>
+        </form>`);
+    }
+
+    function openRoomInfo() {
+      const room = currentRoom();
+      if (!room) return;
+      if (room.type === "dm") {
+        const pid = partnerOf(room);
+        const u = state.users.get(pid);
+        openModal(`
+          ${modalHead("ユーザー情報")}
+          <div class="px-6 pb-6 text-center">
+            <div class="flex justify-center">${withPresence(avatar(pid, roomTitle(room), "w-20 h-20 text-3xl"), isOnline(u))}</div>
+            <div class="mt-3 font-bold text-lg text-slate-900">${esc(roomTitle(room))}</div>
+            <div class="text-sm text-slate-500">@${esc(pid)}</div>
+            <div class="text-xs mt-1 ${isOnline(u) ? "text-emerald-600" : "text-slate-400"}">${isOnline(u) ? "オンライン" : u ? `最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}</div>
+            <button type="button" data-action="copy" data-copy="${esc(pid)}" data-label="ユーザーIDをコピーしました" class="btn-secondary w-full mt-6">${icon("copy", "w-5 h-5")}ユーザーIDをコピー</button>
+          </div>`);
+        return;
+      }
+      const member = isMember(room);
+      const members = (room.members || []).map((id) => ({ id, u: state.users.get(id) }))
+        .sort((a, b) => (b.id === state.me.id) - (a.id === state.me.id) || (isOnline(b.u) - isOnline(a.u)));
+      openModal(`
+        ${modalHead("グループ情報")}
+        <div class="px-6 pb-6">
+          <div class="flex items-center gap-4">
+            ${groupAvatar(room.id, "w-16 h-16")}
+            <div class="min-w-0">
+              <div class="font-bold text-lg text-slate-900 truncate">${esc(room.name)}</div>
+              <div class="text-sm text-slate-500">${room.members?.length ?? 0}人のメンバー</div>
+            </div>
+          </div>
+
+          <div class="mt-5 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4 space-y-3">
+            <div>
+              <div class="text-xs font-semibold text-slate-500 mb-1.5">招待リンク</div>
+              <div class="flex gap-2">
+                <input readonly value="${esc(inviteUrl(room.id))}" class="input py-2 text-sm bg-white" onfocus="this.select()" />
+                <button type="button" data-action="copy" data-copy="${esc(inviteUrl(room.id))}" data-label="招待リンクをコピーしました" class="btn-chip shrink-0 bg-indigo-600 text-white hover:bg-indigo-500">${icon("copy", "w-4 h-4")}コピー</button>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-slate-500">
+              <span>グループID:</span><code class="font-mono text-slate-700 truncate">${esc(room.id)}</code>
+              <button type="button" data-action="copy" data-copy="${esc(room.id)}" data-label="グループIDをコピーしました" class="ml-auto text-indigo-600 font-semibold hover:underline shrink-0">コピー</button>
+            </div>
+          </div>
+
+          <div class="mt-5">
+            <div class="text-xs font-semibold text-slate-500 mb-2">メンバー</div>
+            <div class="-mx-2 max-h-64 overflow-y-auto scroll-thin">
+              ${members.map(({ id, u }) => `
+                <div class="flex items-center gap-3 px-2 py-2">
+                  ${withPresence(avatar(id, u?.name, "w-9 h-9 text-sm"), isOnline(u))}
+                  <div class="min-w-0 flex-1">
+                    <div class="text-sm font-medium text-slate-800 truncate">${esc(u?.name || id)}${id === state.me.id ? ` <span class="text-slate-400 font-normal">(あなた)</span>` : ""}</div>
+                    <div class="text-xs text-slate-400 truncate">@${esc(id)}</div>
+                  </div>
+                  ${id === room.createdBy ? `<span class="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full shrink-0">作成者</span>` : ""}
+                </div>`).join("")}
+            </div>
+          </div>
+
+          ${member
+            ? `<button type="button" data-action="leave-group" class="btn-danger-ghost w-full mt-5">${icon("logout", "w-5 h-5")}グループを退出</button>`
+            : `<button type="button" data-action="join-current" class="btn-primary w-full mt-5">このグループに参加する</button>`}
+        </div>`);
+    }
+
+    // ============================================================
+    // イベント
+    // ============================================================
+    const actions = {
+      "tab": (el) => setTab(el.dataset.tab),
+      "open-room": (el) => {
+        const id = el.dataset.id;
+        openRoom(id, state.rooms.find((r) => r.id === id) || state.groups.find((r) => r.id === id) || null);
+      },
+      "start-dm": (el) => startDM(el.dataset.id),
+      "join-group": (el) => joinGroup(el.dataset.id),
+      "join-current": () => joinGroup(state.activeRoomId),
+      "leave-group": () => leaveGroup(),
+      "create-group": () => openCreateGroup(),
+      "open-join": () => openJoinModal(),
+      "room-info": () => openRoomInfo(),
+      "profile": () => openProfile(),
+      "logout": () => logout(),
+      "copy": (el) => copyText(el.dataset.copy, el.dataset.label),
+      "back": () => exitRoom(),
+      "scroll-bottom": () => scrollToBottom(),
+    };
+
+    // フォーム送信（送信中はボタンを無効化し、エラーはフォーム内に表示）
+    const forms = {
+      "form-login": (fd) => loginWithId(fd.get("id")),
+      "form-signup": (fd) => signup(fd.get("name"), fd.get("custom") ? fd.get("id") : null),
+      "form-profile": (fd) => updateName(fd.get("name")),
+      "form-create-group": (fd) => createGroup(fd.get("name"), fd.getAll("members")),
+      "form-join": (fd) => joinGroup(parseJoinCode(fd.get("code"))),
+    };
+
+    function setLoginTab(tab) {
+      document.querySelectorAll("[data-login-tab].tab-btn").forEach((b) => b.classList.toggle("is-active", b.dataset.loginTab === tab));
+      $("#form-login").hidden = tab !== "login";
+      $("#form-signup").hidden = tab !== "signup";
+      document.querySelectorAll("#screen-login .form-error").forEach((e) => { e.hidden = true; });
+      if (!isCoarse()) (tab === "login" ? $("#login-id") : $("#signup-name")).focus();
+    }
+
+    function bindEvents() {
+      document.addEventListener("click", (e) => {
+        if (e.target.closest("[data-close]")) { closeModal(); return; }
+        const loginTab = e.target.closest("[data-login-tab]");
+        if (loginTab) { setLoginTab(loginTab.dataset.loginTab); return; }
+        const el = e.target.closest("[data-action]");
+        if (!el) return;
+        const fn = actions[el.dataset.action];
+        if (!fn) return;
+        e.preventDefault();
+        Promise.resolve()
+          .then(() => fn(el, e))
+          .catch((err) => { console.error(err); toast(errMsg(err), "error"); });
+      });
+
+      // role="button" の要素をキーボードでも操作可能に
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !$("#modal-root").hidden) { closeModal(); return; }
+        if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('[role="button"]')) { e.preventDefault(); e.target.click(); }
+      });
+
+      document.addEventListener("submit", async (e) => {
+        const form = e.target;
+        // form.id は <input name="id"> があるとその要素を返してしまうため getAttribute を使う
+        const handler = forms[form.getAttribute("id")];
+        if (!handler) return;
+        e.preventDefault();
+        const btn = form.querySelector('button[type="submit"]');
+        const errEl = form.querySelector(".form-error");
+        if (errEl) errEl.hidden = true;
+        const label = btn?.innerHTML;
+        if (btn) { btn.disabled = true; btn.innerHTML = `${spinner("w-4 h-4 border-2")}<span>処理中…</span>`; }
+        try {
+          await handler(new FormData(form));
+        } catch (err) {
+          console.error(err);
+          if (errEl?.isConnected) { errEl.textContent = errMsg(err); errEl.hidden = false; }
+          else toast(errMsg(err), "error");
+        } finally {
+          if (btn?.isConnected) { btn.disabled = false; btn.innerHTML = label; }
+        }
+      });
+
+      // 新規登録：ID を自分で決めるかどうか
+      $("#signup-custom").addEventListener("change", (e) => {
+        const on = e.target.checked;
+        $("#signup-id-wrap").hidden = !on;
+        $("#signup-btn").textContent = on ? "このIDではじめる" : "IDを発行してはじめる";
+        $("#signup-hint").textContent = on
+          ? "3〜20文字の半角英小文字・数字・「_」「-」が使えます。このIDで別の端末からもログインできます。"
+          : "ユーザーIDは自動で発行されます。発行されたIDを使えば、別の端末からも同じアカウントでログインできます。";
+        if (on) $("#signup-id").focus();
+      });
+
+      // 検索
+      $("#search").addEventListener("input", (e) => { state.search = e.target.value; renderSidebar(); });
+
+      // グループ作成モーダル：メンバー検索・選択数
+      document.addEventListener("input", (e) => {
+        if (e.target.id !== "cg-search") return;
+        const q = e.target.value.trim().toLowerCase();
+        document.querySelectorAll(".cg-row").forEach((row) => { row.hidden = !!q && !row.dataset.search.includes(q); });
+      });
+      document.addEventListener("change", (e) => {
+        if (e.target.name !== "members") return;
+        $("#cg-count").textContent = `${document.querySelectorAll('#cg-list input[name="members"]:checked').length}人選択中`;
+      });
+
+      // 入力欄
+      const input = $("#msg-input");
+      input.placeholder = isCoarse() ? "メッセージを入力" : "メッセージを入力（Enterで送信）";
+      input.addEventListener("input", () => {
+        autoGrow();
+        updateSendBtn();
+        if (state.activeRoomId) state.drafts[state.activeRoomId] = input.value;
+      });
+      input.addEventListener("keydown", (e) => {
+        // 日本語入力の変換確定(Enter)では送信しない
+        if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+        if (isCoarse()) return; // スマホは Enter = 改行、送信はボタンで
+        e.preventDefault();
+        send();
+      });
+      $("#composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
+      $("#send-btn").addEventListener("mousedown", (e) => e.preventDefault()); // 送信時にキーボードを閉じない
+
+      // メッセージ一覧を最下部までスクロールしたら「新着」ボタンを消す
+      $("#messages").addEventListener("scroll", (e) => {
+        const box = e.target;
+        if (box.scrollHeight - box.scrollTop - box.clientHeight < 40) $("#new-msg-btn").hidden = true;
+      }, { passive: true });
+
+      // スマホの「戻る」ボタン
+      window.addEventListener("popstate", () => {
+        if ($("#app").dataset.view !== "chat") return;
+        if (!$("#modal-root").hidden) closeModal();
+        closeRoom();
+      });
+
+      // タブの表示状態
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible" || !state.me) return;
+        touchPresence();
+        if (state.activeRoomId && state.messagesLoaded && isMember(currentRoom())) markRead(state.activeRoomId);
+        renderSidebar();
+      });
+
+      setInterval(() => touchPresence(), PRESENCE_INTERVAL);
+      setInterval(() => { renderSidebar(); renderChatHeader(); }, 60e3); // 「○分前」表示の更新
+    }
+
+    // iOS / Android でキーボード表示時に入力欄が隠れないよう、表示領域の高さに合わせる
+    function setupViewport() {
+      const vv = window.visualViewport;
+      if (!vv) return;
+      const root = document.documentElement;
+      const apply = () => {
+        if (Math.abs(vv.scale - 1) > 0.01) return; // ピンチズーム中は無視
+        const box = $("#messages");
+        const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 150;
+        root.style.setProperty("--app-h", `${vv.height}px`);
+        root.classList.add("has-vv");
+        window.scrollTo(0, 0);
+        if (nearBottom) box.scrollTop = box.scrollHeight;
+      };
+      vv.addEventListener("resize", apply);
+      apply();
+    }
+
+    // ============================================================
+    // 起動
+    // ============================================================
+    function main() {
+      hydrateIcons();
+      setupViewport();
+      bindEvents();
+
+      if (!firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith("YOUR_")) {
+        showScreen("setup");
+        return;
+      }
+
+      try {
+        const app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        try {
+          // オフラインキャッシュ（再訪時の読み取り回数を節約）
+          db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+        } catch {
+          db = getFirestore(app);
+        }
+      } catch (e) {
+        showError(e);
+        return;
+      }
+
+      showScreen("loading");
+      let booted = false;
+      onAuthStateChanged(auth, async (user) => {
+        if (!user) {
+          signInAnonymously(auth).catch(showError); // Firestore へのアクセス用に匿名ログイン
+          return;
+        }
+        state.uid = user.uid;
+        if (booted) return;
+        booted = true;
+        try {
+          const saved = store.get(LS_USER);
+          if (saved) {
+            const snap = await getDoc(doc(db, "users", saved));
+            if (snap.exists()) { await enterApp({ id: saved, ...snap.data() }); return; }
+            store.remove(LS_USER);
+          }
+          showScreen("login");
+          if (!isCoarse()) $("#login-id").focus();
+        } catch (e) {
+          showError(e);
+        }
+      });
+    }
+
+    main();
+  </script>
+</body>
+</html>
