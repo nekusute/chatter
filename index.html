@@ -120,8 +120,7 @@
         overflow-wrap: anywhere;
       }
       .bubble-mine { @apply rounded-2xl rounded-br-md bg-gradient-to-br from-indigo-500 to-violet-500 text-white; }
-      .bubble-other { @apply rounded-2xl rounded-bl-md bg-white text-slate-800 ring-1 ring-slate-200/70; }
-      .msg-time { @apply text-[10px] text-slate-400 mb-0.5 shrink-0 tabular-nums; }
+      .bubble-other { @apply rounded-2xl rounded-bl-md bg-white text-slate-800 ring-1 ring-slate-200/70; }      .msg-time { @apply text-[10px] text-slate-400 mb-0.5 shrink-0 tabular-nums; }
     }
   </style>
 </head>
@@ -326,6 +325,10 @@ const firebaseConfig = {
               <button type="button" data-action="join-current" class="btn-primary py-2.5 px-5">参加する</button>
             </div>
           </div>
+
+          <div id="notice-bar" class="border-t border-slate-100 bg-white px-4 pt-3 safe-bottom shrink-0 text-center text-sm text-slate-500" hidden>
+            このユーザーは退会しているため、メッセージを送信できません
+          </div>
         </div>
       </main>
     </div>
@@ -343,19 +346,19 @@ const firebaseConfig = {
     // ★ Firebase 設定：Firebase コンソールでコピーした値に書き換えてください
     // ============================================================
     const firebaseConfig = {
-      apiKey: "AIzaSyChgAmQJQ40r22EUnrYMP8LqmHCYJC2NJk",
-      authDomain: "chatter-2mcd2.firebaseapp.com",
-      projectId: "chatter-2mcd2",
-      storageBucket: "chatter-2mcd2.firebasestorage.app",
-      messagingSenderId: "486329312730",
-      appId: "1:486329312730:web:3943e95cee5d39338b4ce3",
+      apiKey: "AIzaSyDxLABHXavI_q6Ghl0ZCdcXKa9LTQJ7hek",
+      authDomain: "chatter-8e8fc.firebaseapp.com",
+      projectId: "chatter-8e8fc",
+      storageBucket: "chatter-8e8fc.firebasestorage.app",
+      messagingSenderId: "883677059221",
+      appId: "1:883677059221:web:4dbe0526ea49fe226a639c",
     };
 
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
     import {
       initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
-      doc, collection, getDoc, updateDoc, query, where, orderBy, limit, limitToLast,
+      doc, collection, getDoc, getDocs, updateDoc, query, where, orderBy, limit, limitToLast,
       onSnapshot, serverTimestamp, writeBatch, runTransaction, arrayUnion, arrayRemove,
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -369,6 +372,7 @@ const firebaseConfig = {
     const ONLINE_MS = 6 * 60 * 1000;        // この時間内に操作があれば「オンライン」
     const PRESENCE_INTERVAL = 5 * 60 * 1000; // 最終アクティブ時刻の更新間隔
     const LS_USER = "chatter:userId";
+    const DELETED_NAME = "退会したユーザー";
 
     let auth, db;
     const state = {
@@ -388,6 +392,9 @@ const firebaseConfig = {
       messagesLoaded: false,
       renderedIds: new Set(),
       drafts: {},
+      selectedMsgId: null,    // 送信取消メニューを開いているメッセージ
+      leavingRoomId: null,    // 自分で退出・削除中のルーム（「削除されました」通知を出さない）
+      accountDeleting: false,
       unsub: { users: null, rooms: null, groups: null, messages: null },
     };
     let readMap = {};
@@ -432,6 +439,7 @@ const firebaseConfig = {
       alert: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z",
       cog: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z",
       chevron: "M9 5l7 7-7 7",
+      trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
     };
     const icon = (name, cls = "w-5 h-5") =>
       `<svg class="${cls}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
@@ -486,7 +494,7 @@ const firebaseConfig = {
       if (diff < 30 * 86400e3) return `${Math.floor(diff / 86400e3)}日前`;
       return shortTime(t);
     }
-    const isOnline = (u) => !!u && Date.now() - ms(u.lastSeen) < ONLINE_MS;
+    const isOnline = (u) => !!u && !u.deleted && Date.now() - ms(u.lastSeen) < ONLINE_MS;
 
     // エラーメッセージを日本語に
     function errMsg(e) {
@@ -593,6 +601,7 @@ const firebaseConfig = {
       if (!ID_RE.test(id)) throw new Error("ユーザーIDは3〜20文字の半角英小文字・数字・「_」「-」で入力してください。");
       const snap = await getDoc(doc(db, "users", id));
       if (!snap.exists()) throw new Error("このユーザーIDは登録されていません。「新規登録」から作成してください。");
+      if (snap.data().deleted) throw new Error("このアカウントは削除されています。");
       await enterApp({ id, ...snap.data() });
     }
 
@@ -640,16 +649,24 @@ const firebaseConfig = {
         danger: true,
       });
       if (!ok) return;
+      resetSession();
+    }
+
+    // 購読を止めて状態を初期化し、ログイン画面へ戻す
+    function resetSession() {
       Object.values(state.unsub).forEach((u) => u?.());
       Object.assign(state, {
         me: null, users: new Map(), rooms: [], groups: [], usersLoaded: false, roomsLoaded: false, groupsLoaded: false,
         tab: "talk", search: "", activeRoomId: null, activeRoomFallback: null, messages: [], messagesLoaded: false,
-        renderedIds: new Set(), drafts: {}, unsub: { users: null, rooms: null, groups: null, messages: null },
+        renderedIds: new Set(), drafts: {}, selectedMsgId: null, leavingRoomId: null, accountDeleting: false,
+        unsub: { users: null, rooms: null, groups: null, messages: null },
       });
       store.remove(LS_USER);
+      closeModal();
       $("#search").value = "";
       $("#chat-room").hidden = true;
       $("#chat-empty").hidden = false;
+      $("#app").dataset.view = "list";
       document.title = "Chatter";
       showScreen("login");
     }
@@ -691,6 +708,12 @@ const firebaseConfig = {
         (snap) => {
           state.users = new Map(snap.docs.map((d) => [d.id, withId(d)]));
           const mine = state.users.get(state.me.id);
+          if (mine?.deleted && !state.accountDeleting) {
+            // 別の端末でアカウントが削除された
+            resetSession();
+            toast("このアカウントは削除されました", "error");
+            return;
+          }
           if (mine) state.me.name = mine.name;
           state.usersLoaded = true;
           renderSidebar();
@@ -702,8 +725,10 @@ const firebaseConfig = {
       state.unsub.rooms = onSnapshot(
         query(collection(db, "rooms"), where("members", "array-contains", state.me.id)),
         (snap) => {
+          const before = new Set(state.rooms.map((r) => r.id));
           state.rooms = snap.docs.map(withId).sort((a, b) => ms(b.updatedAt) - ms(a.updatedAt));
           state.roomsLoaded = true;
+          checkActiveRoomGone(before);
           renderSidebar();
           renderChatHeader();
         },
@@ -716,13 +741,24 @@ const firebaseConfig = {
       state.unsub.groups = onSnapshot(
         query(collection(db, "rooms"), where("type", "==", "group"), limit(100)),
         (snap) => {
+          const before = new Set(state.groups.map((r) => r.id));
           state.groups = snap.docs.map(withId).sort((a, b) => ms(b.updatedAt) - ms(a.updatedAt));
           state.groupsLoaded = true;
+          checkActiveRoomGone(before);
           renderSidebar();
           renderChatHeader();
         },
         onListenError,
       );
+    }
+
+    // 開いているトークが一覧から消えた（他の人に削除された）ら閉じる
+    function checkActiveRoomGone(before) {
+      const id = state.activeRoomId;
+      if (!id || !before.has(id) || state.leavingRoomId === id || state.accountDeleting) return;
+      if (state.rooms.some((r) => r.id === id) || state.groups.some((r) => r.id === id)) return;
+      exitRoom();
+      toast("このトークは削除されました");
     }
 
     // ============================================================
@@ -846,7 +882,7 @@ const firebaseConfig = {
     function renderUserList(q) {
       if (!state.usersLoaded) return skeleton();
       const users = [...state.users.values()]
-        .filter((u) => u.id !== state.me.id && (!q || u.name?.toLowerCase().includes(q) || u.id.includes(q)))
+        .filter((u) => u.id !== state.me.id && !u.deleted && (!q || u.name?.toLowerCase().includes(q) || u.id.includes(q)))
         .sort((a, b) => (isOnline(b) - isOnline(a)) || ms(b.lastSeen) - ms(a.lastSeen));
       if (!users.length) {
         return q
@@ -915,9 +951,11 @@ const firebaseConfig = {
       if (room.type === "dm") {
         const pid = partnerOf(room);
         const u = state.users.get(pid);
-        subtitle = isOnline(u)
-          ? `<span class="text-emerald-600 font-medium">● オンライン</span>`
-          : `@${esc(pid)}${u ? ` ・ 最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}`;
+        subtitle = u?.deleted
+          ? "退会済み"
+          : isOnline(u)
+            ? `<span class="text-emerald-600 font-medium">● オンライン</span>`
+            : `@${esc(pid)}${u ? ` ・ 最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}`;
       } else {
         subtitle = `${room.members?.length ?? 0}人のメンバー`;
       }
@@ -928,8 +966,10 @@ const firebaseConfig = {
           <div class="text-xs text-slate-500 truncate">${subtitle}</div>
         </div>`;
       const member = isMember(room);
-      $("#composer").hidden = !member;
+      const partnerGone = room.type === "dm" && !!state.users.get(partnerOf(room))?.deleted;
+      $("#composer").hidden = !member || partnerGone;
       $("#join-bar").hidden = member;
+      $("#notice-bar").hidden = !(member && partnerGone);
     }
 
     function renderMessages(first = false) {
@@ -961,11 +1001,18 @@ const firebaseConfig = {
         const cont = prev && prev.senderId === m.senderId && d - prev.d < 5 * 60e3; // 連続投稿はまとめる
         const body = linkify(esc(m.text), mine);
         if (mine) {
+          // 自分のメッセージはクリック（タップ）で「送信取消」ボタンを表示
+          const selected = state.selectedMsgId === m.id;
+          const selectable = m.pending ? "" : `data-action="select-msg" data-id="${esc(m.id)}" title="クリックで送信取消"`;
           html += `
-            <div class="flex justify-end items-end gap-1.5 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""}">
+            <div class="flex justify-end items-end gap-1.5 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""}" data-msg-id="${esc(m.id)}">
               <span class="msg-time">${m.pending ? "送信中…" : hhmm(d)}</span>
-              <div class="bubble bubble-mine">${body}</div>
-            </div>`;
+              <div class="bubble bubble-mine ${m.pending ? "" : "cursor-pointer"} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
+            </div>
+            ${selected ? `
+            <div class="flex justify-end mt-1.5 fade-in" data-msg-id="${esc(m.id)}">
+              <button type="button" data-action="unsend" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-rose-600 ring-1 ring-rose-200 shadow-sm hover:bg-rose-50">${icon("trash", "w-3.5 h-3.5")}送信取消</button>
+            </div>` : ""}`;
         } else {
           const name = userName(m.senderId, m.senderName);
           html += `
@@ -1018,6 +1065,7 @@ const firebaseConfig = {
         state.messages = [];
         state.messagesLoaded = false;
         state.renderedIds = new Set();
+        state.selectedMsgId = null;
         $("#chat-empty").hidden = true;
         $("#chat-room").hidden = false;
         $("#new-msg-btn").hidden = true;
@@ -1059,6 +1107,8 @@ const firebaseConfig = {
       state.unsub.messages = null;
       state.activeRoomId = null;
       state.activeRoomFallback = null;
+      state.leavingRoomId = null;
+      state.selectedMsgId = null;
       state.messages = [];
       $("#chat-room").hidden = true;
       $("#chat-empty").hidden = false;
@@ -1161,6 +1211,7 @@ const firebaseConfig = {
         danger: true,
       });
       if (!ok) return;
+      state.leavingRoomId = room.id;
       const ref = doc(db, "rooms", room.id);
       const text = `${state.me.name} さんが退出しました`;
       const batch = writeBatch(db);
@@ -1173,6 +1224,129 @@ const firebaseConfig = {
       await batch.commit();
       exitRoom();
       toast("グループを退出しました");
+    }
+
+    // ============================================================
+    // 削除（送信取消 / トーク削除 / アカウント削除）
+    // ============================================================
+
+    // 送信取消：メッセージを完全に削除する（「取り消しました」等の表示は残さない）
+    async function unsendMessage(msgId) {
+      const room = currentRoom();
+      const m = state.messages.find((x) => x.id === msgId);
+      if (!room || !m || m.senderId !== state.me.id) return;
+      state.selectedMsgId = null;
+      const roomRef = doc(db, "rooms", room.id);
+      const batch = writeBatch(db);
+      batch.delete(doc(roomRef, "messages", msgId));
+      // 一覧のプレビューが取り消したメッセージなら、1つ前のメッセージに戻す
+      const lm = room.lastMessage;
+      if (lm && lm.senderId === m.senderId && ms(lm.createdAt) === ms(m.createdAt)) {
+        const prev = state.messages.filter((x) => x.id !== msgId).at(-1);
+        batch.update(roomRef, prev
+          ? { lastMessage: { type: prev.type, text: prev.text.slice(0, 100), senderId: prev.senderId, senderName: prev.senderName, createdAt: prev.createdAt }, updatedAt: prev.createdAt }
+          : { lastMessage: null, updatedAt: room.createdAt || serverTimestamp() });
+      }
+      await batch.commit();
+    }
+
+    // DM は参加者なら誰でも、グループは作成者（作成者が退会済みならメンバー）が削除できる
+    function canDeleteRoom(room) {
+      if (!room || !state.rooms.some((r) => r.id === room.id)) return false; // 未作成の DM・未参加のグループ
+      if (room.type === "dm") return true;
+      return room.createdBy === state.me.id || !!state.users.get(room.createdBy)?.deleted;
+    }
+
+    async function deleteRoom() {
+      const room = currentRoom();
+      if (!canDeleteRoom(room)) return;
+      const isDm = room.type === "dm";
+      const ok = await confirmDialog({
+        title: isDm ? "トークを削除しますか？" : "グループを削除しますか？",
+        message: isDm
+          ? `<b class="text-slate-800">${esc(roomTitle(room))}</b> とのトークとすべてのメッセージを削除します。相手の画面からも消え、元に戻せません。`
+          : `グループ「<b class="text-slate-800">${esc(room.name)}</b>」とすべてのメッセージを削除します。全メンバーの画面から消え、元に戻せません。`,
+        ok: "削除する",
+        danger: true,
+      });
+      if (!ok) return;
+      state.leavingRoomId = room.id;
+      const roomRef = doc(db, "rooms", room.id);
+      const deleteMessages = async () => {
+        const snap = await getDocs(collection(roomRef, "messages"));
+        for (let i = 0; i < snap.docs.length; i += 450) { // 1バッチ最大500件
+          const batch = writeBatch(db);
+          snap.docs.slice(i, i + 450).forEach((d) => batch.delete(d.ref));
+          await batch.commit();
+        }
+      };
+      try {
+        await deleteMessages();
+        const batch = writeBatch(db);
+        batch.delete(roomRef);
+        await batch.commit();
+        await deleteMessages(); // 削除中に届いたメッセージも消す
+      } catch (e) {
+        state.leavingRoomId = null;
+        throw e;
+      }
+      exitRoom();
+      toast(isDm ? "トークを削除しました" : "グループを削除しました");
+    }
+
+    function openDeleteAccount() {
+      openModal(`
+        ${modalHead("アカウントを削除")}
+        <form id="form-delete-account" class="px-6 pb-6 space-y-4">
+          <ul class="text-sm text-slate-600 leading-relaxed space-y-1.5 list-disc pl-5">
+            <li>プロフィールが削除され、参加中のグループから退出します</li>
+            <li>送信済みのメッセージは相手の画面に残り、「${DELETED_NAME}」と表示されます</li>
+            <li>ユーザーID <b class="text-slate-800">@${esc(state.me.id)}</b> は今後だれも使えなくなります</li>
+            <li class="text-rose-600 font-semibold">この操作は取り消せません</li>
+          </ul>
+          <div>
+            <label class="label" for="delete-confirm">確認のため、ユーザーID「${esc(state.me.id)}」を入力してください</label>
+            <input id="delete-confirm" name="confirm" class="input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${esc(state.me.id)}" />
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
+            <button type="submit" class="btn-danger flex-1">削除する</button>
+          </div>
+        </form>`);
+    }
+
+    // アカウント削除：グループから退出し、ユーザー文書を「退会済み」にする
+    // （文書自体は残して同じIDの再登録を防ぐ。別の人が過去の DM を見られないようにするため）
+    async function deleteAccount(confirmText) {
+      if (normId(confirmText) !== state.me.id) throw new Error("入力したユーザーIDが一致しません。");
+      const me = { ...state.me };
+      const text = `${me.name} さんが退会しました`;
+      const groups = state.rooms.filter((r) => r.type === "group" && r.members?.includes(me.id));
+      state.accountDeleting = true;
+      try {
+        let batch = writeBatch(db);
+        let count = 0;
+        for (const g of groups) {
+          const ref = doc(db, "rooms", g.id);
+          batch.update(ref, {
+            members: arrayRemove(me.id),
+            lastMessage: { type: "system", text, senderId: me.id, senderName: me.name, createdAt: serverTimestamp() },
+            updatedAt: serverTimestamp(),
+          });
+          batch.set(doc(collection(ref, "messages")), systemMessage(text));
+          count += 2;
+          if (count >= 450) { await batch.commit(); batch = writeBatch(db); count = 0; }
+        }
+        batch.update(doc(db, "users", me.id), { name: DELETED_NAME, deleted: true, deletedAt: serverTimestamp() });
+        await batch.commit();
+      } catch (e) {
+        state.accountDeleting = false;
+        throw e;
+      }
+      store.remove(`chatter:read:${me.id}`);
+      resetSession();
+      toast("アカウントを削除しました");
     }
 
     async function updateName(raw) {
@@ -1277,11 +1451,12 @@ const firebaseConfig = {
             <p class="form-error" hidden></p>
           </form>
           <button type="button" data-action="logout" class="btn-danger-ghost w-full mt-6">${icon("logout", "w-5 h-5")}ログアウト</button>
+          <button type="button" data-action="delete-account" class="w-full mt-3 py-2 text-sm text-slate-400 hover:text-rose-600 transition">アカウントを削除</button>
         </div>`);
     }
 
     function openCreateGroup() {
-      const users = [...state.users.values()].filter((u) => u.id !== state.me.id).sort((a, b) => (isOnline(b) - isOnline(a)) || String(a.name).localeCompare(String(b.name), "ja"));
+      const users = [...state.users.values()].filter((u) => u.id !== state.me.id && !u.deleted).sort((a, b) => (isOnline(b) - isOnline(a)) || String(a.name).localeCompare(String(b.name), "ja"));
       openModal(`
         ${modalHead("グループを作成", "メンバーは招待リンクからあとで参加することもできます")}
         <form id="form-create-group" class="pb-6">
@@ -1341,8 +1516,9 @@ const firebaseConfig = {
             <div class="flex justify-center">${withPresence(avatar(pid, roomTitle(room), "w-20 h-20 text-3xl"), isOnline(u))}</div>
             <div class="mt-3 font-bold text-lg text-slate-900">${esc(roomTitle(room))}</div>
             <div class="text-sm text-slate-500">@${esc(pid)}</div>
-            <div class="text-xs mt-1 ${isOnline(u) ? "text-emerald-600" : "text-slate-400"}">${isOnline(u) ? "オンライン" : u ? `最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}</div>
+            <div class="text-xs mt-1 ${isOnline(u) ? "text-emerald-600" : "text-slate-400"}">${u?.deleted ? "退会済み" : isOnline(u) ? "オンライン" : u ? `最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}</div>
             <button type="button" data-action="copy" data-copy="${esc(pid)}" data-label="ユーザーIDをコピーしました" class="btn-secondary w-full mt-6">${icon("copy", "w-5 h-5")}ユーザーIDをコピー</button>
+            ${canDeleteRoom(room) ? `<button type="button" data-action="delete-room" class="btn-danger-ghost w-full mt-3">${icon("trash", "w-5 h-5")}トークを削除</button>` : ""}
           </div>`);
         return;
       }
@@ -1392,6 +1568,7 @@ const firebaseConfig = {
           ${member
             ? `<button type="button" data-action="leave-group" class="btn-danger-ghost w-full mt-5">${icon("logout", "w-5 h-5")}グループを退出</button>`
             : `<button type="button" data-action="join-current" class="btn-primary w-full mt-5">このグループに参加する</button>`}
+          ${canDeleteRoom(room) ? `<button type="button" data-action="delete-room" class="w-full mt-3 py-2 text-sm font-semibold text-rose-600 hover:underline">${icon("trash", "w-4 h-4 inline -mt-0.5")} グループを削除（全員の画面から消えます）</button>` : ""}
         </div>`);
     }
 
@@ -1416,6 +1593,13 @@ const firebaseConfig = {
       "copy": (el) => copyText(el.dataset.copy, el.dataset.label),
       "back": () => exitRoom(),
       "scroll-bottom": () => scrollToBottom(),
+      "select-msg": (el) => {
+        state.selectedMsgId = state.selectedMsgId === el.dataset.id ? null : el.dataset.id;
+        renderMessages();
+      },
+      "unsend": (el) => unsendMessage(el.dataset.id),
+      "delete-room": () => deleteRoom(),
+      "delete-account": () => openDeleteAccount(),
     };
 
     // フォーム送信（送信中はボタンを無効化し、エラーはフォーム内に表示）
@@ -1425,6 +1609,7 @@ const firebaseConfig = {
       "form-profile": (fd) => updateName(fd.get("name")),
       "form-create-group": (fd) => createGroup(fd.get("name"), fd.getAll("members")),
       "form-join": (fd) => joinGroup(parseJoinCode(fd.get("code"))),
+      "form-delete-account": (fd) => deleteAccount(fd.get("confirm")),
     };
 
     function setLoginTab(tab) {
@@ -1440,6 +1625,9 @@ const firebaseConfig = {
         if (e.target.closest("[data-close]")) { closeModal(); return; }
         const loginTab = e.target.closest("[data-login-tab]");
         if (loginTab) { setLoginTab(loginTab.dataset.loginTab); return; }
+        // 送信取消メニューは、そのメッセージ以外をクリックしたら閉じる
+        if (state.selectedMsgId && !e.target.closest("[data-msg-id]")) { state.selectedMsgId = null; renderMessages(); }
+        if (e.target.closest("a[href]")) return; // メッセージ内のリンクは通常どおり開く
         const el = e.target.closest("[data-action]");
         if (!el) return;
         const fn = actions[el.dataset.action];
@@ -1453,6 +1641,7 @@ const firebaseConfig = {
       // role="button" の要素をキーボードでも操作可能に
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape" && !$("#modal-root").hidden) { closeModal(); return; }
+        if (e.key === "Escape" && state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); return; }
         if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('[role="button"]')) { e.preventDefault(); e.target.click(); }
       });
 
@@ -1605,7 +1794,7 @@ const firebaseConfig = {
           const saved = store.get(LS_USER);
           if (saved) {
             const snap = await getDoc(doc(db, "users", saved));
-            if (snap.exists()) { await enterApp({ id: saved, ...snap.data() }); return; }
+            if (snap.exists() && !snap.data().deleted) { await enterApp({ id: saved, ...snap.data() }); return; }
             store.remove(LS_USER);
           }
           showScreen("login");
