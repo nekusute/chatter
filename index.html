@@ -142,7 +142,7 @@
         </div>
         <ol class="space-y-2.5 text-sm text-slate-600 list-decimal pl-5 leading-relaxed">
           <li>Firebase コンソールでプロジェクトを作成し、ウェブアプリを登録する</li>
-          <li>Authentication で <b class="text-slate-800">匿名</b> ログインを有効にする</li>
+          <li>Authentication で <b class="text-slate-800">メール / パスワード</b> ログインを有効にする</li>
           <li>Firestore Database を作成し、README のセキュリティルールを公開する</li>
           <li>この HTML 内の <code class="px-1.5 py-0.5 rounded bg-slate-100 text-indigo-600">firebaseConfig</code> を自分の値に書き換える</li>
         </ol>
@@ -196,7 +196,7 @@ const firebaseConfig = {
             <button type="button" data-login-tab="signup" class="tab-btn">新規登録</button>
           </div>
 
-          <!-- 既存IDでログイン -->
+          <!-- ユーザーIDとパスワードでログイン -->
           <form id="form-login" class="space-y-4" novalidate>
             <div>
               <label for="login-id" class="label">ユーザーID</label>
@@ -204,6 +204,10 @@ const firebaseConfig = {
                 <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">@</span>
                 <input id="login-id" name="id" class="input pl-9" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="your-id" required />
               </div>
+            </div>
+            <div>
+              <label for="login-password" class="label">パスワード</label>
+              <input id="login-password" name="password" type="password" class="input" autocomplete="current-password" required />
             </div>
             <p class="form-error" hidden></p>
             <button type="submit" class="btn-primary w-full"><span data-icon="login"></span>ログイン</button>
@@ -225,11 +229,19 @@ const firebaseConfig = {
             <div id="signup-id-wrap" hidden>
               <div class="relative">
                 <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">@</span>
-                <input id="signup-id" name="id" class="input pl-9" maxlength="20" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="3〜20文字の英小文字・数字・_ -" />
+                <input id="signup-id" name="id" class="input pl-9" maxlength="20" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="3〜20文字の英小文字・数字・_ -" />
               </div>
             </div>
+            <div>
+              <label for="signup-password" class="label">パスワード <span class="text-slate-400 font-normal">（6文字以上）</span></label>
+              <input id="signup-password" name="password" type="password" class="input" autocomplete="new-password" />
+            </div>
+            <div>
+              <label for="signup-password2" class="label">パスワード（確認）</label>
+              <input id="signup-password2" name="password2" type="password" class="input" autocomplete="new-password" />
+            </div>
             <div id="signup-hint" class="rounded-2xl bg-indigo-50 text-indigo-700 text-xs leading-relaxed px-4 py-3">
-              ユーザーIDは自動で発行されます。発行されたIDを使えば、別の端末からも同じアカウントでログインできます。
+              ユーザーIDは自動で発行されます。発行されたIDとパスワードで、別の端末からも同じアカウントにログインできます。
             </div>
             <p class="form-error" hidden></p>
             <button type="submit" id="signup-btn" class="btn-primary w-full">IDを発行してはじめる</button>
@@ -355,10 +367,13 @@ const firebaseConfig = {
     };
 
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import {
+      getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
+      EmailAuthProvider, reauthenticateWithCredential, updatePassword,
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
     import {
       initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
-      doc, collection, getDoc, getDocs, updateDoc, query, where, orderBy, limit, limitToLast,
+      doc, collection, getDoc, getDocs, setDoc, updateDoc, query, where, orderBy, limit, limitToLast,
       onSnapshot, serverTimestamp, writeBatch, runTransaction, arrayUnion, arrayRemove,
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -371,7 +386,8 @@ const firebaseConfig = {
     const MAX_TEXT = 2000;                  // 1メッセージの最大文字数
     const ONLINE_MS = 6 * 60 * 1000;        // この時間内に操作があれば「オンライン」
     const PRESENCE_INTERVAL = 5 * 60 * 1000; // 最終アクティブ時刻の更新間隔
-    const LS_USER = "chatter:userId";
+    const LOGIN_EMAIL_DOMAIN = "chatter.local"; // ログイン用メールアドレス「<ユーザーID>@chatter.local」（firestore.rules と合わせる）
+    const MIN_PASSWORD = 6;                 // Firebase Authentication の最小文字数
     const DELETED_NAME = "退会したユーザー";
 
     let auth, db;
@@ -440,6 +456,7 @@ const firebaseConfig = {
       cog: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z",
       chevron: "M9 5l7 7-7 7",
       trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
+      key: "M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z",
     };
     const icon = (name, cls = "w-5 h-5") =>
       `<svg class="${cls}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
@@ -504,9 +521,19 @@ const firebaseConfig = {
         "unavailable": "サーバーに接続できません。ネットワーク接続と、Firestore データベースが作成済みかを確認してください。",
         "not-found": "データが見つかりません。Firestore データベースが作成済みか確認してください。",
         "failed-precondition": "Firestore の前提条件エラーです。データベースが作成済みか確認してください。",
-        "auth/operation-not-allowed": "匿名認証が無効です。Firebase コンソールの Authentication で「匿名」を有効にしてください。",
-        "auth/admin-restricted-operation": "匿名認証が無効です。Firebase コンソールの Authentication で「匿名」を有効にしてください。",
-        "auth/configuration-not-found": "Authentication が未設定です。Firebase コンソールで Authentication を開始し、「匿名」を有効にしてください。",
+        "auth/invalid-credential": "ユーザーIDまたはパスワードが正しくありません。",
+        "auth/invalid-login-credentials": "ユーザーIDまたはパスワードが正しくありません。",
+        "auth/wrong-password": "パスワードが正しくありません。",
+        "auth/user-not-found": "このユーザーIDは登録されていません。「新規登録」から作成してください。",
+        "auth/email-already-in-use": "このユーザーIDはすでに使われています。別のIDを入力してください。",
+        "auth/weak-password": `パスワードは${MIN_PASSWORD}文字以上で入力してください。`,
+        "auth/missing-password": "パスワードを入力してください。",
+        "auth/too-many-requests": "試行回数が多すぎます。しばらく待ってからもう一度お試しください。",
+        "auth/user-disabled": "このアカウントは無効になっています。",
+        "auth/requires-recent-login": "セキュリティのため、一度ログアウトしてログインし直してからお試しください。",
+        "auth/operation-not-allowed": "メール/パスワード認証が無効です。Firebase コンソールの Authentication で「メール / パスワード」を有効にしてください。",
+        "auth/admin-restricted-operation": "メール/パスワード認証が無効です。Firebase コンソールの Authentication で「メール / パスワード」を有効にしてください。",
+        "auth/configuration-not-found": "Authentication が未設定です。Firebase コンソールで Authentication を開始し、「メール / パスワード」を有効にしてください。",
         "auth/invalid-api-key": "APIキーが正しくありません。firebaseConfig を確認してください。",
         "auth/api-key-not-valid.-please-pass-a-valid-api-key.": "APIキーが正しくありません。firebaseConfig を確認してください。",
         "auth/unauthorized-domain": "このドメインは許可されていません。Authentication の「承認済みドメイン」に追加してください。",
@@ -588,7 +615,24 @@ const firebaseConfig = {
     // ============================================================
     // ログイン / 新規登録 / ログアウト
     // ============================================================
+    // ログインには Firebase Authentication のメール/パスワード認証を使う（メールアドレス = <ユーザーID>@chatter.local）
     const normId = (raw) => String(raw ?? "").trim().replace(/^@/, "").toLowerCase();
+    const emailOf = (id) => `${id}@${LOGIN_EMAIL_DOMAIN}`;
+    function idOfEmail(email) {
+      const [id, domain] = String(email ?? "").split("@");
+      return domain === LOGIN_EMAIL_DOMAIN && ID_RE.test(id) ? id : null;
+    }
+    const ID_FORMAT_ERROR = "ユーザーIDは3〜20文字の半角英小文字・数字・「_」「-」で入力してください。";
+    const BAD_CREDENTIAL = ["auth/invalid-credential", "auth/invalid-login-credentials", "auth/wrong-password", "auth/user-not-found"];
+    // ログインを取り消すべきエラー（削除済みのアカウントなど）。通信エラーと区別する
+    const accountError = (msg) => Object.assign(new Error(msg), { code: "chatter/account" });
+
+    function checkNewPassword(password, password2) {
+      const pw = String(password ?? "");
+      if (pw.length < MIN_PASSWORD) throw new Error(`パスワードは${MIN_PASSWORD}文字以上で入力してください。`);
+      if (pw !== String(password2 ?? "")) throw new Error("パスワード（確認）が一致しません。");
+      return pw;
+    }
 
     function generateId() {
       const chars = "abcdefghjkmnpqrstuvwxyz23456789"; // 紛らわしい文字(i,l,o,0,1)を除外
@@ -596,31 +640,42 @@ const firebaseConfig = {
       return Array.from(buf, (n) => chars[n % chars.length]).join("");
     }
 
-    async function loginWithId(raw) {
-      const id = normId(raw);
-      if (!ID_RE.test(id)) throw new Error("ユーザーIDは3〜20文字の半角英小文字・数字・「_」「-」で入力してください。");
-      const snap = await getDoc(doc(db, "users", id));
-      if (!snap.exists()) throw new Error("このユーザーIDは登録されていません。「新規登録」から作成してください。");
-      if (snap.data().deleted) throw new Error("このアカウントは削除されています。");
-      await enterApp({ id, ...snap.data() });
+    async function loginWithId(rawId, rawPassword) {
+      const id = normId(rawId);
+      const password = String(rawPassword ?? "");
+      if (!ID_RE.test(id)) throw new Error(ID_FORMAT_ERROR);
+      if (!password) throw new Error("パスワードを入力してください。");
+      try {
+        await signInWithEmailAndPassword(auth, emailOf(id), password);
+      } catch (e) {
+        if (!BAD_CREDENTIAL.includes(e.code)) throw e;
+        const snap = await getDoc(doc(db, "users", id));
+        if (!snap.exists()) throw new Error("このユーザーIDは登録されていません。「新規登録」から作成してください。");
+        if (snap.data().deleted) throw new Error("このアカウントは削除されています。");
+        if (!snap.data().uid) { openSetPassword(id); return; } // パスワード導入前に作ったID
+        throw new Error("パスワードが正しくありません。");
+      }
+      await enterWithAuthUser();
     }
 
-    async function signup(nameRaw, customRaw) {
+    async function signup(nameRaw, customRaw, password, password2) {
       const name = String(nameRaw ?? "").trim().slice(0, 30);
       const custom = customRaw == null ? null : normId(customRaw);
-      if (custom !== null && !ID_RE.test(custom)) throw new Error("ユーザーIDは3〜20文字の半角英小文字・数字・「_」「-」で入力してください。");
+      if (custom !== null && !ID_RE.test(custom)) throw new Error(ID_FORMAT_ERROR);
+      const pw = checkNewPassword(password, password2);
 
       for (let attempt = 0; attempt < 5; attempt++) {
         const id = custom ?? generateId();
-        const ref = doc(db, "users", id);
-        // 同じIDが同時に作られないよう、トランザクションで「存在しなければ作成」
-        const created = await runTransaction(db, async (tx) => {
-          if ((await tx.get(ref)).exists()) return false;
-          tx.set(ref, { name: name || id, createdAt: serverTimestamp(), lastSeen: serverTimestamp() });
-          return true;
-        });
-        if (created) {
-          await enterApp({ id, name: name || id });
+        // 退会済みのIDやパスワード導入前のIDは Authentication に無いため、ユーザー文書でも確認する
+        if (!(await getDoc(doc(db, "users", id))).exists()) {
+          try {
+            await createUserWithEmailAndPassword(auth, emailOf(id), pw);
+          } catch (e) {
+            if (e.code !== "auth/email-already-in-use") throw e;
+            if (custom) throw e;
+            continue;
+          }
+          await enterWithAuthUser(name || id);
           showWelcome();
           return;
         }
@@ -629,9 +684,85 @@ const firebaseConfig = {
       throw new Error("IDの発行に失敗しました。もう一度お試しください。");
     }
 
+    // パスワード導入前に作ったID：最初にパスワードを設定した人のアカウントになる
+    function openSetPassword(id) {
+      openModal(`
+        ${modalHead("パスワードを設定", `<b class="text-slate-800">@${esc(id)}</b> にはまだパスワードが設定されていません。`)}
+        <form id="form-set-password" class="px-6 pb-6 space-y-4">
+          <input type="text" name="id" value="${esc(id)}" autocomplete="username" hidden />
+          <p class="text-sm text-slate-600 leading-relaxed">新しいパスワードを設定してログインします。次回からはこのパスワードが必要です。</p>
+          <div>
+            <label class="label" for="sp-password">新しいパスワード <span class="text-slate-400 font-normal">（${MIN_PASSWORD}文字以上）</span></label>
+            <input id="sp-password" name="password" type="password" class="input" autocomplete="new-password" autofocus />
+          </div>
+          <div>
+            <label class="label" for="sp-password2">新しいパスワード（確認）</label>
+            <input id="sp-password2" name="password2" type="password" class="input" autocomplete="new-password" />
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
+            <button type="submit" class="btn-primary flex-1">設定してログイン</button>
+          </div>
+        </form>`);
+    }
+
+    async function setLegacyPassword(rawId, password, password2) {
+      const id = normId(rawId);
+      const pw = checkNewPassword(password, password2);
+      const snap = await getDoc(doc(db, "users", id));
+      if (!snap.exists() || snap.data().deleted || snap.data().uid) throw new Error("このユーザーIDにはパスワードを設定できません。");
+      await createUserWithEmailAndPassword(auth, emailOf(id), pw);
+      await enterWithAuthUser();
+      closeModal();
+      toast("パスワードを設定しました");
+    }
+
+    // ログイン中のアカウントのユーザー文書を読み込んで（無ければ作成して）アプリに入る
+    async function enterWithAuthUser(newName = null) {
+      const user = auth.currentUser;
+      const id = idOfEmail(user?.email);
+      const reject = async (msg) => { await signOut(auth).catch(() => {}); throw accountError(msg); };
+      if (!id) return reject("このアカウントではログインできません。");
+      const ref = doc(db, "users", id);
+      const snap = await getDoc(ref);
+      let profile;
+      if (!snap.exists()) {
+        // 新規登録（登録の途中で中断していた場合もここで作成する）
+        profile = { name: newName || id };
+        await setDoc(ref, { name: profile.name, uid: user.uid, createdAt: serverTimestamp(), lastSeen: serverTimestamp() });
+      } else {
+        profile = snap.data();
+        if (profile.deleted) return reject("このアカウントは削除されています。");
+        if (!profile.uid) await updateDoc(ref, { uid: user.uid, lastSeen: serverTimestamp() }); // パスワード導入前に作ったID
+        else if (profile.uid !== user.uid) return reject("このユーザーIDは別のアカウントで使われています。");
+      }
+      await enterApp({ id, ...profile });
+    }
+
+    // 本人確認のため、パスワードで再認証する
+    async function reauth(password) {
+      if (!password) throw new Error("パスワードを入力してください。");
+      try {
+        await reauthenticateWithCredential(auth.currentUser, EmailAuthProvider.credential(emailOf(state.me.id), password));
+      } catch (e) {
+        if (BAD_CREDENTIAL.includes(e.code)) throw new Error("パスワードが正しくありません。");
+        throw e;
+      }
+    }
+
+    async function changePassword(current, password, password2) {
+      const pw = checkNewPassword(password, password2);
+      await reauth(String(current ?? ""));
+      await updatePassword(auth.currentUser, pw);
+      closeModal();
+      toast("パスワードを変更しました");
+    }
+
     async function enterApp(user) {
+      state.uid = auth.currentUser.uid;
       state.me = { id: user.id, name: user.name || user.id };
-      store.set(LS_USER, user.id);
+      document.querySelectorAll('#screen-login input[type="password"]').forEach((el) => { el.value = ""; });
       readMap = store.json(`chatter:read:${user.id}`, {});
       touchPresence(true);
       subscribeCore();
@@ -644,7 +775,7 @@ const firebaseConfig = {
     async function logout() {
       const ok = await confirmDialog({
         title: "ログアウトしますか？",
-        message: `再びログインするにはユーザーID <b class="text-slate-800">@${esc(state.me.id)}</b> が必要です。忘れないようにメモしておきましょう。`,
+        message: `再びログインするにはユーザーID <b class="text-slate-800">@${esc(state.me.id)}</b> とパスワードが必要です。`,
         ok: "ログアウト",
         danger: true,
       });
@@ -652,16 +783,16 @@ const firebaseConfig = {
       resetSession();
     }
 
-    // 購読を止めて状態を初期化し、ログイン画面へ戻す
+    // 購読を止めてログアウトし、状態を初期化してログイン画面へ戻す
     function resetSession() {
       Object.values(state.unsub).forEach((u) => u?.());
       Object.assign(state, {
-        me: null, users: new Map(), rooms: [], groups: [], usersLoaded: false, roomsLoaded: false, groupsLoaded: false,
+        uid: null, me: null, users: new Map(), rooms: [], groups: [], usersLoaded: false, roomsLoaded: false, groupsLoaded: false,
         tab: "talk", search: "", activeRoomId: null, activeRoomFallback: null, messages: [], messagesLoaded: false,
         renderedIds: new Set(), drafts: {}, selectedMsgId: null, leavingRoomId: null, accountDeleting: false,
         unsub: { users: null, rooms: null, groups: null, messages: null },
       });
-      store.remove(LS_USER);
+      signOut(auth).catch((e) => console.warn(e));
       closeModal();
       $("#search").value = "";
       $("#chat-room").hidden = true;
@@ -669,6 +800,7 @@ const firebaseConfig = {
       $("#app").dataset.view = "list";
       document.title = "Chatter";
       showScreen("login");
+      setLoginTab("login");
     }
 
     function showWelcome() {
@@ -676,11 +808,12 @@ const firebaseConfig = {
         <div class="p-6 sm:p-8 text-center">
           <div class="text-5xl mb-3">🎉</div>
           <h2 class="text-xl font-bold text-slate-900">ようこそ、${esc(state.me.name)} さん！</h2>
-          <p class="text-sm text-slate-500 mt-2 leading-relaxed">これがあなたのユーザーIDです。<br>別の端末やブラウザからログインするときに使うので、メモしておきましょう。</p>
+          <p class="text-sm text-slate-500 mt-2 leading-relaxed">これがあなたのユーザーIDです。<br>別の端末やブラウザからは、このIDとパスワードでログインします。</p>
           <div class="mt-5 flex items-center gap-2 rounded-2xl bg-indigo-50 ring-1 ring-indigo-100 p-2 pl-5">
             <span class="flex-1 text-left text-xl font-bold text-indigo-700 tracking-wide truncate">@${esc(state.me.id)}</span>
             <button type="button" data-action="copy" data-copy="${esc(state.me.id)}" data-label="ユーザーIDをコピーしました" class="btn-chip bg-white text-indigo-600 shadow-sm hover:bg-indigo-100">${icon("copy", "w-4 h-4")}コピー</button>
           </div>
+          <p class="mt-3 text-xs text-amber-700 bg-amber-50 rounded-xl px-3 py-2 leading-relaxed">パスワードを忘れると再設定できません。IDと一緒に忘れないよう保管してください。</p>
           <button type="button" data-close class="btn-primary w-full mt-6">はじめる</button>
         </div>`);
     }
@@ -700,7 +833,20 @@ const firebaseConfig = {
     // Firestore 購読
     // ============================================================
     const withId = (d) => ({ id: d.id, ...d.data({ serverTimestamps: "estimate" }) });
-    const onListenError = (e) => { console.error(e); toast(errMsg(e), "error"); };
+    async function onListenError(e) {
+      const me = state.me;
+      if (!me || state.accountDeleting) return; // 退会・ログアウトの途中
+      console.error(e);
+      // 別のタブでのログアウトや別の端末での退会で読み取れなくなった場合は、エラーを出さずにログイン画面へ戻す
+      if (e.code === "permission-denied") {
+        await new Promise((r) => setTimeout(r, 2000)); // 別のタブでのログアウトがこのタブに伝わるのを待つ
+        if (state.me !== me || !auth.currentUser) return;
+        const snap = await getDoc(doc(db, "users", me.id)).catch(() => null);
+        if (state.me !== me) return;
+        if (snap?.data()?.deleted) { resetSession(); toast("このアカウントは削除されました", "error"); return; }
+      }
+      toast(errMsg(e), "error");
+    }
 
     function subscribeCore() {
       state.unsub.users = onSnapshot(
@@ -1305,8 +1451,9 @@ const firebaseConfig = {
             <li class="text-rose-600 font-semibold">この操作は取り消せません</li>
           </ul>
           <div>
-            <label class="label" for="delete-confirm">確認のため、ユーザーID「${esc(state.me.id)}」を入力してください</label>
-            <input id="delete-confirm" name="confirm" class="input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${esc(state.me.id)}" />
+            <label class="label" for="delete-password">確認のため、パスワードを入力してください</label>
+            <input type="text" name="username" value="${esc(state.me.id)}" autocomplete="username" hidden />
+            <input id="delete-password" name="password" type="password" class="input" autocomplete="current-password" />
           </div>
           <p class="form-error" hidden></p>
           <div class="flex gap-3">
@@ -1317,9 +1464,9 @@ const firebaseConfig = {
     }
 
     // アカウント削除：グループから退出し、ユーザー文書を「退会済み」にする
-    // （文書自体は残して同じIDの再登録を防ぐ。別の人が過去の DM を見られないようにするため）
-    async function deleteAccount(confirmText) {
-      if (normId(confirmText) !== state.me.id) throw new Error("入力したユーザーIDが一致しません。");
+    // （文書と Authentication のアカウントは残して同じIDの再登録を防ぐ。別の人が過去の DM を見られないようにするため）
+    async function deleteAccount(password) {
+      await reauth(String(password ?? ""));
       const me = { ...state.me };
       const text = `${me.name} さんが退会しました`;
       const groups = state.rooms.filter((r) => r.type === "group" && r.members?.includes(me.id));
@@ -1440,7 +1587,7 @@ const firebaseConfig = {
               <span class="flex-1 text-lg font-bold text-indigo-700 truncate">@${esc(state.me.id)}</span>
               <button type="button" data-action="copy" data-copy="${esc(state.me.id)}" data-label="ユーザーIDをコピーしました" class="btn-chip bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100">${icon("copy", "w-4 h-4")}コピー</button>
             </div>
-            <p class="text-xs text-slate-400 mt-1.5">別の端末からはこのIDでログインできます</p>
+            <p class="text-xs text-slate-400 mt-1.5">別の端末からはこのIDとパスワードでログインできます</p>
           </div>
           <form id="form-profile" class="mt-5 space-y-3">
             <label class="label" for="profile-name">表示名</label>
@@ -1450,9 +1597,35 @@ const firebaseConfig = {
             </div>
             <p class="form-error" hidden></p>
           </form>
-          <button type="button" data-action="logout" class="btn-danger-ghost w-full mt-6">${icon("logout", "w-5 h-5")}ログアウト</button>
+          <button type="button" data-action="change-password" class="btn-secondary w-full mt-6">${icon("key", "w-5 h-5")}パスワードを変更</button>
+          <button type="button" data-action="logout" class="btn-danger-ghost w-full mt-3">${icon("logout", "w-5 h-5")}ログアウト</button>
           <button type="button" data-action="delete-account" class="w-full mt-3 py-2 text-sm text-slate-400 hover:text-rose-600 transition">アカウントを削除</button>
         </div>`);
+    }
+
+    function openChangePassword() {
+      openModal(`
+        ${modalHead("パスワードを変更")}
+        <form id="form-change-password" class="px-6 pb-6 space-y-4">
+          <input type="text" name="username" value="${esc(state.me.id)}" autocomplete="username" hidden />
+          <div>
+            <label class="label" for="cp-current">現在のパスワード</label>
+            <input id="cp-current" name="current" type="password" class="input" autocomplete="current-password" autofocus />
+          </div>
+          <div>
+            <label class="label" for="cp-password">新しいパスワード <span class="text-slate-400 font-normal">（${MIN_PASSWORD}文字以上）</span></label>
+            <input id="cp-password" name="password" type="password" class="input" autocomplete="new-password" />
+          </div>
+          <div>
+            <label class="label" for="cp-password2">新しいパスワード（確認）</label>
+            <input id="cp-password2" name="password2" type="password" class="input" autocomplete="new-password" />
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
+            <button type="submit" class="btn-primary flex-1">変更する</button>
+          </div>
+        </form>`);
     }
 
     function openCreateGroup() {
@@ -1589,6 +1762,7 @@ const firebaseConfig = {
       "open-join": () => openJoinModal(),
       "room-info": () => openRoomInfo(),
       "profile": () => openProfile(),
+      "change-password": () => openChangePassword(),
       "logout": () => logout(),
       "copy": (el) => copyText(el.dataset.copy, el.dataset.label),
       "back": () => exitRoom(),
@@ -1604,12 +1778,14 @@ const firebaseConfig = {
 
     // フォーム送信（送信中はボタンを無効化し、エラーはフォーム内に表示）
     const forms = {
-      "form-login": (fd) => loginWithId(fd.get("id")),
-      "form-signup": (fd) => signup(fd.get("name"), fd.get("custom") ? fd.get("id") : null),
+      "form-login": (fd) => loginWithId(fd.get("id"), fd.get("password")),
+      "form-signup": (fd) => signup(fd.get("name"), fd.get("custom") ? fd.get("id") : null, fd.get("password"), fd.get("password2")),
+      "form-set-password": (fd) => setLegacyPassword(fd.get("id"), fd.get("password"), fd.get("password2")),
+      "form-change-password": (fd) => changePassword(fd.get("current"), fd.get("password"), fd.get("password2")),
       "form-profile": (fd) => updateName(fd.get("name")),
       "form-create-group": (fd) => createGroup(fd.get("name"), fd.getAll("members")),
       "form-join": (fd) => joinGroup(parseJoinCode(fd.get("code"))),
-      "form-delete-account": (fd) => deleteAccount(fd.get("confirm")),
+      "form-delete-account": (fd) => deleteAccount(fd.get("password")),
     };
 
     function setLoginTab(tab) {
@@ -1673,8 +1849,8 @@ const firebaseConfig = {
         $("#signup-id-wrap").hidden = !on;
         $("#signup-btn").textContent = on ? "このIDではじめる" : "IDを発行してはじめる";
         $("#signup-hint").textContent = on
-          ? "3〜20文字の半角英小文字・数字・「_」「-」が使えます。このIDで別の端末からもログインできます。"
-          : "ユーザーIDは自動で発行されます。発行されたIDを使えば、別の端末からも同じアカウントでログインできます。";
+          ? "3〜20文字の半角英小文字・数字・「_」「-」が使えます。このIDとパスワードで、別の端末からもログインできます。"
+          : "ユーザーIDは自動で発行されます。発行されたIDとパスワードで、別の端末からも同じアカウントにログインできます。";
         if (on) $("#signup-id").focus();
       });
 
@@ -1782,25 +1958,23 @@ const firebaseConfig = {
 
       showScreen("loading");
       let booted = false;
+      // ログイン状態は Firebase Authentication がこのブラウザに保存している
       onAuthStateChanged(auth, async (user) => {
-        if (!user) {
-          signInAnonymously(auth).catch(showError); // Firestore へのアクセス用に匿名ログイン
+        if (booted) {
+          // 別のタブでログアウトした / 別のアカウントでログインした
+          if (state.me && user?.uid !== state.uid) { if (user) location.reload(); else resetSession(); }
           return;
         }
-        state.uid = user.uid;
-        if (booted) return;
         booted = true;
         try {
-          const saved = store.get(LS_USER);
-          if (saved) {
-            const snap = await getDoc(doc(db, "users", saved));
-            if (snap.exists() && !snap.data().deleted) { await enterApp({ id: saved, ...snap.data() }); return; }
-            store.remove(LS_USER);
-          }
+          if (user && idOfEmail(user.email)) { await enterWithAuthUser(); return; }
+          if (user) await signOut(auth); // 旧バージョンの匿名ログインなど
           showScreen("login");
           if (!isCoarse()) $("#login-id").focus();
         } catch (e) {
-          showError(e);
+          if (e.code !== "chatter/account") { showError(e); return; }
+          showScreen("login");
+          toast(e.message, "error");
         }
       });
     }
