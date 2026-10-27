@@ -289,16 +289,20 @@ const firebaseConfig = {
         </div>
 
         <div class="px-4">
-          <div class="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-2xl" role="tablist">
-            <button type="button" data-action="tab" data-tab="talk" class="tab-btn is-active" role="tab">
+          <!-- 4つのタブが横に収まるよう、アイコンを文字の上に置く -->
+          <div class="grid grid-cols-4 gap-1 p-1 bg-slate-100 rounded-2xl" role="tablist">
+            <button type="button" data-action="tab" data-tab="talk" class="tab-btn is-active flex-col gap-0.5 py-1.5 text-xs" role="tab">
               <span data-icon="chat" data-icon-class="w-4 h-4"></span>トーク
-              <span id="unread-badge" class="min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold grid place-items-center" hidden></span>
+              <span id="unread-badge" class="absolute top-0.5 right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold grid place-items-center" hidden></span>
             </button>
-            <button type="button" data-action="tab" data-tab="users" class="tab-btn" role="tab">
+            <button type="button" data-action="tab" data-tab="users" class="tab-btn flex-col gap-0.5 py-1.5 text-xs" role="tab">
               <span data-icon="user" data-icon-class="w-4 h-4"></span>ユーザー
             </button>
-            <button type="button" data-action="tab" data-tab="groups" class="tab-btn" role="tab">
+            <button type="button" data-action="tab" data-tab="groups" class="tab-btn flex-col gap-0.5 py-1.5 text-xs" role="tab">
               <span data-icon="group" data-icon-class="w-4 h-4"></span>グループ
+            </button>
+            <button type="button" data-action="tab" data-tab="stickers" class="tab-btn flex-col gap-0.5 py-1.5 text-xs" role="tab">
+              <span data-icon="sticker" data-icon-class="w-4 h-4"></span>スタンプ
             </button>
           </div>
         </div>
@@ -340,12 +344,17 @@ const firebaseConfig = {
           <form id="composer" class="relative border-t border-slate-100 bg-white px-3 sm:px-4 pt-3 safe-bottom shrink-0">
             <!-- グループで「@」を入力したときのメンション候補 -->
             <div id="mention-box" class="absolute z-20 left-3 right-3 sm:left-4 sm:right-4 bottom-full mb-2 max-w-3xl mx-auto" hidden></div>
+            <!-- スタンプボタンで開く、自分のスタンプ一覧 -->
+            <div id="sticker-box" class="absolute z-20 left-3 right-3 sm:left-4 sm:right-4 bottom-full mb-2 max-w-3xl mx-auto" hidden></div>
             <!-- 返信先のメッセージ -->
             <div id="reply-bar" class="max-w-3xl mx-auto mb-2 flex items-center gap-2" hidden></div>
             <div class="max-w-3xl mx-auto flex items-end gap-2">
               <div class="flex-1 min-w-0 bg-slate-100 rounded-3xl px-4 py-2.5 border border-transparent transition focus-within:bg-white focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-500/15">
                 <textarea id="msg-input" rows="1" maxlength="2000" enterkeyhint="enter" class="block w-full resize-none bg-transparent outline-none text-base leading-6 max-h-36 placeholder:text-slate-400" placeholder="メッセージを入力"></textarea>
               </div>
+              <button type="button" id="sticker-btn" data-action="toggle-sticker-box" class="w-11 h-11 shrink-0 rounded-full grid place-items-center text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 active:scale-95 aria-expanded:text-indigo-600 aria-expanded:bg-indigo-50" aria-label="スタンプ" aria-expanded="false">
+                <span data-icon="sticker" data-icon-class="w-6 h-6"></span>
+              </button>
               <button type="submit" id="send-btn" class="w-11 h-11 shrink-0 rounded-full grid place-items-center text-white bg-gradient-to-br from-indigo-600 to-violet-600 shadow-lg shadow-indigo-500/30 transition active:scale-95 disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none" aria-label="送信" disabled>
                 <span data-icon="send"></span>
               </button>
@@ -387,7 +396,7 @@ const firebaseConfig = {
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
     import {
       initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
-      doc, collection, getDoc, getDocs, setDoc, updateDoc, query, where, orderBy, limit, limitToLast,
+      doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, orderBy, limit, limitToLast,
       onSnapshot, serverTimestamp, writeBatch, runTransaction, arrayUnion, arrayRemove, deleteField,
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -408,6 +417,18 @@ const firebaseConfig = {
     ];
     const REACTION_EMOJI = Object.fromEntries(REACTIONS);
     const REACTION_CODES = REACTIONS.map(([code]) => code);
+    // スタンプ（自分で描いた SVG を Firestore に保存。上限は firestore.rules と合わせる）
+    const STICKER_SIZE = 240;               // エディタの座標の範囲（viewBox="0 0 240 240"）
+    const STICKER_MAX_SVG = 50000;          // SVG 文字列の最大文字数
+    const STICKER_MAX_NAME = 20;            // スタンプ名の最大文字数
+    const STICKER_TEXT = "[スタンプ]";       // 一覧のプレビュー・通知・返信の引用に使う本文（スタンプのメッセージの text）
+    // SVG の形式：<svg …> の中に <path …/> だけが並ぶ（firestore.rules の isValidSvg と合わせる）
+    const STICKER_SVG_RE = /^<svg [^<>]*>(<path [^<>]*\/>)*<\/svg>$/;
+    const STICKER_COLORS = [
+      "#111827", "#6b7280", "#ffffff", "#ef4444", "#f97316", "#facc15",
+      "#22c55e", "#14b8a6", "#3b82f6", "#6366f1", "#a855f7", "#ec4899",
+    ];
+    const STICKER_WIDTHS = [4, 8, 14, 22];
 
     let auth, db;
     const state = {
@@ -429,7 +450,9 @@ const firebaseConfig = {
       selectedMsgId: null,    // 送信取消メニュー / リアクションの絵文字を開いているメッセージ
       leavingRoomId: null,    // 自分で退出・削除中のルーム（「削除されました」通知を出さない）
       accountDeleting: false,
-      unsub: { users: null, rooms: null, messages: null },
+      stickers: [],           // 自分のスタンプ（新しい順）
+      stickersLoaded: false,
+      unsub: { users: null, rooms: null, messages: null, stickers: null },
     };
     let readMap = {};
 
@@ -474,6 +497,10 @@ const firebaseConfig = {
       key: "M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z",
       bell: "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9",
       reply: "M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6",
+      sticker: "M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+      pencil: "M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z",
+      eraser: "M7 21h13M5.5 16.5l9.9-9.9a2 2 0 012.83 0l1.17 1.17a2 2 0 010 2.83L11 19H7.5l-2-2a.35.35 0 010-.5zM9.5 12.5l4 4",
+      undo: "M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3",
     };
     ICONS["bell-off"] = ICONS.bell + "M3 3l18 18"; // 斜線入りのベル
     const icon = (name, cls = "w-5 h-5") =>
@@ -810,10 +837,12 @@ const firebaseConfig = {
         uid: null, me: null, users: new Map(), rooms: [], usersLoaded: false, roomsLoaded: false,
         tab: "talk", search: "", activeRoomId: null, activeRoomFallback: null, messages: [], messagesLoaded: false,
         renderedIds: new Set(), drafts: {}, replyTo: null, selectedMsgId: null, leavingRoomId: null, accountDeleting: false,
-        unsub: { users: null, rooms: null, messages: null },
+        stickers: [], stickersLoaded: false,
+        unsub: { users: null, rooms: null, messages: null, stickers: null },
       });
       signOut(auth).catch((e) => console.warn(e));
       closeModal();
+      closeStickerBox();
       $("#search").value = "";
       $("#chat-room").hidden = true;
       $("#chat-empty").hidden = false;
@@ -931,7 +960,7 @@ const firebaseConfig = {
       for (const room of state.rooms) {
         const lm = room.lastMessage;
         const at = ms(lm?.createdAt);
-        if (!lm || lm.type !== "text" || lm.senderId === state.me.id) continue;
+        if (!lm || !["text", "sticker"].includes(lm.type) || lm.senderId === state.me.id) continue; // スタンプの本文は「[スタンプ]」
         if (at <= notifySince || at <= (prevLast.get(room.id) || 0)) continue;
         if (room.id === state.activeRoomId && document.visibilityState === "visible") continue; // 開いて見ているトーク
         if (room.type === "group" && muted.has(room.id)) continue; // 通知をオフにしたグループ
@@ -1035,6 +1064,18 @@ const firebaseConfig = {
         },
         onListenError,
       );
+      // 自分のスタンプ（本人だけが読める）
+      state.unsub.stickers = onSnapshot(
+        query(collection(db, "users", state.me.id, "stickers"), orderBy("createdAt", "desc")),
+        (snap) => {
+          state.stickers = snap.docs.map(withId);
+          state.stickersLoaded = true;
+          if (state.tab === "stickers") renderSidebar();
+          if (stickerBoxOpen) renderStickerBox();
+          if (state.selectedMsgId) renderMessages(); // 「保存済み」の表示を切り替える
+        },
+        onListenError,
+      );
     }
 
     // 開いているトークが一覧から消えた（他の人に削除された）ら閉じる
@@ -1125,7 +1166,10 @@ const firebaseConfig = {
 
       const q = state.search.trim().toLowerCase();
       const list = $("#list");
-      list.innerHTML = state.tab === "talk" ? renderTalkList(q) : state.tab === "users" ? renderUserList(q) : renderGroupList(q);
+      list.innerHTML = state.tab === "talk" ? renderTalkList(q)
+        : state.tab === "users" ? renderUserList(q)
+        : state.tab === "stickers" ? renderStickerList(q)
+        : renderGroupList(q);
     }
 
     function renderTalkList(q) {
@@ -1222,6 +1266,32 @@ const firebaseConfig = {
           </button>`).join("");
     }
 
+    // 自分のスタンプ一覧（名前・プレビュー・編集・削除）
+    function renderStickerList(q) {
+      const toolbar = `
+        <div class="px-2 pt-1 pb-3">
+          <button type="button" data-action="new-sticker" class="btn-chip w-full text-white bg-gradient-to-r from-indigo-600 to-violet-600 shadow-md shadow-indigo-500/20 hover:from-indigo-500 hover:to-violet-500">${icon("plus", "w-4 h-4")}新規作成</button>
+        </div>`;
+      if (!state.stickersLoaded) return toolbar + skeleton();
+      const stickers = state.stickers.filter((s) => !q || String(s.name).toLowerCase().includes(q));
+      if (!stickers.length) {
+        return toolbar + (q
+          ? emptyList("search", "該当するスタンプはありません")
+          : emptyList("sticker", "スタンプはまだありません", "「新規作成」で描いたスタンプを、<br>チャットの入力欄の横のボタンから送れます。"));
+      }
+      return toolbar + `<p class="px-3 pb-2 text-xs font-medium text-slate-400">${state.stickers.length}個のスタンプ</p>` +
+        stickers.map((s) => `
+          <div class="flex items-center gap-3 px-3 py-2 rounded-2xl hover:bg-slate-50 transition">
+            <div class="w-14 h-14 shrink-0 rounded-xl chat-bg ring-1 ring-slate-200/70 p-1">${stickerImg(s.svg, s.name, "w-full h-full")}</div>
+            <div class="min-w-0 flex-1">
+              <div class="font-semibold truncate text-slate-800">${esc(s.name)}</div>
+              <div class="text-xs text-slate-400 truncate">${esc(relTime(s.updatedAt || s.createdAt))}</div>
+            </div>
+            <button type="button" data-action="edit-sticker" data-id="${esc(s.id)}" class="icon-btn w-9 h-9 shrink-0 hover:text-indigo-600" aria-label="編集" title="編集">${icon("pencil", "w-4 h-4")}</button>
+            <button type="button" data-action="delete-sticker" data-id="${esc(s.id)}" class="icon-btn w-9 h-9 shrink-0 hover:text-rose-600 hover:bg-rose-50" aria-label="削除" title="削除">${icon("trash", "w-4 h-4")}</button>
+          </div>`).join("");
+    }
+
     function setTab(tab) {
       state.tab = tab;
       renderSidebar();
@@ -1288,7 +1358,10 @@ const firebaseConfig = {
 
         const mine = m.senderId === state.me.id;
         const cont = prev && prev.senderId === m.senderId && d - prev.d < 5 * 60e3; // 連続投稿はまとめる
-        const body = replyQuote(m, mine) + formatText(m, mine); // 吹き出しは改行・空白をそのまま表示するので、間に空白を入れない
+        const sticker = m.type === "sticker";
+        // 吹き出しは改行・空白をそのまま表示するので、間に空白を入れない。スタンプは吹き出しを付けずに画像で表示
+        const body = sticker ? stickerBody(m) : replyQuote(m, mine) + formatText(m, mine);
+        const bubbleCls = sticker ? "max-w-[78%] rounded-2xl" : `bubble ${mine ? "bubble-mine" : "bubble-other"}`;
         if (mine) {
           // 自分のメッセージはクリック（タップ）で「返信」「送信取消」ボタンを表示
           const selected = state.selectedMsgId === m.id;
@@ -1299,7 +1372,7 @@ const firebaseConfig = {
                 ${reactionChip(m, isGroup)}
                 <span class="msg-time">${m.pending ? "送信中…" : hhmm(d)}</span>
               </div>
-              <div class="bubble bubble-mine ${m.pending ? "" : "cursor-pointer"} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
+              <div class="${bubbleCls} ${m.pending ? "" : "cursor-pointer"} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
             </div>
             ${selected ? `
             <div class="flex justify-end gap-2 mt-1.5 fade-in" data-msg-id="${esc(m.id)}">
@@ -1318,12 +1391,13 @@ const firebaseConfig = {
                 ${!cont && isGroup ? `<div class="text-xs text-slate-500 mb-1 ml-1 truncate">${esc(name)}</div>` : ""}
                 <div class="relative flex items-end gap-1.5">
                   ${selected ? reactionPicker(m, canReply) : ""}
-                  <div class="bubble bubble-other ${canReact ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
+                  <div class="${bubbleCls} ${canReact ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
                   <div class="flex flex-col items-start gap-0.5 shrink-0">
                     ${reactionChip(m, isGroup)}
                     <span class="msg-time">${hhmm(d)}</span>
                   </div>
                 </div>
+                ${selected && sticker ? saveStickerChip(m) : ""}
               </div>
             </div>`;
         }
@@ -1412,6 +1486,19 @@ const firebaseConfig = {
       return `<span role="button" tabindex="0" data-action="jump-to" data-id="${esc(r.id)}" title="元のメッセージへ移動" class="block mb-1.5 -mx-1 px-2.5 py-1 rounded-lg border-l-[3px] text-[13px] leading-snug whitespace-nowrap cursor-pointer transition ${mine ? "bg-white/15 border-white/70 hover:bg-white/25" : "bg-slate-100 border-indigo-400 hover:bg-slate-200/70"}"><span class="block font-semibold truncate ${mine ? "text-white" : "text-indigo-600"}">${esc(name)}</span><span class="block truncate ${mine ? "text-white/80" : "text-slate-500"}">${esc(r.text.replace(/\s+/g, " "))}</span></span>`;
     }
 
+    // スタンプのメッセージ：返信先の引用（あれば）とスタンプの画像
+    function stickerBody(m) {
+      const quote = m.replyTo ? `<div class="w-32 sm:w-36 mb-1 px-2 pt-1.5 pb-0.5 rounded-xl bg-white ring-1 ring-slate-200/70 shadow-sm">${replyQuote(m, false)}</div>` : "";
+      return quote + stickerImg(m.svg, m.name, "block w-32 h-32 sm:w-36 sm:h-36");
+    }
+
+    // 受け取ったスタンプの下に出す「自分のスタンプに保存」（保存済みなら表示だけ）
+    function saveStickerChip(m) {
+      return `<div class="flex mt-1.5 fade-in">${isStickerSaved(m.svg)
+        ? `<span class="btn-chip py-1.5 text-xs bg-white text-slate-400 ring-1 ring-slate-200 shadow-sm">${icon("check", "w-3.5 h-3.5")}保存済み</span>`
+        : `<button type="button" data-action="save-sticker" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("plus", "w-3.5 h-3.5")}自分のスタンプに保存</button>`}</div>`;
+    }
+
     // リアクションの絵文字がメッセージ一覧からはみ出さないように位置を調整する
     function placePicker() {
       const picker = $("#messages .reaction-picker");
@@ -1448,6 +1535,7 @@ const firebaseConfig = {
         mention = null;
         renderReplyBar();
         renderMentionBox();
+        closeStickerBox();
         $("#chat-empty").hidden = true;
         $("#chat-room").hidden = false;
         $("#new-msg-btn").hidden = true;
@@ -1500,6 +1588,7 @@ const firebaseConfig = {
       mention = null;
       renderReplyBar();
       renderMentionBox();
+      closeStickerBox();
       $("#chat-room").hidden = true;
       $("#chat-empty").hidden = false;
       $("#app").dataset.view = "list";
@@ -1704,7 +1793,7 @@ const firebaseConfig = {
       const m = state.messages.find((x) => x.id === msgId);
       state.selectedMsgId = null;
       renderMessages();
-      if (!room || !m || m.type !== "text" || m.senderId === state.me.id || !isMember(room) || !REACTION_EMOJI[code]) return;
+      if (!room || !m || !["text", "sticker"].includes(m.type) || m.senderId === state.me.id || !isMember(room) || !REACTION_EMOJI[code]) return;
       const same = m.reactions?.[state.me.id] === code;
       await updateDoc(doc(db, "rooms", room.id, "messages", msgId), { [`reactions.${state.me.id}`]: same ? deleteField() : code });
     }
@@ -1749,7 +1838,7 @@ const firebaseConfig = {
       const m = state.messages.find((x) => x.id === msgId);
       state.selectedMsgId = null;
       renderMessages();
-      if (!m || m.type !== "text" || m.pending || !canSend(currentRoom())) return;
+      if (!m || !["text", "sticker"].includes(m.type) || m.pending || !canSend(currentRoom())) return; // スタンプの本文は「[スタンプ]」
       state.replyTo = { id: m.id, senderId: m.senderId, senderName: m.senderName || "", text: m.text.slice(0, 100) };
       renderReplyBar();
       $("#msg-input").focus();
@@ -2008,34 +2097,13 @@ const firebaseConfig = {
         ...(mentions.length ? { mentions } : {}),
         ...(found.some((f) => !f.id) ? { mentionAll: true } : {}),
       };
-      const roomRef = doc(db, "rooms", room.id);
-      const msgRef = doc(collection(roomRef, "messages"));
       const message = {
         type: "text", text, senderId: state.me.id, senderName: state.me.name, senderUid: state.uid, createdAt: serverTimestamp(),
         ...(replyTo ? { replyTo } : {}), ...extra,
       };
-      const roomUpdate = {
-        lastMessage: { type: "text", text: text.slice(0, 100), senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp(), ...extra },
-        updatedAt: serverTimestamp(),
-      };
+      const lastMessage = { type: "text", text: text.slice(0, 100), senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp(), ...extra };
       try {
-        if (state.rooms.some((r) => r.id === room.id)) {
-          const batch = writeBatch(db);
-          batch.set(msgRef, message);
-          batch.update(roomRef, roomUpdate);
-          await batch.commit();
-        } else {
-          // 未作成の DM：ルームが無ければ作成してから送信
-          await runTransaction(db, async (tx) => {
-            const snap = await tx.get(roomRef);
-            if (snap.exists()) tx.update(roomRef, roomUpdate);
-            else tx.set(roomRef, {
-              type: "dm", members: room.members, memberNames: room.memberNames || {}, createdBy: state.me.id,
-              createdAt: serverTimestamp(), ...roomUpdate,
-            });
-            tx.set(msgRef, message);
-          });
-        }
+        await postMessage(room, message, lastMessage);
       } catch (e) {
         console.error(e);
         toast(errMsg(e), "error");
@@ -2048,6 +2116,54 @@ const firebaseConfig = {
       }
     }
 
+    // メッセージを1件書き込み、一覧用の lastMessage を更新する（未作成の DM はルームも作成）
+    async function postMessage(room, message, lastMessage) {
+      const roomRef = doc(db, "rooms", room.id);
+      const msgRef = doc(collection(roomRef, "messages"));
+      const roomUpdate = { lastMessage, updatedAt: serverTimestamp() };
+      if (state.rooms.some((r) => r.id === room.id)) {
+        const batch = writeBatch(db);
+        batch.set(msgRef, message);
+        batch.update(roomRef, roomUpdate);
+        await batch.commit();
+      } else {
+        // 未作成の DM：ルームが無ければ作成してから送信
+        await runTransaction(db, async (tx) => {
+          const snap = await tx.get(roomRef);
+          if (snap.exists()) tx.update(roomRef, roomUpdate);
+          else tx.set(roomRef, {
+            type: "dm", members: room.members, memberNames: room.memberNames || {}, createdBy: state.me.id,
+            createdAt: serverTimestamp(), ...roomUpdate,
+          });
+          tx.set(msgRef, message);
+        });
+      }
+    }
+
+    // スタンプの送信：表示用に SVG と名前をコピーして送る（原本を編集・削除しても送信済みの表示は変わらない）
+    async function sendSticker(stickerId) {
+      const room = currentRoom();
+      const s = state.stickers.find((x) => x.id === stickerId);
+      closeStickerBox();
+      if (!s || !room || !canSend(room)) return;
+      if (!STICKER_SVG_RE.test(s.svg) || s.svg.length > STICKER_MAX_SVG) throw new Error("このスタンプは送信できません。編集して保存し直してください。");
+      const replyTo = state.replyTo;
+      state.replyTo = null;
+      renderReplyBar();
+      const message = {
+        type: "sticker", text: STICKER_TEXT, stickerId: s.id, svg: s.svg, name: s.name,
+        senderId: state.me.id, senderName: state.me.name, senderUid: state.uid, createdAt: serverTimestamp(),
+        ...(replyTo ? { replyTo } : {}),
+      };
+      const lastMessage = { type: "sticker", text: STICKER_TEXT, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() };
+      try {
+        await postMessage(room, message, lastMessage);
+      } catch (e) {
+        if (replyTo && !state.replyTo && state.activeRoomId === room.id) { state.replyTo = replyTo; renderReplyBar(); }
+        throw e;
+      }
+    }
+
     function autoGrow() {
       const input = $("#msg-input");
       if (!input.offsetParent) { input.style.height = ""; return; } // 非表示中は高さを測れない
@@ -2055,6 +2171,386 @@ const firebaseConfig = {
       input.style.height = Math.min(input.scrollHeight, 144) + "px";
     }
     const updateSendBtn = () => { $("#send-btn").disabled = !$("#msg-input").value.trim(); };
+
+    // ============================================================
+    // スタンプ
+    // ============================================================
+    // SVG は innerHTML で差し込まず、<img src="data:image/svg+xml;base64,…"> で表示する（SVG 内のスクリプトは実行されない）
+    const stickerSrcCache = new Map(); // svg -> data URL（描き直しのたびに変換しない）
+    function stickerSrc(svg) {
+      let src = stickerSrcCache.get(svg);
+      if (!src) {
+        let bin = "";
+        for (const b of new TextEncoder().encode(svg)) bin += String.fromCharCode(b);
+        src = "data:image/svg+xml;base64," + btoa(bin);
+        if (stickerSrcCache.size >= 300) stickerSrcCache.clear();
+        stickerSrcCache.set(svg, src);
+      }
+      return src;
+    }
+    const stickerImg = (svg, name, cls) => typeof svg === "string" && svg
+      ? `<img src="${stickerSrc(svg)}" alt="${esc(name || "スタンプ")}" title="${esc(name || "")}" class="${cls} select-none" draggable="false" decoding="async" />`
+      : `<span class="${cls} grid place-items-center rounded-xl bg-slate-100 text-xs text-slate-400">${esc(STICKER_TEXT)}</span>`;
+
+    // 保存済みかどうかは、自分の保管庫に同じ SVG のスタンプがあるかで判定する
+    const isStickerSaved = (svg) => state.stickers.some((s) => s.svg === svg);
+
+    // ---- チャットの入力欄の横のスタンプ一覧 ----
+    let stickerBoxOpen = false;
+    function toggleStickerBox() {
+      if (stickerBoxOpen) { closeStickerBox(); return; }
+      if (!canSend(currentRoom())) return;
+      stickerBoxOpen = true;
+      mention = null;
+      renderMentionBox();
+      renderStickerBox();
+    }
+
+    function closeStickerBox() {
+      if (!stickerBoxOpen) return;
+      stickerBoxOpen = false;
+      renderStickerBox();
+    }
+
+    function renderStickerBox() {
+      const box = $("#sticker-box");
+      const wasHidden = box.hidden;
+      box.hidden = !stickerBoxOpen;
+      $("#sticker-btn").setAttribute("aria-expanded", stickerBoxOpen);
+      if (!stickerBoxOpen) { box.innerHTML = ""; return; }
+      const items = !state.stickersLoaded
+        ? `<div class="py-8 grid place-items-center text-indigo-500">${spinner("w-6 h-6 border-2")}</div>`
+        : !state.stickers.length
+          ? `<div class="py-6 text-center">
+               <p class="text-sm text-slate-500">スタンプはまだありません</p>
+               <button type="button" data-action="new-sticker" class="btn-chip mt-3 bg-indigo-50 text-indigo-600 hover:bg-indigo-100">${icon("plus", "w-4 h-4")}スタンプを作る</button>
+             </div>`
+          : `<div class="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+               ${state.stickers.map((s) => `
+                 <button type="button" data-action="send-sticker" data-id="${esc(s.id)}" class="aspect-square rounded-xl p-1 transition hover:bg-indigo-50 active:scale-95" aria-label="${esc(s.name)}を送信">
+                   ${stickerImg(s.svg, s.name, "w-full h-full")}
+                 </button>`).join("")}
+             </div>`;
+      box.innerHTML = `
+        <div class="${wasHidden ? "pop-in" : ""} bg-white rounded-2xl shadow-lg ring-1 ring-slate-200 p-2" role="dialog" aria-label="スタンプ">
+          <div class="flex items-center justify-between px-1.5 pb-1.5">
+            <span class="text-xs font-semibold text-slate-500">スタンプ（選ぶとすぐに送信）</span>
+            ${state.stickers.length ? `<button type="button" data-action="new-sticker" class="text-xs text-indigo-600 font-semibold hover:underline inline-flex items-center gap-1">${icon("plus", "w-3.5 h-3.5")}新規作成</button>` : ""}
+          </div>
+          <div class="max-h-64 overflow-y-auto scroll-thin">${items}</div>
+        </div>`;
+    }
+
+    // ---- 自分のスタンプの保存・削除 ----
+    async function saveSticker(nameRaw) {
+      const ed = editor;
+      if (!ed) return;
+      const name = String(nameRaw ?? "").trim();
+      if (!ed.strokes.length) throw new Error("スタンプを描いてください。");
+      if (!name) throw new Error("スタンプ名を入力してください。");
+      if ([...name].length > STICKER_MAX_NAME) throw new Error(`スタンプ名は${STICKER_MAX_NAME}文字以内で入力してください。`);
+      const svg = buildStickerSvg(ed.strokes);
+      if (svg.length > STICKER_MAX_SVG) throw new Error("スタンプのデータが大きすぎます。線の数を減らしてください。");
+      if (ed.id) {
+        await updateDoc(doc(db, "users", state.me.id, "stickers", ed.id), { name, svg, updatedAt: serverTimestamp() });
+      } else {
+        await setDoc(doc(collection(db, "users", state.me.id, "stickers")), { name, svg, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      }
+      closeModal();
+      toast(ed.id ? "スタンプを保存しました" : "スタンプを作成しました");
+    }
+
+    async function deleteSticker(id) {
+      const s = state.stickers.find((x) => x.id === id);
+      if (!s) return;
+      const ok = await confirmDialog({
+        title: "スタンプを削除しますか？",
+        message: `「<b class="text-slate-800">${esc(s.name)}</b>」を自分のスタンプから削除します。送信済みのスタンプは相手の画面にそのまま残ります。`,
+        ok: "削除する",
+        danger: true,
+      });
+      if (!ok) return;
+      await deleteDoc(doc(db, "users", state.me.id, "stickers", id));
+      toast("スタンプを削除しました");
+    }
+
+    // 受け取ったスタンプを自分のスタンプに保存する（メッセージ内の SVG と名前をコピー。送信者の原本は読まない）
+    const savingStickers = new Set(); // 連打による二重保存を防ぐ
+    async function saveReceivedSticker(msgId) {
+      const m = state.messages.find((x) => x.id === msgId);
+      if (!m || m.type !== "sticker" || m.senderId === state.me.id || !isMember(currentRoom())) return;
+      if (!state.stickersLoaded) throw new Error("スタンプを読み込み中です。少し待ってからお試しください。");
+      if (isStickerSaved(m.svg) || savingStickers.has(m.svg)) return;
+      if (typeof m.svg !== "string" || !STICKER_SVG_RE.test(m.svg) || m.svg.length > STICKER_MAX_SVG) throw new Error("このスタンプは保存できません。");
+      const name = [...String(m.name || "").trim()].slice(0, STICKER_MAX_NAME).join("") || "スタンプ";
+      savingStickers.add(m.svg);
+      try {
+        await setDoc(doc(collection(db, "users", state.me.id, "stickers")), { name, svg: m.svg, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      } finally {
+        savingStickers.delete(m.svg);
+      }
+      toast(`「${name}」を自分のスタンプに保存しました`);
+    }
+
+    // ---- SVG の作成・読み込み ----
+    // ストローク { color: "#rrggbb", width, points: [[x, y], …] } を、座標を間引いて整数に丸めた <path> にする
+    function buildStickerSvg(strokes) {
+      const paths = strokes.map((s) => {
+        const pts = simplifyPoints(s.points, 0.8)
+          .map(([x, y]) => [Math.round(clampCoord(x)), Math.round(clampCoord(y))])
+          .filter((p, i, a) => i === 0 || p[0] !== a[i - 1][0] || p[1] !== a[i - 1][1]);
+        if (pts.length === 1) pts.push(pts[0]); // 1点だけの線は点として表示（端が丸いので点になる）
+        const d = `M${pts[0][0]} ${pts[0][1]}L` + pts.slice(1).map(([x, y]) => `${x} ${y}`).join(" ");
+        return `<path d="${d}" stroke="${s.color}" stroke-width="${s.width}"/>`;
+      });
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${STICKER_SIZE} ${STICKER_SIZE}" fill="none" stroke-linecap="round" stroke-linejoin="round">${paths.join("")}</svg>`;
+    }
+
+    const clampCoord = (v) => Math.min(STICKER_SIZE, Math.max(0, v));
+
+    // Ramer–Douglas–Peucker 法で、線の形を保ったまま点を間引く
+    function simplifyPoints(points, tolerance) {
+      if (points.length <= 2) return points.slice();
+      const keep = new Uint8Array(points.length);
+      keep[0] = keep[points.length - 1] = 1;
+      const stack = [[0, points.length - 1]];
+      while (stack.length) {
+        const [first, last] = stack.pop();
+        let maxDist = 0, index = -1;
+        for (let i = first + 1; i < last; i++) {
+          const dist = segmentDistance(points[i], points[first], points[last]);
+          if (dist > maxDist) { maxDist = dist; index = i; }
+        }
+        if (maxDist > tolerance) {
+          keep[index] = 1;
+          stack.push([first, index], [index, last]);
+        }
+      }
+      return points.filter((_, i) => keep[i]);
+    }
+
+    // 点 p と線分 a-b の距離
+    function segmentDistance([px, py], [ax, ay], [bx, by]) {
+      const dx = bx - ax, dy = by - ay;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+      return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+    }
+
+    // 保存済みの SVG（このアプリで作った形式）からストロークを取り出す。読み取れない部分は無視する
+    function parseStickerSvg(svg) {
+      const strokes = [];
+      if (typeof svg !== "string" || !STICKER_SVG_RE.test(svg)) return strokes;
+      for (const [, attrs] of svg.matchAll(/<path ([^<>]*)\/>/g)) {
+        const attr = Object.fromEntries([...attrs.matchAll(/([\w-]+)="([^"]*)"/g)].map((a) => [a[1], a[2]]));
+        const nums = (attr.d || "").match(/-?\d+(\.\d+)?/g)?.map(Number) || [];
+        const points = [];
+        for (let i = 0; i + 1 < nums.length; i += 2) points.push([clampCoord(nums[i]), clampCoord(nums[i + 1])]);
+        if (!points.length) continue;
+        const color = /^#[0-9a-f]{6}$/i.test(attr.stroke || "") ? attr.stroke.toLowerCase() : STICKER_COLORS[0];
+        const width = Math.min(40, Math.max(1, Number(attr["stroke-width"]) || STICKER_WIDTHS[1]));
+        strokes.push({ color, width, points });
+      }
+      return strokes;
+    }
+
+    // ---- SVG エディタ ----
+    // editor: { id（編集中のスタンプ。新規は null）, strokes, history（取り消し用のストロークの配列の履歴）, tool, color, width }
+    let editor = null;
+    const SVG_NS = "http://www.w3.org/2000/svg";
+
+    function openStickerEditor(id = null) {
+      const s = id ? state.stickers.find((x) => x.id === id) : null;
+      if (id && !s) return;
+      closeStickerBox();
+      editor = { id: s?.id || null, strokes: parseStickerSvg(s?.svg), history: [], tool: "pen", color: STICKER_COLORS[0], width: STICKER_WIDTHS[1] };
+      const ed = editor;
+      const toolBtn = (tool, iconName, label) => `
+        <button type="button" data-action="se-tool" data-tool="${tool}" class="se-tool btn-chip py-2 ring-1" aria-pressed="false">${icon(iconName, "w-4 h-4")}${label}</button>`;
+      openModal(`
+        ${modalHead(s ? "スタンプを編集" : "スタンプを作成", "枠の中に指やマウスで描きます")}
+        <form id="form-sticker" class="px-6 pb-6 space-y-4">
+          <div class="mx-auto w-full max-w-[320px] aspect-square rounded-2xl chat-bg ring-1 ring-slate-200 overflow-hidden">
+            <svg id="se-canvas" viewBox="0 0 ${STICKER_SIZE} ${STICKER_SIZE}" class="block w-full h-full touch-none cursor-crosshair" fill="none" stroke-linecap="round" stroke-linejoin="round"></svg>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            ${toolBtn("pen", "pencil", "ペン")}
+            ${toolBtn("eraser", "eraser", "消しゴム")}
+            <div class="ml-auto flex gap-1">
+              <button type="button" data-action="se-undo" class="icon-btn" aria-label="取り消し" title="取り消し（Ctrl+Z）">${icon("undo")}</button>
+              <button type="button" data-action="se-clear" class="icon-btn hover:text-rose-600 hover:bg-rose-50" aria-label="全消し" title="全消し">${icon("trash")}</button>
+            </div>
+          </div>
+          <div>
+            <div class="label">色</div>
+            <div class="flex flex-wrap gap-1.5">
+              ${STICKER_COLORS.map((c) => `
+                <button type="button" data-action="se-color" data-color="${c}" class="se-color w-8 h-8 rounded-full ring-1 ring-slate-300 transition hover:scale-110" style="background:${c}" aria-label="色 ${c}" aria-pressed="false"></button>`).join("")}
+            </div>
+            <div class="flex items-center gap-2 mt-2.5">
+              <span id="se-color-preview" class="w-8 h-8 shrink-0 rounded-full ring-1 ring-slate-300"></span>
+              ${["r", "g", "b"].map((ch) => `
+                <label class="flex items-center gap-1 text-xs font-semibold text-slate-500 uppercase">${ch}
+                  <input type="number" id="se-${ch}" data-rgb="${ch}" min="0" max="255" step="1" inputmode="numeric" class="input w-[4.25rem] px-2 py-1.5 text-sm" />
+                </label>`).join("")}
+              <input type="color" id="se-picker" class="w-8 h-8 shrink-0 rounded cursor-pointer bg-transparent" aria-label="色を選ぶ" />
+            </div>
+          </div>
+          <div>
+            <div class="label">太さ</div>
+            <div class="flex gap-1.5">
+              ${STICKER_WIDTHS.map((w) => `
+                <button type="button" data-action="se-width" data-width="${w}" class="se-width w-11 h-11 rounded-xl grid place-items-center ring-1 transition" aria-label="太さ ${w}" aria-pressed="false">
+                  <span class="rounded-full bg-slate-700" style="width:${Math.max(3, w * 0.9)}px;height:${Math.max(3, w * 0.9)}px"></span>
+                </button>`).join("")}
+            </div>
+          </div>
+          <div>
+            <label class="label" for="se-name">スタンプ名</label>
+            <input id="se-name" name="name" class="input" maxlength="${STICKER_MAX_NAME}" value="${esc(s?.name || "")}" placeholder="例: ありがとう" autocomplete="off" />
+            <p id="se-size" class="text-xs text-slate-400 mt-1.5"></p>
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
+            <button type="submit" class="btn-primary flex-1">保存</button>
+          </div>
+        </form>`, () => { if (editor === ed) editor = null; });
+      bindCanvas($("#se-canvas"));
+      renderEditorTools();
+      renderCanvas();
+    }
+
+    // ストロークを <path> 要素として描く（文字列の HTML は使わない）
+    function strokePath(s) {
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("stroke", s.color);
+      path.setAttribute("stroke-width", s.width);
+      path.setAttribute("d", strokeD(s.points));
+      return path;
+    }
+    const strokeD = (pts) => `M${pts[0][0]} ${pts[0][1]}L` + (pts.length > 1 ? pts.slice(1) : pts).map(([x, y]) => `${x} ${y}`).join(" ");
+
+    function renderCanvas() {
+      const canvas = $("#se-canvas");
+      if (!editor || !canvas) return;
+      canvas.replaceChildren(...editor.strokes.map(strokePath));
+      const size = editor.strokes.length ? buildStickerSvg(editor.strokes).length : 0;
+      const el = $("#se-size");
+      el.textContent = `容量 ${(size / 1000).toFixed(1)} KB / ${STICKER_MAX_SVG / 1000} KB`;
+      el.classList.toggle("text-rose-600", size > STICKER_MAX_SVG);
+    }
+
+    function renderEditorTools() {
+      if (!editor) return;
+      const on = "bg-indigo-50 text-indigo-600 ring-indigo-300";
+      const off = "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50";
+      document.querySelectorAll("#modal-host .se-tool").forEach((b) => {
+        const active = b.dataset.tool === editor.tool;
+        b.setAttribute("aria-pressed", active);
+        b.className = `se-tool btn-chip py-2 ring-1 ${active ? on : off}`;
+      });
+      document.querySelectorAll("#modal-host .se-width").forEach((b) => {
+        const active = Number(b.dataset.width) === editor.width;
+        b.setAttribute("aria-pressed", active);
+        b.className = `se-width w-11 h-11 rounded-xl grid place-items-center ring-1 transition ${active ? on : off}`;
+      });
+      document.querySelectorAll("#modal-host .se-color").forEach((b) => {
+        const active = b.dataset.color === editor.color;
+        b.setAttribute("aria-pressed", active);
+        b.classList.toggle("ring-2", active);
+        b.classList.toggle("ring-offset-2", active);
+        b.classList.toggle("ring-indigo-500", active);
+      });
+      $("#se-color-preview").style.background = editor.color;
+      const rgb = hexToRgb(editor.color);
+      ["r", "g", "b"].forEach((ch, i) => { const el = $(`#se-${ch}`); if (document.activeElement !== el) el.value = rgb[i]; });
+      $("#se-picker").value = editor.color;
+    }
+
+    const hexToRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    const rgbToHex = (rgb) => "#" + rgb.map((v) => Math.round(Math.min(255, Math.max(0, Number(v) || 0))).toString(16).padStart(2, "0")).join("");
+
+    function setEditorColor(color) {
+      if (!editor || !/^#[0-9a-f]{6}$/i.test(color)) return;
+      editor.color = color.toLowerCase();
+      if (editor.tool === "eraser") editor.tool = "pen"; // 色を選んだらペンに戻す
+      renderEditorTools();
+    }
+
+    // 変更前のストロークを履歴に積む（取り消しで戻せるように）
+    function pushHistory() {
+      editor.history.push(editor.strokes.slice());
+      if (editor.history.length > 100) editor.history.shift();
+    }
+
+    function undoStroke() {
+      if (!editor?.history.length) return;
+      editor.strokes = editor.history.pop();
+      renderCanvas();
+    }
+
+    function clearStrokes() {
+      if (!editor?.strokes.length) return;
+      pushHistory();
+      editor.strokes = [];
+      renderCanvas();
+    }
+
+    // 消しゴム：指した位置に重なっている一番上のストロークを削除する
+    function eraseAt(pt) {
+      for (let i = editor.strokes.length - 1; i >= 0; i--) {
+        const s = editor.strokes[i];
+        const reach = s.width / 2 + 6;
+        const hit = s.points.length === 1
+          ? Math.hypot(pt[0] - s.points[0][0], pt[1] - s.points[0][1]) <= reach
+          : s.points.some((p, j) => j > 0 && segmentDistance(pt, s.points[j - 1], p) <= reach);
+        if (!hit) continue;
+        pushHistory();
+        editor.strokes = editor.strokes.filter((_, j) => j !== i);
+        renderCanvas();
+        return;
+      }
+    }
+
+    function bindCanvas(canvas) {
+      let drawing = null; // { pointerId, stroke, path }
+      const toPoint = (e) => {
+        const r = canvas.getBoundingClientRect();
+        return [clampCoord((e.clientX - r.left) / r.width * STICKER_SIZE), clampCoord((e.clientY - r.top) / r.height * STICKER_SIZE)];
+      };
+      canvas.addEventListener("pointerdown", (e) => {
+        if (!editor || drawing || (e.pointerType === "mouse" && e.button !== 0)) return;
+        e.preventDefault();
+        canvas.setPointerCapture(e.pointerId);
+        const pt = toPoint(e);
+        if (editor.tool === "eraser") { drawing = { pointerId: e.pointerId }; eraseAt(pt); return; }
+        const stroke = { color: editor.color, width: editor.width, points: [pt] };
+        drawing = { pointerId: e.pointerId, stroke, path: strokePath(stroke) };
+        canvas.appendChild(drawing.path);
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (!editor || drawing?.pointerId !== e.pointerId) return;
+        const pt = toPoint(e);
+        if (!drawing.stroke) { eraseAt(pt); return; }
+        const pts = drawing.stroke.points;
+        const last = pts[pts.length - 1];
+        if (Math.hypot(pt[0] - last[0], pt[1] - last[1]) < 1) return; // 細かすぎる動きは記録しない
+        pts.push(pt);
+        drawing.path.setAttribute("d", strokeD(pts));
+      });
+      const finish = (e) => {
+        if (drawing?.pointerId !== e.pointerId) return;
+        const { stroke } = drawing;
+        drawing = null;
+        if (!editor || !stroke) return;
+        pushHistory();
+        editor.strokes = [...editor.strokes, stroke];
+        renderCanvas();
+      };
+      canvas.addEventListener("pointerup", finish);
+      canvas.addEventListener("pointercancel", finish);
+    }
 
     // ============================================================
     // モーダル各種
@@ -2312,6 +2808,23 @@ const firebaseConfig = {
       },
       "delete-room": () => deleteRoom(),
       "delete-account": () => openDeleteAccount(),
+      // スタンプ
+      "toggle-sticker-box": () => toggleStickerBox(),
+      "send-sticker": (el) => sendSticker(el.dataset.id),
+      "save-sticker": (el) => saveReceivedSticker(el.dataset.id),
+      "new-sticker": () => openStickerEditor(),
+      "edit-sticker": (el) => openStickerEditor(el.dataset.id),
+      "delete-sticker": (el) => deleteSticker(el.dataset.id),
+      "se-tool": (el) => { if (editor) { editor.tool = el.dataset.tool; renderEditorTools(); } },
+      "se-color": (el) => setEditorColor(el.dataset.color),
+      "se-width": (el) => {
+        if (!editor) return;
+        editor.width = Number(el.dataset.width);
+        if (editor.tool === "eraser") editor.tool = "pen"; // 太さを選んだらペンに戻す
+        renderEditorTools();
+      },
+      "se-undo": () => undoStroke(),
+      "se-clear": () => clearStrokes(),
     };
 
     // フォーム送信（送信中はボタンを無効化し、エラーはフォーム内に表示）
@@ -2325,6 +2838,7 @@ const firebaseConfig = {
       "form-join": (fd) => joinGroup(parseInvite(fd.get("code"))),
       "form-invite": (fd) => inviteMembers(fd.getAll("members")),
       "form-delete-account": (fd) => deleteAccount(fd.get("password")),
+      "form-sticker": (fd) => saveSticker(fd.get("name")),
     };
 
     function setLoginTab(tab) {
@@ -2342,6 +2856,8 @@ const firebaseConfig = {
         if (loginTab) { setLoginTab(loginTab.dataset.loginTab); return; }
         // 送信取消メニュー・リアクションの絵文字は、そのメッセージ以外をクリックしたら閉じる
         if (state.selectedMsgId && e.target.closest("[data-msg-id]")?.dataset.msgId !== state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
+        // スタンプ一覧は、一覧とスタンプボタン以外をクリックしたら閉じる
+        if (stickerBoxOpen && !e.target.closest("#sticker-box, #sticker-btn")) closeStickerBox();
         if (e.target.closest("a[href]")) return; // メッセージ内のリンクは通常どおり開く
         const el = e.target.closest("[data-action]");
         if (!el) return;
@@ -2356,6 +2872,9 @@ const firebaseConfig = {
       // role="button" の要素をキーボードでも操作可能に
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape" && !$("#modal-root").hidden) { closeModal(); return; }
+        // スタンプのエディタ：Ctrl+Z（Mac は ⌘+Z）で取り消し（文字の入力欄では通常の取り消し）
+        if (editor && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.target.matches?.("input, textarea")) { e.preventDefault(); undoStroke(); return; }
+        if (e.key === "Escape" && stickerBoxOpen) { closeStickerBox(); return; }
         if (e.key === "Escape" && state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); return; }
         if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('[role="button"]')) { e.preventDefault(); e.target.click(); }
       });
@@ -2402,6 +2921,15 @@ const firebaseConfig = {
         const q = e.target.value.trim().toLowerCase();
         document.querySelectorAll(".cg-row").forEach((row) => { row.hidden = !!q && !row.dataset.search.includes(q); });
       });
+      // スタンプのエディタ：RGB の数値・カラーピッカーで色を指定
+      document.addEventListener("input", (e) => {
+        if (!editor) return;
+        if (e.target.dataset?.rgb) setEditorColor(rgbToHex(["r", "g", "b"].map((ch) => $(`#se-${ch}`).value)));
+        else if (e.target.id === "se-picker") setEditorColor(e.target.value);
+      });
+      document.addEventListener("change", (e) => {
+        if (editor && e.target.dataset?.rgb) e.target.value = hexToRgb(editor.color)["rgb".indexOf(e.target.dataset.rgb)]; // 範囲外の値を直す
+      });
       document.addEventListener("change", (e) => {
         if (e.target.name !== "members") return;
         $("#cg-count").textContent = `${document.querySelectorAll('#cg-list input[name="members"]:checked').length}人選択中`;
@@ -2435,6 +2963,7 @@ const firebaseConfig = {
           if ((e.key === "Enter" && !e.shiftKey && !e.ctrlKey) || e.key === "Tab") { e.preventDefault(); pickMention(mention.index); return; }
           if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); mention = null; renderMentionBox(); return; }
         }
+        if (e.key === "Escape" && stickerBoxOpen) { e.preventDefault(); e.stopPropagation(); closeStickerBox(); return; }
         if (e.key === "Escape" && state.replyTo && !state.selectedMsgId) { e.preventDefault(); e.stopPropagation(); cancelReply(); return; }
         if (e.key !== "Enter" || e.shiftKey) return; // Shift+Enter = 改行（テキストエリアの既定の動作）
         if (e.ctrlKey) {
