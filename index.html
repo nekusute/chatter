@@ -352,13 +352,6 @@ const firebaseConfig = {
             </div>
           </form>
 
-          <div id="join-bar" class="border-t border-slate-100 bg-white px-4 pt-3 safe-bottom shrink-0" hidden>
-            <div class="max-w-3xl mx-auto flex items-center gap-3">
-              <p class="text-sm text-slate-500 flex-1">グループに参加するとメッセージを送信できます</p>
-              <button type="button" data-action="join-current" class="btn-primary py-2.5 px-5">参加する</button>
-            </div>
-          </div>
-
           <div id="notice-bar" class="border-t border-slate-100 bg-white px-4 pt-3 safe-bottom shrink-0 text-center text-sm text-slate-500" hidden>
             このユーザーは退会しているため、メッセージを送信できません
           </div>
@@ -402,7 +395,6 @@ const firebaseConfig = {
     // 定数・状態
     // ============================================================
     const ID_RE = /^[a-z0-9_-]{3,20}$/;
-    const ROOM_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
     const MESSAGE_LIMIT = 100;              // 1ルームで読み込む最新メッセージ数
     const MAX_TEXT = 2000;                  // 1メッセージの最大文字数
     const ONLINE_MS = 6 * 60 * 1000;        // この時間内に操作があれば「オンライン」
@@ -423,14 +415,12 @@ const firebaseConfig = {
       me: null,               // { id, name }
       users: new Map(),       // userId -> user
       rooms: [],              // 自分が参加しているルーム
-      groups: [],             // 公開グループ一覧（グループタブ表示中のみ購読）
       usersLoaded: false,
       roomsLoaded: false,
-      groupsLoaded: false,
       tab: "talk",
       search: "",
       activeRoomId: null,
-      activeRoomFallback: null, // まだ一覧に無いルーム（未作成のDMや未参加グループ）
+      activeRoomFallback: null, // まだ一覧に無いルーム（未作成のDMや参加直後のグループ）
       messages: [],
       messagesLoaded: false,
       renderedIds: new Set(),
@@ -439,7 +429,7 @@ const firebaseConfig = {
       selectedMsgId: null,    // 送信取消メニュー / リアクションの絵文字を開いているメッセージ
       leavingRoomId: null,    // 自分で退出・削除中のルーム（「削除されました」通知を出さない）
       accountDeleting: false,
-      unsub: { users: null, rooms: null, groups: null, messages: null },
+      unsub: { users: null, rooms: null, messages: null },
     };
     let readMap = {};
 
@@ -817,10 +807,10 @@ const firebaseConfig = {
       shownNotifications.forEach((n) => n.close());
       shownNotifications.clear();
       Object.assign(state, {
-        uid: null, me: null, users: new Map(), rooms: [], groups: [], usersLoaded: false, roomsLoaded: false, groupsLoaded: false,
+        uid: null, me: null, users: new Map(), rooms: [], usersLoaded: false, roomsLoaded: false,
         tab: "talk", search: "", activeRoomId: null, activeRoomFallback: null, messages: [], messagesLoaded: false,
         renderedIds: new Set(), drafts: {}, replyTo: null, selectedMsgId: null, leavingRoomId: null, accountDeleting: false,
-        unsub: { users: null, rooms: null, groups: null, messages: null },
+        unsub: { users: null, rooms: null, messages: null },
       });
       signOut(auth).catch((e) => console.warn(e));
       closeModal();
@@ -1047,27 +1037,11 @@ const firebaseConfig = {
       );
     }
 
-    function subscribeGroups() {
-      state.groupsLoaded = false;
-      state.unsub.groups = onSnapshot(
-        query(collection(db, "rooms"), where("type", "==", "group"), limit(100)),
-        (snap) => {
-          const before = new Set(state.groups.map((r) => r.id));
-          state.groups = snap.docs.map(withId).sort((a, b) => ms(b.updatedAt) - ms(a.updatedAt));
-          state.groupsLoaded = true;
-          checkActiveRoomGone(before);
-          renderSidebar();
-          renderChatHeader();
-        },
-        onListenError,
-      );
-    }
-
     // 開いているトークが一覧から消えた（他の人に削除された）ら閉じる
     function checkActiveRoomGone(before) {
       const id = state.activeRoomId;
       if (!id || !before.has(id) || state.leavingRoomId === id || state.accountDeleting) return;
-      if (state.rooms.some((r) => r.id === id) || state.groups.some((r) => r.id === id)) return;
+      if (state.rooms.some((r) => r.id === id)) return;
       exitRoom();
       toast("このトークは削除されました");
     }
@@ -1085,7 +1059,7 @@ const firebaseConfig = {
     function currentRoom() {
       const id = state.activeRoomId;
       if (!id) return null;
-      return state.rooms.find((r) => r.id === id) || state.groups.find((r) => r.id === id) || state.activeRoomFallback;
+      return state.rooms.find((r) => r.id === id) || state.activeRoomFallback;
     }
     function roomTitle(room) {
       if (room.type === "dm") { const pid = partnerOf(room); return userName(pid, room.memberNames?.[pid]); }
@@ -1228,34 +1202,28 @@ const firebaseConfig = {
       const toolbar = `
         <div class="grid grid-cols-2 gap-2 px-2 pt-1 pb-3">
           <button type="button" data-action="create-group" class="btn-chip text-white bg-gradient-to-r from-indigo-600 to-violet-600 shadow-md shadow-indigo-500/20 hover:from-indigo-500 hover:to-violet-500">${icon("plus", "w-4 h-4")}グループ作成</button>
-          <button type="button" data-action="open-join" class="btn-chip bg-slate-100 text-slate-700 hover:bg-slate-200">${icon("link", "w-4 h-4")}IDで参加</button>
+          <button type="button" data-action="open-join" class="btn-chip bg-slate-100 text-slate-700 hover:bg-slate-200">${icon("link", "w-4 h-4")}招待リンクで参加</button>
         </div>`;
-      if (!state.groupsLoaded) return toolbar + skeleton();
-      const groups = state.groups.filter((g) => !q || g.name?.toLowerCase().includes(q));
+      // グループは招待制のため、参加中のグループだけを表示する
+      if (!state.roomsLoaded) return toolbar + skeleton();
+      const groups = state.rooms.filter((g) => g.type === "group" && (!q || g.name?.toLowerCase().includes(q)));
       if (!groups.length) {
-        return toolbar + (q ? emptyList("search", "該当するグループはありません") : emptyList("group", "グループはまだありません", "最初のグループを作成してみましょう。"));
+        return toolbar + (q
+          ? emptyList("search", "該当するグループはありません")
+          : emptyList("group", "参加中のグループはありません", "グループを作成するか、メンバーから<br>招待リンクを送ってもらいましょう。"));
       }
-      return toolbar + groups.map((g) => {
-        const joined = isMember(g);
-        return `
-          <div role="button" tabindex="0" data-action="open-room" data-id="${esc(g.id)}" class="list-row ${g.id === state.activeRoomId ? "is-active" : ""}">
+      return toolbar + groups.map((g) => `
+          <button type="button" data-action="open-room" data-id="${esc(g.id)}" class="list-row ${g.id === state.activeRoomId ? "is-active" : ""}">
             ${groupAvatar(g.id, "w-12 h-12")}
             <div class="min-w-0 flex-1">
               <div class="font-semibold truncate text-slate-800">${esc(g.name)}</div>
               <div class="text-xs text-slate-400 truncate">${g.members.length}人のメンバー ・ 最終更新 ${esc(relTime(g.updatedAt))}</div>
             </div>
-            ${joined
-              ? `<span class="shrink-0 text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">参加中</span>`
-              : `<button type="button" data-action="join-group" data-id="${esc(g.id)}" class="shrink-0 btn-chip py-1.5 text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100">参加する</button>`}
-          </div>`;
-      }).join("");
+          </button>`).join("");
     }
 
     function setTab(tab) {
       state.tab = tab;
-      // グループ一覧はタブを開いている間だけ購読（読み取り回数の節約）
-      if (tab === "groups" && !state.unsub.groups) subscribeGroups();
-      if (tab !== "groups" && state.unsub.groups) { state.unsub.groups(); state.unsub.groups = null; }
       renderSidebar();
       $("#list").scrollTop = 0;
     }
@@ -1287,7 +1255,6 @@ const firebaseConfig = {
       const member = isMember(room);
       const partnerGone = room.type === "dm" && !!state.users.get(partnerOf(room))?.deleted;
       $("#composer").hidden = !member || partnerGone;
-      $("#join-bar").hidden = member;
       $("#notice-bar").hidden = !(member && partnerGone);
     }
 
@@ -1504,7 +1471,11 @@ const firebaseConfig = {
             if (document.visibilityState === "visible" && isMember(currentRoom())) markRead(roomId);
             renderSidebar();
           },
-          onListenError,
+          (e) => {
+            // グループを退出すると読めなくなるので、閉じたルームのエラーは無視する
+            if (state.activeRoomId !== roomId || state.leavingRoomId === roomId) return;
+            onListenError(e);
+          },
         );
       }
       const app = $("#app");
@@ -1563,7 +1534,7 @@ const firebaseConfig = {
       const text = `${state.me.name} さんがグループ「${name}」を作成しました`;
       const batch = writeBatch(db);
       batch.set(roomRef, {
-        type: "group", name, members, createdBy: state.me.id,
+        type: "group", name, members, createdBy: state.me.id, inviteCode: generateInviteCode(),
         createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
         lastMessage: { type: "system", text, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() },
       });
@@ -1578,46 +1549,100 @@ const firebaseConfig = {
       type: "system", text, senderId: state.me.id, senderName: state.me.name, senderUid: state.uid, createdAt: serverTimestamp(),
     });
 
-    function parseJoinCode(raw) {
-      const s = String(raw ?? "").trim();
-      const id = s.match(/join=([A-Za-z0-9_-]+)/)?.[1] || s;
-      if (!ROOM_ID_RE.test(id)) throw new Error("招待リンクまたはグループIDの形式が正しくありません。");
-      return id;
+    // 招待リンク「…#join=<グループID>.<合言葉>」。合言葉はメンバーだけが読めるので、リンクを知っている人だけが参加できる
+    function generateInviteCode() {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      const buf = crypto.getRandomValues(new Uint32Array(24));
+      return Array.from(buf, (n) => chars[n % chars.length]).join("");
+    }
+    const INVITE_RE = /join=([A-Za-z0-9_-]{1,64})\.([A-Za-z0-9]{16,64})/;
+    const inviteUrl = (room) => `${location.origin}${location.pathname}#join=${room.id}.${room.inviteCode}`;
+
+    function parseInvite(raw) {
+      const m = String(raw ?? "").trim().match(INVITE_RE);
+      if (!m) throw new Error("招待リンクが正しくありません。グループのメンバーから届いた招待リンクをそのまま貼り付けてください（以前の形式のリンクは使えません）。");
+      return { roomId: m[1], code: m[2] };
     }
 
     const pendingJoins = new Set();
-    async function joinGroup(roomId) {
+    async function joinGroup({ roomId, code }) {
       if (pendingJoins.has(roomId)) return; // 連打による二重参加を防ぐ
       pendingJoins.add(roomId);
       try {
-        await joinGroupOnce(roomId);
+        await joinGroupOnce(roomId, code);
       } finally {
         pendingJoins.delete(roomId);
       }
     }
 
-    async function joinGroupOnce(roomId) {
+    async function joinGroupOnce(roomId, code) {
+      const joined = state.rooms.find((r) => r.id === roomId);
+      if (joined) { closeModal(); openRoom(roomId, joined); return; } // 参加済み
+      // メンバーになるまでグループは読めないので、合言葉を添えてそのまま参加する（正しいかはルールで確認）
       const ref = doc(db, "rooms", roomId);
-      const snap = await getDoc(ref);
-      if (!snap.exists() || snap.data().type !== "group") throw new Error("グループが見つかりませんでした。");
-      const room = withId(snap);
-      if (!room.members.includes(state.me.id)) {
-        if (room.members.length >= 100) throw new Error("このグループは満員です（最大100人）。");
-        const text = `${state.me.name} さんが参加しました`;
-        const batch = writeBatch(db);
-        batch.update(ref, {
-          members: arrayUnion(state.me.id),
-          lastMessage: { type: "system", text, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() },
-          updatedAt: serverTimestamp(),
-        });
-        batch.set(doc(collection(ref, "messages")), systemMessage(text));
+      const text = `${state.me.name} さんが参加しました`;
+      const batch = writeBatch(db);
+      batch.update(ref, {
+        members: arrayUnion(state.me.id),
+        joinKey: { by: state.me.id, code },
+        lastMessage: { type: "system", text, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() },
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(doc(collection(ref, "messages")), systemMessage(text));
+      try {
         await batch.commit();
-        room.members = [...room.members, state.me.id];
-        toast(`「${room.name}」に参加しました`);
+      } catch (e) {
+        // トーク一覧の読み込み前にリンクを開いた場合など、すでにメンバーならそのまま開く
+        const snap = await getDoc(ref).catch(() => null);
+        if (snap?.data()?.members?.includes(state.me.id)) { closeModal(); openRoom(roomId, withId(snap)); return; }
+        if (e.code === "permission-denied" || e.code === "not-found") {
+          throw new Error("この招待リンクは使えません。リンクが再発行されたか、グループが削除・満員（最大100人）になった可能性があります。");
+        }
+        throw e;
       }
+      const snap = await getDoc(ref).catch(() => null);
+      const room = snap?.exists() ? withId(snap) : { id: roomId, type: "group", name: "", members: [state.me.id] };
       closeModal();
-      if (state.activeRoomId === roomId) { state.activeRoomFallback = room; renderChatHeader(); }
-      else openRoom(roomId, room);
+      toast(room.name ? `「${room.name}」に参加しました` : "グループに参加しました");
+      openRoom(roomId, room);
+    }
+
+    // メンバーからの招待：選んだユーザーをグループに追加する
+    async function inviteMembers(userIds) {
+      const room = currentRoom();
+      if (!room || room.type !== "group" || !isMember(room)) return;
+      const ids = [...new Set(userIds)].filter((id) => !room.members.includes(id));
+      if (!ids.length) throw new Error("招待するユーザーを選んでください。");
+      if (room.members.length + ids.length > 100) throw new Error("グループのメンバーは最大100人です。");
+      const ref = doc(db, "rooms", room.id);
+      const text = `${state.me.name} さんが ${ids.map((id) => `${userName(id)} さん`).join("、")}を招待しました`.slice(0, 2000);
+      const batch = writeBatch(db);
+      batch.update(ref, {
+        members: arrayUnion(...ids),
+        lastMessage: { type: "system", text: text.slice(0, 100), senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() },
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(doc(collection(ref, "messages")), systemMessage(text));
+      await batch.commit();
+      closeModal();
+      toast(`${ids.length}人を招待しました`);
+    }
+
+    // 招待リンクの発行（作成時にリンクが無かった古いグループ）・再発行（今までのリンクは使えなくなる）
+    async function resetInviteLink() {
+      const room = currentRoom();
+      if (!room || room.type !== "group" || !isMember(room)) return;
+      if (room.inviteCode) {
+        const ok = await confirmDialog({
+          title: "招待リンクを再発行しますか？",
+          message: "今の招待リンクは使えなくなります。すでに参加しているメンバーはそのままです。",
+          ok: "再発行する",
+        });
+        if (!ok) return;
+      }
+      await updateDoc(doc(db, "rooms", room.id), { inviteCode: generateInviteCode() });
+      toast(room.inviteCode ? "招待リンクを再発行しました" : "招待リンクを発行しました");
+      openRoomInfo();
     }
 
     async function leaveGroup() {
@@ -1625,7 +1650,7 @@ const firebaseConfig = {
       if (!room || room.type !== "group") return;
       const ok = await confirmDialog({
         title: "グループを退出しますか？",
-        message: `「${esc(room.name)}」から退出します。あとから再び参加することもできます。`,
+        message: `「${esc(room.name)}」から退出します。もう一度参加するには、招待リンクかメンバーからの招待が必要です。`,
         ok: "退出する",
         danger: true,
       });
@@ -1949,12 +1974,13 @@ const firebaseConfig = {
     }
 
     function handleJoinHash() {
-      const m = location.hash.match(/join=([A-Za-z0-9_-]+)/);
-      if (!m) return;
+      if (!/join=/.test(location.hash)) return;
+      const hash = location.hash;
       history.replaceState(null, "", location.pathname + location.search);
-      joinGroup(m[1]).catch((e) => toast(errMsg(e), "error"));
+      Promise.resolve()
+        .then(() => joinGroup(parseInvite(hash)))
+        .catch((e) => toast(errMsg(e), "error"));
     }
-    const inviteUrl = (roomId) => `${location.origin}${location.pathname}#join=${roomId}`;
 
     // ============================================================
     // メッセージ送信
@@ -2088,25 +2114,20 @@ const firebaseConfig = {
         </form>`);
     }
 
-    function openCreateGroup() {
-      const users = [...state.users.values()].filter((u) => u.id !== state.me.id && !u.deleted).sort((a, b) => (isOnline(b) - isOnline(a)) || String(a.name).localeCompare(String(b.name), "ja"));
-      openModal(`
-        ${modalHead("グループを作成", "メンバーは招待リンクからあとで参加することもできます")}
-        <form id="form-create-group" class="pb-6">
-          <div class="px-6 space-y-4">
-            <div>
-              <label class="label" for="cg-name">グループ名</label>
-              <input id="cg-name" name="name" class="input" maxlength="50" required autofocus placeholder="例: 週末キャンプ部" />
+    // ユーザーを選ぶ一覧（グループ作成・メンバーの招待）。exclude のユーザーは表示しない
+    function userPicker(exclude = []) {
+      const users = [...state.users.values()]
+        .filter((u) => u.id !== state.me.id && !u.deleted && !exclude.includes(u.id))
+        .sort((a, b) => (isOnline(b) - isOnline(a)) || String(a.name).localeCompare(String(b.name), "ja"));
+      return `
+          <div class="px-6">
+            <div class="flex items-center justify-between mb-1.5">
+              <span class="label mb-0">メンバーを招待</span>
+              <span id="cg-count" class="text-xs font-semibold text-indigo-600">0人選択中</span>
             </div>
-            <div>
-              <div class="flex items-center justify-between mb-1.5">
-                <span class="label mb-0">メンバーを招待</span>
-                <span id="cg-count" class="text-xs font-semibold text-indigo-600">0人選択中</span>
-              </div>
-              <div class="relative">
-                <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">${icon("search", "w-4 h-4")}</span>
-                <input id="cg-search" type="search" class="input pl-10 py-2.5 bg-slate-50 border-transparent" placeholder="ユーザーを検索" autocomplete="off" />
-              </div>
+            <div class="relative">
+              <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">${icon("search", "w-4 h-4")}</span>
+              <input id="cg-search" type="search" class="input pl-10 py-2.5 bg-slate-50 border-transparent" placeholder="ユーザーを検索" autocomplete="off" />
             </div>
           </div>
           <div id="cg-list" class="mt-2 px-3 max-h-64 overflow-y-auto scroll-thin">
@@ -2118,8 +2139,21 @@ const firebaseConfig = {
                   <div class="text-xs text-slate-400 truncate">@${esc(u.id)}</div>
                 </div>
                 <input type="checkbox" name="members" value="${esc(u.id)}" class="w-5 h-5 rounded-md accent-indigo-600" />
-              </label>`).join("") || `<p class="text-sm text-slate-400 text-center py-6">他のユーザーはまだいません</p>`}
+              </label>`).join("") || `<p class="text-sm text-slate-400 text-center py-6">${exclude.length ? "招待できるユーザーはいません" : "他のユーザーはまだいません"}</p>`}
+          </div>`;
+    }
+
+    function openCreateGroup() {
+      openModal(`
+        ${modalHead("グループを作成", "メンバーは招待リンクからあとで参加することもできます")}
+        <form id="form-create-group" class="pb-6">
+          <div class="px-6 space-y-4">
+            <div>
+              <label class="label" for="cg-name">グループ名</label>
+              <input id="cg-name" name="name" class="input" maxlength="50" required autofocus placeholder="例: 週末キャンプ部" />
+            </div>
           </div>
+          <div class="mt-4">${userPicker()}</div>
           <div class="px-6 pt-4">
             <p class="form-error mb-3" hidden></p>
             <button type="submit" class="btn-primary w-full">${icon("plus", "w-5 h-5")}作成する</button>
@@ -2127,11 +2161,28 @@ const firebaseConfig = {
         </form>`);
     }
 
+    function openInviteMembers() {
+      const room = currentRoom();
+      if (!room || room.type !== "group" || !isMember(room)) return;
+      openModal(`
+        ${modalHead("メンバーを招待", `選んだユーザーが「${esc(room.name)}」のメンバーになります`)}
+        <form id="form-invite" class="pb-6">
+          ${userPicker(room.members || [])}
+          <div class="px-6 pt-4">
+            <p class="form-error mb-3" hidden></p>
+            <div class="flex gap-3">
+              <button type="button" data-action="room-info" class="btn-secondary flex-1">戻る</button>
+              <button type="submit" class="btn-primary flex-1">招待する</button>
+            </div>
+          </div>
+        </form>`);
+    }
+
     function openJoinModal() {
       openModal(`
-        ${modalHead("グループに参加", "招待リンクまたはグループIDを入力してください")}
+        ${modalHead("グループに参加", "グループのメンバーから届いた招待リンクを貼り付けてください")}
         <form id="form-join" class="px-6 pb-6 space-y-4">
-          <input name="code" class="input" required autofocus autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://…#join=xxxx または グループID" />
+          <input name="code" class="input" required autofocus autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://…#join=…" />
           <p class="form-error" hidden></p>
           <button type="submit" class="btn-primary w-full">参加する</button>
         </form>`);
@@ -2181,22 +2232,27 @@ const firebaseConfig = {
             <button type="button" id="room-notify-toggle" data-action="toggle-room-notify" class="switch" role="switch" aria-checked="${notifyOn}" aria-label="このグループの通知"><span class="switch-knob">${icon(notifyOn ? "bell" : "bell-off", "w-3.5 h-3.5")}</span></button>
           </div>` : ""}
 
-          <div class="mt-5 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4 space-y-3">
-            <div>
-              <div class="text-xs font-semibold text-slate-500 mb-1.5">招待リンク</div>
-              <div class="flex gap-2">
-                <input readonly value="${esc(inviteUrl(room.id))}" class="input py-2 text-sm bg-white" onfocus="this.select()" />
-                <button type="button" data-action="copy" data-copy="${esc(inviteUrl(room.id))}" data-label="招待リンクをコピーしました" class="btn-chip shrink-0 bg-indigo-600 text-white hover:bg-indigo-500">${icon("copy", "w-4 h-4")}コピー</button>
-              </div>
+          ${member ? `
+          <div class="mt-5 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
+            <div class="text-xs font-semibold text-slate-500 mb-1.5">招待リンク</div>
+            ${room.inviteCode ? `
+            <div class="flex gap-2">
+              <input readonly value="${esc(inviteUrl(room))}" class="input py-2 text-sm bg-white" onfocus="this.select()" />
+              <button type="button" data-action="copy" data-copy="${esc(inviteUrl(room))}" data-label="招待リンクをコピーしました" class="btn-chip shrink-0 bg-indigo-600 text-white hover:bg-indigo-500">${icon("copy", "w-4 h-4")}コピー</button>
             </div>
-            <div class="flex items-center gap-2 text-xs text-slate-500">
-              <span>グループID:</span><code class="font-mono text-slate-700 truncate">${esc(room.id)}</code>
-              <button type="button" data-action="copy" data-copy="${esc(room.id)}" data-label="グループIDをコピーしました" class="ml-auto text-indigo-600 font-semibold hover:underline shrink-0">コピー</button>
-            </div>
-          </div>
+            <div class="flex items-start gap-2 mt-2">
+              <p class="flex-1 text-xs text-slate-400 leading-relaxed">このリンクを知っている人はだれでも参加できます</p>
+              <button type="button" data-action="reset-invite" class="text-xs text-indigo-600 font-semibold hover:underline shrink-0">リンクを再発行</button>
+            </div>` : `
+            <p class="text-xs text-slate-400 leading-relaxed mb-2">このグループにはまだ招待リンクがありません</p>
+            <button type="button" data-action="reset-invite" class="btn-chip bg-indigo-600 text-white hover:bg-indigo-500">${icon("link", "w-4 h-4")}招待リンクを発行</button>`}
+          </div>` : ""}
 
           <div class="mt-5">
-            <div class="text-xs font-semibold text-slate-500 mb-2">メンバー</div>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-semibold text-slate-500">メンバー</span>
+              ${member ? `<button type="button" data-action="invite-members" class="text-xs text-indigo-600 font-semibold hover:underline inline-flex items-center gap-1">${icon("plus", "w-3.5 h-3.5")}メンバーを招待</button>` : ""}
+            </div>
             <div class="-mx-2 max-h-64 overflow-y-auto scroll-thin">
               ${members.map(({ id, u }) => `
                 <div class="flex items-center gap-3 px-2 py-2">
@@ -2210,9 +2266,7 @@ const firebaseConfig = {
             </div>
           </div>
 
-          ${member
-            ? `<button type="button" data-action="leave-group" class="btn-danger-ghost w-full mt-5">${icon("logout", "w-5 h-5")}グループを退出</button>`
-            : `<button type="button" data-action="join-current" class="btn-primary w-full mt-5">このグループに参加する</button>`}
+          ${member ? `<button type="button" data-action="leave-group" class="btn-danger-ghost w-full mt-5">${icon("logout", "w-5 h-5")}グループを退出</button>` : ""}
           ${canDeleteRoom(room) ? `<button type="button" data-action="delete-room" class="w-full mt-3 py-2 text-sm font-semibold text-rose-600 hover:underline">${icon("trash", "w-4 h-4 inline -mt-0.5")} グループを削除（全員の画面から消えます）</button>` : ""}
         </div>`);
     }
@@ -2224,14 +2278,14 @@ const firebaseConfig = {
       "tab": (el) => setTab(el.dataset.tab),
       "open-room": (el) => {
         const id = el.dataset.id;
-        openRoom(id, state.rooms.find((r) => r.id === id) || state.groups.find((r) => r.id === id) || null);
+        openRoom(id, state.rooms.find((r) => r.id === id) || null);
       },
       "start-dm": (el) => startDM(el.dataset.id),
-      "join-group": (el) => joinGroup(el.dataset.id),
-      "join-current": () => joinGroup(state.activeRoomId),
       "leave-group": () => leaveGroup(),
       "create-group": () => openCreateGroup(),
       "open-join": () => openJoinModal(),
+      "invite-members": () => openInviteMembers(),
+      "reset-invite": () => resetInviteLink(),
       "room-info": () => openRoomInfo(),
       "profile": () => openProfile(),
       "toggle-notify": () => toggleNotify(),
@@ -2268,7 +2322,8 @@ const firebaseConfig = {
       "form-change-password": (fd) => changePassword(fd.get("current"), fd.get("password"), fd.get("password2")),
       "form-profile": (fd) => updateName(fd.get("name")),
       "form-create-group": (fd) => createGroup(fd.get("name"), fd.getAll("members")),
-      "form-join": (fd) => joinGroup(parseJoinCode(fd.get("code"))),
+      "form-join": (fd) => joinGroup(parseInvite(fd.get("code"))),
+      "form-invite": (fd) => inviteMembers(fd.getAll("members")),
       "form-delete-account": (fd) => deleteAccount(fd.get("password")),
     };
 
@@ -2354,7 +2409,7 @@ const firebaseConfig = {
 
       // 入力欄
       const input = $("#msg-input");
-      input.placeholder = isCoarse() ? "メッセージを入力" : "メッセージを入力（Enterで送信）";
+      input.placeholder = isCoarse() ? "メッセージを入力" : "メッセージを入力（Enterで送信 / Shift+Enter・Ctrl+Enterで改行）";
       input.addEventListener("input", () => {
         autoGrow();
         updateSendBtn();
@@ -2377,11 +2432,18 @@ const firebaseConfig = {
             renderMentionBox();
             return;
           }
-          if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") { e.preventDefault(); pickMention(mention.index); return; }
+          if ((e.key === "Enter" && !e.shiftKey && !e.ctrlKey) || e.key === "Tab") { e.preventDefault(); pickMention(mention.index); return; }
           if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); mention = null; renderMentionBox(); return; }
         }
         if (e.key === "Escape" && state.replyTo && !state.selectedMsgId) { e.preventDefault(); e.stopPropagation(); cancelReply(); return; }
-        if (e.key !== "Enter" || e.shiftKey) return;
+        if (e.key !== "Enter" || e.shiftKey) return; // Shift+Enter = 改行（テキストエリアの既定の動作）
+        if (e.ctrlKey) {
+          // Ctrl+Enter = 改行（既定では何も入らないので、カーソル位置に改行を入れる）
+          e.preventDefault();
+          input.setRangeText("\n", input.selectionStart, input.selectionEnd, "end");
+          input.dispatchEvent(new Event("input")); // 下書き・高さ・送信ボタン・候補を更新
+          return;
+        }
         if (isCoarse()) return; // スマホは Enter = 改行、送信はボタンで
         e.preventDefault();
         send();
@@ -2394,6 +2456,9 @@ const firebaseConfig = {
         const box = e.target;
         if (box.scrollHeight - box.scrollTop - box.clientHeight < 40) $("#new-msg-btn").hidden = true;
       }, { passive: true });
+
+      // 開いているタブで招待リンクを開いたとき
+      window.addEventListener("hashchange", () => { if (state.me) handleJoinHash(); });
 
       // スマホの「戻る」ボタン
       window.addEventListener("popstate", () => {
