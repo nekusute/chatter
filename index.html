@@ -344,7 +344,7 @@ const firebaseConfig = {
             <div id="reply-bar" class="max-w-3xl mx-auto mb-2 flex items-center gap-2" hidden></div>
             <div class="max-w-3xl mx-auto flex items-end gap-2">
               <div class="flex-1 min-w-0 bg-slate-100 rounded-3xl px-4 py-2.5 border border-transparent transition focus-within:bg-white focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-500/15">
-                <textarea id="msg-input" rows="1" maxlength="2000" enterkeyhint="send" class="block w-full resize-none bg-transparent outline-none text-base leading-6 max-h-36 placeholder:text-slate-400" placeholder="メッセージを入力"></textarea>
+                <textarea id="msg-input" rows="1" maxlength="2000" enterkeyhint="enter" class="block w-full resize-none bg-transparent outline-none text-base leading-6 max-h-36 placeholder:text-slate-400" placeholder="メッセージを入力"></textarea>
               </div>
               <button type="submit" id="send-btn" class="w-11 h-11 shrink-0 rounded-full grid place-items-center text-white bg-gradient-to-br from-indigo-600 to-violet-600 shadow-lg shadow-indigo-500/30 transition active:scale-95 disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none" aria-label="送信" disabled>
                 <span data-icon="send"></span>
@@ -2409,7 +2409,7 @@ const firebaseConfig = {
 
       // 入力欄
       const input = $("#msg-input");
-      input.placeholder = isCoarse() ? "メッセージを入力（Enterで送信）" : "メッセージを入力（Enterで送信 / Shift+Enter・Ctrl+Enterで改行）";
+      input.placeholder = isCoarse() ? "メッセージを入力" : "メッセージを入力（Enterで送信 / Shift+Enter・Ctrl+Enterで改行）";
       input.addEventListener("input", () => {
         autoGrow();
         updateSendBtn();
@@ -2444,6 +2444,7 @@ const firebaseConfig = {
           input.dispatchEvent(new Event("input")); // 下書き・高さ・送信ボタン・候補を更新
           return;
         }
+        if (isCoarse()) return; // スマホは Enter = 改行、送信は送信ボタン（紙飛行機）のみ
         e.preventDefault();
         send();
       });
