@@ -53,6 +53,9 @@
 
     @keyframes msgIn { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
     .msg-in { animation: msgIn .22s ease-out both; }
+    /* 返信の引用をクリックしたときに、元のメッセージを光らせる */
+    @keyframes msgFlash { 0%, 50% { background-color: rgba(251, 191, 36, .28); } 100% { background-color: transparent; } }
+    .msg-flash { animation: msgFlash 1.6s ease-out; border-radius: 1rem; }
 
     @keyframes sheetIn { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: none; } }
     @keyframes popIn { from { opacity: 0; transform: translateY(8px) scale(.96); } to { opacity: 1; transform: none; } }
@@ -334,7 +337,11 @@ const firebaseConfig = {
             </button>
           </div>
 
-          <form id="composer" class="border-t border-slate-100 bg-white px-3 sm:px-4 pt-3 safe-bottom shrink-0">
+          <form id="composer" class="relative border-t border-slate-100 bg-white px-3 sm:px-4 pt-3 safe-bottom shrink-0">
+            <!-- グループで「@」を入力したときのメンション候補 -->
+            <div id="mention-box" class="absolute z-20 left-3 right-3 sm:left-4 sm:right-4 bottom-full mb-2 max-w-3xl mx-auto" hidden></div>
+            <!-- 返信先のメッセージ -->
+            <div id="reply-bar" class="max-w-3xl mx-auto mb-2 flex items-center gap-2" hidden></div>
             <div class="max-w-3xl mx-auto flex items-end gap-2">
               <div class="flex-1 min-w-0 bg-slate-100 rounded-3xl px-4 py-2.5 border border-transparent transition focus-within:bg-white focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-500/15">
                 <textarea id="msg-input" rows="1" maxlength="2000" class="block w-full resize-none bg-transparent outline-none text-base leading-6 max-h-36 placeholder:text-slate-400" placeholder="メッセージを入力"></textarea>
@@ -428,6 +435,7 @@ const firebaseConfig = {
       messagesLoaded: false,
       renderedIds: new Set(),
       drafts: {},
+      replyTo: null,          // 返信先のメッセージ { id, senderId, senderName, text }
       selectedMsgId: null,    // 送信取消メニュー / リアクションの絵文字を開いているメッセージ
       leavingRoomId: null,    // 自分で退出・削除中のルーム（「削除されました」通知を出さない）
       accountDeleting: false,
@@ -451,10 +459,7 @@ const firebaseConfig = {
 
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-    // エスケープ済みテキスト中の URL をリンク化
-    const linkify = (escaped, mine) =>
-      escaped.replace(/https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+/g, (url) =>
-        `<a href="${url}" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 ${mine ? "decoration-white/60" : "text-indigo-600"}">${url}</a>`);
+    const URL_RE = /https?:\/\/[\w\-._~:/?#\[\]@!$&'()*+,;=%]+/g;
 
     const ICONS = {
       chat: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
@@ -478,6 +483,7 @@ const firebaseConfig = {
       trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
       key: "M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z",
       bell: "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9",
+      reply: "M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6",
     };
     ICONS["bell-off"] = ICONS.bell + "M3 3l18 18"; // 斜線入りのベル
     const icon = (name, cls = "w-5 h-5") =>
@@ -813,7 +819,7 @@ const firebaseConfig = {
       Object.assign(state, {
         uid: null, me: null, users: new Map(), rooms: [], groups: [], usersLoaded: false, roomsLoaded: false, groupsLoaded: false,
         tab: "talk", search: "", activeRoomId: null, activeRoomFallback: null, messages: [], messagesLoaded: false,
-        renderedIds: new Set(), drafts: {}, selectedMsgId: null, leavingRoomId: null, accountDeleting: false,
+        renderedIds: new Set(), drafts: {}, replyTo: null, selectedMsgId: null, leavingRoomId: null, accountDeleting: false,
         unsub: { users: null, rooms: null, groups: null, messages: null },
       });
       signOut(auth).catch((e) => console.warn(e));
@@ -859,7 +865,7 @@ const firebaseConfig = {
     // ページを開いている間（タブが裏にあっても）ブラウザの通知を出す。オン/オフはこのブラウザの localStorage に保存
     const NOTIFY_KEY = "chatter:notify";
     let notifySince = 0;                  // これより前のメッセージは通知しない（ログイン前に届いていた分）
-    const shownNotifications = new Map(); // roomId -> Notification
+    const shownNotifications = new Map(); // roomId（メンションは "<roomId>:mention"）-> Notification
 
     const notifyEnabled = () => store.get(NOTIFY_KEY) === "on" && "Notification" in window && Notification.permission === "granted";
 
@@ -904,15 +910,41 @@ const firebaseConfig = {
       toast("通知をオンにしました");
     }
 
+    // グループごとの通知のオフ（このブラウザの localStorage にユーザーごとに保存。オフのグループはメンションも通知しない）
+    const mutedKey = () => `chatter:muted:${state.me.id}`;
+    const mutedRooms = () => new Set(store.json(mutedKey(), []));
+
+    function toggleRoomNotify() {
+      const room = currentRoom();
+      if (!room || room.type !== "group" || !isMember(room)) return;
+      const muted = mutedRooms();
+      const on = muted.has(room.id); // 切り替え後にオンになるか
+      if (on) muted.delete(room.id); else muted.add(room.id);
+      store.set(mutedKey(), JSON.stringify([...muted]));
+      const btn = $("#room-notify-toggle");
+      if (btn) {
+        btn.setAttribute("aria-checked", on);
+        btn.firstElementChild.innerHTML = icon(on ? "bell" : "bell-off", "w-3.5 h-3.5");
+      }
+      renderSidebar();
+      renderChatHeader();
+      toast(on ? "このグループの通知をオンにしました" : "このグループの通知をオフにしました");
+    }
+
+    // 自分がメンションされているか（@表示名 または @All）
+    const mentionsMe = (m) => !!m && m.senderId !== state.me.id && (!!m.mentionAll || !!m.mentions?.includes(state.me.id));
+
     // ルーム一覧の更新で、最後のメッセージが新しくなったトークを通知する
     function notifyNewMessages(prevLast) {
       if (!notifyEnabled()) return;
+      const muted = mutedRooms();
       for (const room of state.rooms) {
         const lm = room.lastMessage;
         const at = ms(lm?.createdAt);
         if (!lm || lm.type !== "text" || lm.senderId === state.me.id) continue;
         if (at <= notifySince || at <= (prevLast.get(room.id) || 0)) continue;
         if (room.id === state.activeRoomId && document.visibilityState === "visible") continue; // 開いて見ているトーク
+        if (room.type === "group" && muted.has(room.id)) continue; // 通知をオフにしたグループ
         notifyMessage(room, lm, at).catch((e) => console.warn(e));
       }
     }
@@ -926,13 +958,20 @@ const firebaseConfig = {
         const recent = store.json("chatter:notified", []);
         if (recent.includes(key)) return;
         store.set("chatter:notified", JSON.stringify([key, ...recent].slice(0, 50)));
-        const n = showNotification(roomTitle(room), {
-          body: room.type === "group" ? `${userName(lm.senderId, lm.senderName)}: ${lm.text}` : lm.text,
-          tag: `chatter:${room.id}`, // 同じトークの通知は最新の1件に置き換える
+        const sender = userName(lm.senderId, lm.senderName);
+        const mention = room.type === "group" && mentionsMe(lm);
+        // メンションは「だれが」「どのグループで」を見出しに、本文をそのまま表示する
+        const title = !mention ? roomTitle(room)
+          : lm.mentions?.includes(state.me.id) ? `${sender} さんからのメンション（${roomTitle(room)}）`
+          : `${sender} さんから全員へのメンション（${roomTitle(room)}）`;
+        const tagKey = mention ? `${room.id}:mention` : room.id; // メンションの通知は通常の新着で置き換えない
+        const n = showNotification(title, {
+          body: room.type === "group" && !mention ? `${sender}: ${lm.text}` : lm.text,
+          tag: `chatter:${tagKey}`, // 同じトークの通知は最新の1件に置き換える
           renotify: true,
         });
         if (!n) return;
-        shownNotifications.set(room.id, n);
+        shownNotifications.set(tagKey, n);
         n.onclick = () => {
           window.focus();
           n.close();
@@ -945,8 +984,10 @@ const firebaseConfig = {
     }
 
     function closeNotification(roomId) {
-      shownNotifications.get(roomId)?.close();
-      shownNotifications.delete(roomId);
+      for (const key of [roomId, `${roomId}:mention`]) {
+        shownNotifications.get(key)?.close();
+        shownNotifications.delete(key);
+      }
     }
 
     // ============================================================
@@ -1038,6 +1079,8 @@ const firebaseConfig = {
     const partnerOf = (room) => room.members?.find((m) => m !== state.me.id) || state.me.id;
     const userName = (id, fallback) => state.users.get(id)?.name || fallback || id;
     const isMember = (room) => !!room?.members?.includes(state.me.id);
+    // メッセージを送れる（メンバーで、DM の相手が退会していない）
+    const canSend = (room) => isMember(room) && !(room.type === "dm" && !!state.users.get(partnerOf(room))?.deleted);
 
     function currentRoom() {
       const id = state.activeRoomId;
@@ -1123,9 +1166,11 @@ const firebaseConfig = {
               <button type="button" data-action="tab" data-tab="groups" class="btn-chip bg-slate-100 text-slate-600 hover:bg-slate-200">${icon("group", "w-4 h-4")}グループ</button>
             </div>`);
       }
+      const muted = mutedRooms();
       return rooms.map((r) => {
         const unread = isUnread(r);
         const lm = r.lastMessage;
+        const mentioned = unread && r.type === "group" && mentionsMe(lm);
         let preview;
         if (!lm) preview = r.type === "dm" ? "トークを始めましょう 👋" : "グループが作成されました";
         else if (lm.type === "system") preview = lm.text;
@@ -1140,9 +1185,11 @@ const firebaseConfig = {
               <div class="flex items-center gap-1.5">
                 <span class="font-semibold truncate text-slate-800">${esc(roomTitle(r))}</span>
                 ${r.type === "group" ? `<span class="text-xs text-slate-400 shrink-0">(${r.members.length})</span>` : ""}
+                ${r.type === "group" && muted.has(r.id) ? `<span class="text-slate-300 shrink-0" title="通知オフ">${icon("bell-off", "w-3.5 h-3.5")}</span>` : ""}
                 <span class="ml-auto pl-2 text-[11px] shrink-0 ${unread ? "text-indigo-600 font-semibold" : "text-slate-400"}">${shortTime(lm?.createdAt || r.updatedAt)}</span>
               </div>
               <div class="flex items-center gap-2 mt-0.5">
+                ${mentioned ? `<span class="shrink-0 w-5 h-5 rounded-full bg-amber-500 text-white text-[11px] font-bold grid place-items-center" title="あなたへのメンション">@</span>` : ""}
                 <span class="text-sm truncate ${unread ? "text-slate-800 font-medium" : "text-slate-500"}">${esc(preview)}</span>
                 ${unread ? `<span class="ml-auto w-2.5 h-2.5 rounded-full bg-indigo-500 shrink-0"></span>` : ""}
               </div>
@@ -1229,7 +1276,7 @@ const firebaseConfig = {
             ? `<span class="text-emerald-600 font-medium">● オンライン</span>`
             : `@${esc(pid)}${u ? ` ・ 最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}`;
       } else {
-        subtitle = `${room.members?.length ?? 0}人のメンバー`;
+        subtitle = `${room.members?.length ?? 0}人のメンバー${isMember(room) && mutedRooms().has(room.id) ? " ・ 通知オフ" : ""}`;
       }
       $("#chat-header-main").innerHTML = `
         ${roomAvatar(room, "w-10 h-10 text-sm")}
@@ -1250,6 +1297,7 @@ const firebaseConfig = {
       const room = currentRoom();
       const isGroup = room?.type === "group";
       const canReact = isMember(room);
+      const canReply = !!room && canSend(room);
       const prevIds = state.renderedIds;
       const nextIds = new Set();
       let html = "", lastDay = "", prev = null, hasNew = false, newFromMe = false;
@@ -1273,11 +1321,11 @@ const firebaseConfig = {
 
         const mine = m.senderId === state.me.id;
         const cont = prev && prev.senderId === m.senderId && d - prev.d < 5 * 60e3; // 連続投稿はまとめる
-        const body = linkify(esc(m.text), mine);
+        const body = replyQuote(m, mine) + formatText(m, mine); // 吹き出しは改行・空白をそのまま表示するので、間に空白を入れない
         if (mine) {
-          // 自分のメッセージはクリック（タップ）で「送信取消」ボタンを表示
+          // 自分のメッセージはクリック（タップ）で「返信」「送信取消」ボタンを表示
           const selected = state.selectedMsgId === m.id;
-          const selectable = m.pending ? "" : `data-action="select-msg" data-id="${esc(m.id)}" title="クリックで送信取消"`;
+          const selectable = m.pending ? "" : `data-action="select-msg" data-id="${esc(m.id)}" title="${canReply ? "クリックで返信・送信取消" : "クリックで送信取消"}"`;
           html += `
             <div class="flex justify-end items-end gap-1.5 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""}" data-msg-id="${esc(m.id)}">
               <div class="flex flex-col items-end gap-0.5 shrink-0">
@@ -1287,21 +1335,22 @@ const firebaseConfig = {
               <div class="bubble bubble-mine ${m.pending ? "" : "cursor-pointer"} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
             </div>
             ${selected ? `
-            <div class="flex justify-end mt-1.5 fade-in" data-msg-id="${esc(m.id)}">
+            <div class="flex justify-end gap-2 mt-1.5 fade-in" data-msg-id="${esc(m.id)}">
+              ${canReply ? `<button type="button" data-action="reply" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("reply", "w-3.5 h-3.5")}返信</button>` : ""}
               <button type="button" data-action="unsend" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-rose-600 ring-1 ring-rose-200 shadow-sm hover:bg-rose-50">${icon("trash", "w-3.5 h-3.5")}送信取消</button>
             </div>` : ""}`;
         } else {
           const name = userName(m.senderId, m.senderName);
-          // 他の人のメッセージはクリック（タップ）で吹き出しの上にリアクションの絵文字を表示（グループはメンバーのみ）
+          // 他の人のメッセージはクリック（タップ）で吹き出しの上にリアクションの絵文字と返信ボタンを表示（グループはメンバーのみ）
           const selected = canReact && state.selectedMsgId === m.id;
-          const selectable = canReact ? `data-action="select-msg" data-id="${esc(m.id)}" title="クリックでリアクション"` : "";
+          const selectable = canReact ? `data-action="select-msg" data-id="${esc(m.id)}" title="${canReply ? "クリックでリアクション・返信" : "クリックでリアクション"}"` : "";
           html += `
             <div class="flex items-start gap-2 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""} ${selected ? "relative z-10" : ""}" data-msg-id="${esc(m.id)}">
               <div class="w-8 shrink-0">${cont ? "" : avatar(m.senderId, name, "w-8 h-8 text-xs")}</div>
               <div class="min-w-0 flex-1">
                 ${!cont && isGroup ? `<div class="text-xs text-slate-500 mb-1 ml-1 truncate">${esc(name)}</div>` : ""}
                 <div class="relative flex items-end gap-1.5">
-                  ${selected ? reactionPicker(m) : ""}
+                  ${selected ? reactionPicker(m, canReply) : ""}
                   <div class="bubble bubble-other ${canReact ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
                   <div class="flex flex-col items-start gap-0.5 shrink-0">
                     ${reactionChip(m, isGroup)}
@@ -1350,16 +1399,50 @@ const firebaseConfig = {
         : `<span class="${cls}">${inner}</span>`;
     }
 
-    // 吹き出しの上に出すリアクションの絵文字（選択中のものは強調、もう一度選ぶと取り消し）
+    // 吹き出しの上に出すリアクションの絵文字（選択中のものは強調、もう一度選ぶと取り消し）と返信ボタン
     let pickerShownFor = null; // 表示中のピッカーのメッセージ（描き直しのたびにアニメーションさせない）
-    function reactionPicker(m) {
+    function reactionPicker(m, canReply) {
       const current = m.reactions?.[state.me.id];
       return `
         <div class="reaction-picker ${pickerShownFor === m.id ? "" : "pop-in"} absolute bottom-full left-0 mb-2 w-max flex items-center gap-0.5 p-1 rounded-full bg-white shadow-lg ring-1 ring-slate-200" role="toolbar" aria-label="リアクション">
           ${REACTIONS.map(([code, emoji]) => `
             <button type="button" data-action="react" data-id="${esc(m.id)}" data-code="${code}" aria-label="${emoji}" aria-pressed="${current === code}"
               class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center text-lg sm:text-xl leading-none transition hover:bg-slate-100 hover:scale-110 active:scale-95 ${current === code ? "bg-indigo-100 ring-1 ring-indigo-300" : ""}">${emoji}</button>`).join("")}
+          ${canReply ? `
+            <span class="w-px h-6 bg-slate-200 mx-0.5"></span>
+            <button type="button" data-action="reply" data-id="${esc(m.id)}" aria-label="返信" title="返信"
+              class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 active:scale-95">${icon("reply", "w-5 h-5")}</button>` : ""}
         </div>`;
+    }
+
+    // 本文：URL をリンクに、「@表示名」「@All」を強調表示にする
+    function formatText(m, mine) {
+      const mentioned = (m.mentions || []).map((id) => ({ id, name: userName(id) }));
+      const plain = (s) => {
+        let out = "", pos = 0;
+        for (const f of findMentions(s, mentioned, !!m.mentionAll)) {
+          const toMe = !f.id || f.id === state.me.id;
+          const cls = mine ? "bg-white/20 text-white" : toMe ? "bg-amber-100 text-amber-800" : "text-indigo-600";
+          out += esc(s.slice(pos, f.start)) + `<span class="font-semibold rounded px-0.5 ${cls}">${esc(s.slice(f.start, f.end))}</span>`;
+          pos = f.end;
+        }
+        return out + esc(s.slice(pos));
+      };
+      let html = "", pos = 0;
+      for (const u of m.text.matchAll(URL_RE)) {
+        html += plain(m.text.slice(pos, u.index)) +
+          `<a href="${esc(u[0])}" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 ${mine ? "decoration-white/60" : "text-indigo-600"}">${esc(u[0])}</a>`;
+        pos = u.index + u[0].length;
+      }
+      return html + plain(m.text.slice(pos));
+    }
+
+    // 吹き出しの先頭に出す返信先の引用（クリックで元のメッセージへ移動）
+    function replyQuote(m, mine) {
+      const r = m.replyTo;
+      if (!r) return "";
+      const name = r.senderId === state.me.id ? "あなた" : userName(r.senderId, r.senderName);
+      return `<span role="button" tabindex="0" data-action="jump-to" data-id="${esc(r.id)}" title="元のメッセージへ移動" class="block mb-1.5 -mx-1 px-2.5 py-1 rounded-lg border-l-[3px] text-[13px] leading-snug whitespace-nowrap cursor-pointer transition ${mine ? "bg-white/15 border-white/70 hover:bg-white/25" : "bg-slate-100 border-indigo-400 hover:bg-slate-200/70"}"><span class="block font-semibold truncate ${mine ? "text-white" : "text-indigo-600"}">${esc(name)}</span><span class="block truncate ${mine ? "text-white/80" : "text-slate-500"}">${esc(r.text.replace(/\s+/g, " "))}</span></span>`;
     }
 
     // リアクションの絵文字がメッセージ一覧からはみ出さないように位置を調整する
@@ -1394,6 +1477,10 @@ const firebaseConfig = {
         state.messagesLoaded = false;
         state.renderedIds = new Set();
         state.selectedMsgId = null;
+        state.replyTo = null;
+        mention = null;
+        renderReplyBar();
+        renderMentionBox();
         $("#chat-empty").hidden = true;
         $("#chat-room").hidden = false;
         $("#new-msg-btn").hidden = true;
@@ -1437,7 +1524,11 @@ const firebaseConfig = {
       state.activeRoomFallback = null;
       state.leavingRoomId = null;
       state.selectedMsgId = null;
+      state.replyTo = null;
       state.messages = [];
+      mention = null;
+      renderReplyBar();
+      renderMentionBox();
       $("#chat-room").hidden = true;
       $("#chat-empty").hidden = false;
       $("#app").dataset.view = "list";
@@ -1625,6 +1716,126 @@ const firebaseConfig = {
         </div>`);
     }
 
+    // ============================================================
+    // 返信 / メンション
+    // ============================================================
+
+    function startReply(msgId) {
+      const m = state.messages.find((x) => x.id === msgId);
+      state.selectedMsgId = null;
+      renderMessages();
+      if (!m || m.type !== "text" || m.pending || !canSend(currentRoom())) return;
+      state.replyTo = { id: m.id, senderId: m.senderId, senderName: m.senderName || "", text: m.text.slice(0, 100) };
+      renderReplyBar();
+      $("#msg-input").focus();
+    }
+
+    function cancelReply() {
+      state.replyTo = null;
+      renderReplyBar();
+    }
+
+    function renderReplyBar() {
+      const bar = $("#reply-bar");
+      const r = state.replyTo;
+      const box = $("#messages");
+      const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 150;
+      bar.hidden = !r;
+      bar.innerHTML = r ? `
+        <span class="shrink-0 text-indigo-500">${icon("reply", "w-4 h-4")}</span>
+        <div class="flex-1 min-w-0 border-l-[3px] border-indigo-400 pl-2.5 fade-in">
+          <div class="text-xs font-semibold text-indigo-600 truncate">${esc(r.senderId === state.me.id ? "自分" : userName(r.senderId, r.senderName))} への返信</div>
+          <div class="text-xs text-slate-500 truncate">${esc(r.text.replace(/\s+/g, " "))}</div>
+        </div>
+        <button type="button" data-action="cancel-reply" class="icon-btn w-8 h-8 shrink-0" aria-label="返信をやめる">${icon("x", "w-4 h-4")}</button>` : "";
+      if (nearBottom) box.scrollTop = box.scrollHeight; // 入力欄が高くなっても最新のメッセージを隠さない
+    }
+
+    // 返信の引用から元のメッセージへ移動して光らせる
+    function jumpToMessage(msgId) {
+      const row = $(`#messages [data-msg-id="${CSS.escape(msgId)}"]`);
+      if (!row) { toast("元のメッセージは表示できません（送信取消されたか、古いメッセージです）"); return; }
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+      row.classList.remove("msg-flash");
+      void row.offsetWidth; // アニメーションをやり直す
+      row.classList.add("msg-flash");
+    }
+
+    // グループでメンションできる相手（自分と退会したユーザー以外のメンバー）
+    const mentionCandidates = (room) => (room?.members || [])
+      .filter((id) => id !== state.me.id && !state.users.get(id)?.deleted)
+      .map((id) => ({ id, name: userName(id) }));
+
+    // 本文中の「@表示名」「@All」を探す。同じ位置で複数の名前が当てはまるときは長い方を優先。id が null なら @All
+    function findMentions(text, candidates, all) {
+      const found = [];
+      const byLength = candidates.filter((c) => c.name).sort((a, b) => b.name.length - a.name.length);
+      for (let i = text.indexOf("@"); i !== -1; i = text.indexOf("@", i)) {
+        const rest = text.slice(i + 1);
+        const c = byLength.find((x) => rest.startsWith(x.name));
+        let hit = c ? { id: c.id, len: c.name.length } : null;
+        if (all && rest.slice(0, 3).toLowerCase() === "all" && (!hit || hit.len < 3)) hit = { id: null, len: 3 };
+        if (!hit) { i += 1; continue; }
+        found.push({ start: i, end: i + 1 + hit.len, id: hit.id });
+        i += 1 + hit.len;
+      }
+      return found;
+    }
+
+    // 入力中の「@…」に合うメンション候補（{ start, end, items, index }）
+    let mention = null;
+    function updateMentionBox() {
+      const input = $("#msg-input");
+      const room = currentRoom();
+      mention = null;
+      if (room?.type === "group" && isMember(room) && input.selectionStart === input.selectionEnd) {
+        const before = input.value.slice(0, input.selectionStart);
+        const typed = before.match(/@([^\s@]{0,30})$/);
+        if (typed) {
+          const q = typed[1].toLowerCase();
+          const starts = (c) => c.name.toLowerCase().startsWith(q) || c.id.startsWith(q);
+          const items = [
+            ...("all".startsWith(q) ? [{ id: null, name: "All" }] : []),
+            ...mentionCandidates(room)
+              .filter((c) => starts(c) || c.name.toLowerCase().includes(q))
+              .sort((a, b) => starts(b) - starts(a) || a.name.localeCompare(b.name, "ja")),
+          ].slice(0, 8);
+          if (items.length) mention = { start: before.length - typed[0].length, end: before.length, items, index: 0 };
+        }
+      }
+      renderMentionBox();
+    }
+
+    function renderMentionBox() {
+      const box = $("#mention-box");
+      const wasHidden = box.hidden;
+      box.hidden = !mention;
+      if (!mention) { box.innerHTML = ""; return; }
+      box.innerHTML = `
+        <div class="${wasHidden ? "pop-in" : ""} bg-white rounded-2xl shadow-lg ring-1 ring-slate-200 p-1.5 max-h-64 overflow-y-auto scroll-thin" role="listbox" aria-label="メンション">
+          ${mention.items.map((c, i) => `
+            <button type="button" data-action="pick-mention" data-index="${i}" role="option" aria-selected="${i === mention.index}"
+              class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-left transition ${i === mention.index ? "bg-indigo-50" : "hover:bg-slate-50"}">
+              ${c.id ? avatar(c.id, c.name, "w-8 h-8 text-xs") : `<div class="w-8 h-8 shrink-0 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 text-white text-sm font-bold grid place-items-center shadow-sm">@</div>`}
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-medium text-slate-800 truncate">${esc(c.name)}</div>
+                <div class="text-xs text-slate-400 truncate">${c.id ? `@${esc(c.id)}` : "グループの全員にメンション"}</div>
+              </div>
+            </button>`).join("")}
+        </div>`;
+      box.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    }
+
+    // 候補を選ぶと「@表示名 」を入力する（メンションの判定は送信時に本文から行う）
+    function pickMention(index) {
+      const c = mention?.items[index];
+      if (!c) return;
+      const input = $("#msg-input");
+      input.focus();
+      input.setRangeText(`@${c.name} `, mention.start, mention.end, "end");
+      input.dispatchEvent(new Event("input")); // 下書き・高さ・送信ボタン・候補を更新
+    }
+
     // DM は参加者なら誰でも、グループは作成者（作成者が退会済みならメンバー）が削除できる
     function canDeleteRoom(room) {
       if (!room || !state.rooms.some((r) => r.id === room.id)) return false; // 未作成の DM・未参加のグループ
@@ -1721,6 +1932,7 @@ const firebaseConfig = {
         throw e;
       }
       store.remove(`chatter:read:${me.id}`);
+      store.remove(mutedKey());
       resetSession();
       toast("アカウントを削除しました");
     }
@@ -1754,16 +1966,30 @@ const firebaseConfig = {
       if (!text || !isMember(room)) return;
       if (text.length > MAX_TEXT) return toast(`メッセージは${MAX_TEXT}文字以内で入力してください`, "error");
 
+      const replyTo = state.replyTo;
       input.value = "";
       state.drafts[room.id] = "";
+      state.replyTo = null;
       autoGrow();
       updateSendBtn();
+      renderReplyBar();
+      updateMentionBox();
 
+      // メンション（グループのみ）：本文中の「@表示名」「@All」。通知のため一覧用の lastMessage にも入れる
+      const found = room.type === "group" ? findMentions(text, mentionCandidates(room), true) : [];
+      const mentions = [...new Set(found.map((f) => f.id).filter(Boolean))];
+      const extra = {
+        ...(mentions.length ? { mentions } : {}),
+        ...(found.some((f) => !f.id) ? { mentionAll: true } : {}),
+      };
       const roomRef = doc(db, "rooms", room.id);
       const msgRef = doc(collection(roomRef, "messages"));
-      const message = { type: "text", text, senderId: state.me.id, senderName: state.me.name, senderUid: state.uid, createdAt: serverTimestamp() };
+      const message = {
+        type: "text", text, senderId: state.me.id, senderName: state.me.name, senderUid: state.uid, createdAt: serverTimestamp(),
+        ...(replyTo ? { replyTo } : {}), ...extra,
+      };
       const roomUpdate = {
-        lastMessage: { type: "text", text: text.slice(0, 100), senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() },
+        lastMessage: { type: "text", text: text.slice(0, 100), senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp(), ...extra },
         updatedAt: serverTimestamp(),
       };
       try {
@@ -1787,7 +2013,12 @@ const firebaseConfig = {
       } catch (e) {
         console.error(e);
         toast(errMsg(e), "error");
-        if (!input.value && state.activeRoomId === room.id) { input.value = text; autoGrow(); updateSendBtn(); }
+        if (!input.value && state.activeRoomId === room.id) {
+          input.value = text;
+          if (!state.replyTo) { state.replyTo = replyTo; renderReplyBar(); }
+          autoGrow();
+          updateSendBtn();
+        }
       }
     }
 
@@ -1925,6 +2156,7 @@ const firebaseConfig = {
         return;
       }
       const member = isMember(room);
+      const notifyOn = !mutedRooms().has(room.id);
       const members = (room.members || []).map((id) => ({ id, u: state.users.get(id) }))
         .sort((a, b) => (b.id === state.me.id) - (a.id === state.me.id) || (isOnline(b.u) - isOnline(a.u)));
       openModal(`
@@ -1937,6 +2169,17 @@ const firebaseConfig = {
               <div class="text-sm text-slate-500">${room.members?.length ?? 0}人のメンバー</div>
             </div>
           </div>
+
+          ${member ? `
+          <div class="mt-5 flex items-center gap-3 rounded-2xl bg-slate-50 ring-1 ring-slate-100 px-4 py-3">
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-semibold text-slate-800">このグループの通知</div>
+              <div class="text-xs text-slate-400 leading-relaxed mt-0.5">${notifyEnabled()
+                ? "オフにすると、メンションを含めてこのグループの通知は届きません"
+                : "画面上部の通知スイッチをオンにすると、新着メッセージとメンションが通知されます"}</div>
+            </div>
+            <button type="button" id="room-notify-toggle" data-action="toggle-room-notify" class="switch" role="switch" aria-checked="${notifyOn}" aria-label="このグループの通知"><span class="switch-knob">${icon(notifyOn ? "bell" : "bell-off", "w-3.5 h-3.5")}</span></button>
+          </div>` : ""}
 
           <div class="mt-5 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4 space-y-3">
             <div>
@@ -2003,6 +2246,11 @@ const firebaseConfig = {
         renderMessages();
       },
       "unsend": (el) => unsendMessage(el.dataset.id),
+      "reply": (el) => startReply(el.dataset.id),
+      "cancel-reply": () => cancelReply(),
+      "jump-to": (el) => jumpToMessage(el.dataset.id),
+      "pick-mention": (el) => pickMention(Number(el.dataset.index)),
+      "toggle-room-notify": () => toggleRoomNotify(),
       "react": (el) => react(el.dataset.id, el.dataset.code),
       "reactors": (el) => {
         if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
@@ -2110,11 +2358,30 @@ const firebaseConfig = {
       input.addEventListener("input", () => {
         autoGrow();
         updateSendBtn();
+        updateMentionBox();
         if (state.activeRoomId) state.drafts[state.activeRoomId] = input.value;
       });
+      // カーソルを動かしたら候補を出し直す・入力欄から離れたら閉じる
+      input.addEventListener("click", updateMentionBox);
+      input.addEventListener("keyup", (e) => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) updateMentionBox(); });
+      input.addEventListener("blur", () => { if (mention) { mention = null; renderMentionBox(); } });
+      $("#mention-box").addEventListener("mousedown", (e) => e.preventDefault()); // 候補を選ぶときに入力欄のフォーカスを外さない
       input.addEventListener("keydown", (e) => {
-        // 日本語入力の変換確定(Enter)では送信しない
-        if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+        if (e.isComposing || e.keyCode === 229) return; // 日本語入力の変換中（変換確定の Enter では送信しない）
+        // メンション候補：↑↓で選択、Enter / Tab で入力、Esc で閉じる
+        if (mention) {
+          const n = mention.items.length;
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            mention.index = (mention.index + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
+            renderMentionBox();
+            return;
+          }
+          if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") { e.preventDefault(); pickMention(mention.index); return; }
+          if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); mention = null; renderMentionBox(); return; }
+        }
+        if (e.key === "Escape" && state.replyTo && !state.selectedMsgId) { e.preventDefault(); e.stopPropagation(); cancelReply(); return; }
+        if (e.key !== "Enter" || e.shiftKey) return;
         if (isCoarse()) return; // スマホは Enter = 改行、送信はボタンで
         e.preventDefault();
         send();
