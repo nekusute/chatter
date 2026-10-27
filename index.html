@@ -60,6 +60,7 @@
     @media (min-width: 640px) { .modal-panel { animation-name: popIn; } }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     .fade-in { animation: fadeIn .2s ease-out both; }
+    .pop-in { animation: popIn .16s ease-out both; }
 
     @keyframes toastIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
     .toast { animation: toastIn .25s ease-out both; transition: opacity .25s, transform .25s; }
@@ -387,7 +388,7 @@ const firebaseConfig = {
     import {
       initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
       doc, collection, getDoc, getDocs, setDoc, updateDoc, query, where, orderBy, limit, limitToLast,
-      onSnapshot, serverTimestamp, writeBatch, runTransaction, arrayUnion, arrayRemove,
+      onSnapshot, serverTimestamp, writeBatch, runTransaction, arrayUnion, arrayRemove, deleteField,
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
     // ============================================================
@@ -402,6 +403,12 @@ const firebaseConfig = {
     const LOGIN_EMAIL_DOMAIN = "chatter.local"; // ログイン用メールアドレス「<ユーザーID>@chatter.local」（firestore.rules と合わせる）
     const MIN_PASSWORD = 6;                 // Firebase Authentication の最小文字数
     const DELETED_NAME = "退会したユーザー";
+    // リアクション（Firestore にはコードで保存。firestore.rules の一覧と合わせる）
+    const REACTIONS = [
+      ["good", "👍"], ["ok", "👌"], ["heart", "❤️"], ["hands", "🙌"], ["lol", "🤣"], ["think", "🤔"], ["cry", "😭"], ["angry", "😡"],
+    ];
+    const REACTION_EMOJI = Object.fromEntries(REACTIONS);
+    const REACTION_CODES = REACTIONS.map(([code]) => code);
 
     let auth, db;
     const state = {
@@ -421,7 +428,7 @@ const firebaseConfig = {
       messagesLoaded: false,
       renderedIds: new Set(),
       drafts: {},
-      selectedMsgId: null,    // 送信取消メニューを開いているメッセージ
+      selectedMsgId: null,    // 送信取消メニュー / リアクションの絵文字を開いているメッセージ
       leavingRoomId: null,    // 自分で退出・削除中のルーム（「削除されました」通知を出さない）
       accountDeleting: false,
       unsub: { users: null, rooms: null, groups: null, messages: null },
@@ -1240,7 +1247,9 @@ const firebaseConfig = {
     function renderMessages(first = false) {
       const box = $("#messages");
       const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 150;
-      const isGroup = currentRoom()?.type === "group";
+      const room = currentRoom();
+      const isGroup = room?.type === "group";
+      const canReact = isMember(room);
       const prevIds = state.renderedIds;
       const nextIds = new Set();
       let html = "", lastDay = "", prev = null, hasNew = false, newFromMe = false;
@@ -1271,7 +1280,10 @@ const firebaseConfig = {
           const selectable = m.pending ? "" : `data-action="select-msg" data-id="${esc(m.id)}" title="クリックで送信取消"`;
           html += `
             <div class="flex justify-end items-end gap-1.5 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""}" data-msg-id="${esc(m.id)}">
-              <span class="msg-time">${m.pending ? "送信中…" : hhmm(d)}</span>
+              <div class="flex flex-col items-end gap-0.5 shrink-0">
+                ${reactionChip(m, isGroup)}
+                <span class="msg-time">${m.pending ? "送信中…" : hhmm(d)}</span>
+              </div>
               <div class="bubble bubble-mine ${m.pending ? "" : "cursor-pointer"} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
             </div>
             ${selected ? `
@@ -1280,14 +1292,21 @@ const firebaseConfig = {
             </div>` : ""}`;
         } else {
           const name = userName(m.senderId, m.senderName);
+          // 他の人のメッセージはクリック（タップ）で吹き出しの上にリアクションの絵文字を表示（グループはメンバーのみ）
+          const selected = canReact && state.selectedMsgId === m.id;
+          const selectable = canReact ? `data-action="select-msg" data-id="${esc(m.id)}" title="クリックでリアクション"` : "";
           html += `
-            <div class="flex items-start gap-2 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""}">
+            <div class="flex items-start gap-2 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""} ${selected ? "relative z-10" : ""}" data-msg-id="${esc(m.id)}">
               <div class="w-8 shrink-0">${cont ? "" : avatar(m.senderId, name, "w-8 h-8 text-xs")}</div>
               <div class="min-w-0 flex-1">
                 ${!cont && isGroup ? `<div class="text-xs text-slate-500 mb-1 ml-1 truncate">${esc(name)}</div>` : ""}
-                <div class="flex items-end gap-1.5">
-                  <div class="bubble bubble-other">${body}</div>
-                  <span class="msg-time">${hhmm(d)}</span>
+                <div class="relative flex items-end gap-1.5">
+                  ${selected ? reactionPicker(m) : ""}
+                  <div class="bubble bubble-other ${canReact ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
+                  <div class="flex flex-col items-start gap-0.5 shrink-0">
+                    ${reactionChip(m, isGroup)}
+                    <span class="msg-time">${hhmm(d)}</span>
+                  </div>
                 </div>
               </div>
             </div>`;
@@ -1310,6 +1329,50 @@ const firebaseConfig = {
 
       if (first || newFromMe || nearBottom) scrollToBottom();
       else if (hasNew) $("#new-msg-btn").hidden = false;
+      pickerShownFor = box.querySelector(".reaction-picker") ? state.selectedMsgId : null;
+      requestAnimationFrame(placePicker); // CDN のスタイル反映後に測る
+    }
+
+    // 吹き出しの横のリアクション（多い順に最大3種類と人数）。グループはクリックでリアクションした人を表示
+    function reactionChip(m, isGroup) {
+      const codes = Object.values(m.reactions || {}).filter((code) => REACTION_EMOJI[code]);
+      if (!codes.length) return "";
+      const counts = new Map();
+      codes.forEach((code) => counts.set(code, (counts.get(code) || 0) + 1));
+      const emojis = [...counts]
+        .sort((a, b) => b[1] - a[1] || REACTION_CODES.indexOf(a[0]) - REACTION_CODES.indexOf(b[0]))
+        .slice(0, 3).map(([code]) => REACTION_EMOJI[code]).join("");
+      const mine = !!REACTION_EMOJI[m.reactions[state.me.id]];
+      const cls = `inline-flex items-center gap-1 h-6 px-2 rounded-full text-[13px] leading-none shadow-sm ring-1 ${mine ? "bg-indigo-50 ring-indigo-200" : "bg-white ring-slate-200"}`;
+      const inner = `<span>${emojis}</span>${codes.length > 1 ? `<span class="text-[11px] font-semibold text-slate-500 tabular-nums">${codes.length}</span>` : ""}`;
+      return isGroup
+        ? `<button type="button" data-action="reactors" data-id="${esc(m.id)}" class="${cls} transition hover:ring-indigo-300 active:scale-95" title="リアクションした人を見る">${inner}</button>`
+        : `<span class="${cls}">${inner}</span>`;
+    }
+
+    // 吹き出しの上に出すリアクションの絵文字（選択中のものは強調、もう一度選ぶと取り消し）
+    let pickerShownFor = null; // 表示中のピッカーのメッセージ（描き直しのたびにアニメーションさせない）
+    function reactionPicker(m) {
+      const current = m.reactions?.[state.me.id];
+      return `
+        <div class="reaction-picker ${pickerShownFor === m.id ? "" : "pop-in"} absolute bottom-full left-0 mb-2 w-max flex items-center gap-0.5 p-1 rounded-full bg-white shadow-lg ring-1 ring-slate-200" role="toolbar" aria-label="リアクション">
+          ${REACTIONS.map(([code, emoji]) => `
+            <button type="button" data-action="react" data-id="${esc(m.id)}" data-code="${code}" aria-label="${emoji}" aria-pressed="${current === code}"
+              class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center text-lg sm:text-xl leading-none transition hover:bg-slate-100 hover:scale-110 active:scale-95 ${current === code ? "bg-indigo-100 ring-1 ring-indigo-300" : ""}">${emoji}</button>`).join("")}
+        </div>`;
+    }
+
+    // リアクションの絵文字がメッセージ一覧からはみ出さないように位置を調整する
+    function placePicker() {
+      const picker = $("#messages .reaction-picker");
+      if (!picker) return;
+      picker.style.cssText = "";
+      const box = $("#messages");
+      const boxRect = box.getBoundingClientRect();
+      const r = picker.getBoundingClientRect();
+      if (r.top < boxRect.top + 4) { picker.style.bottom = "auto"; picker.style.top = "calc(100% + 0.5rem)"; } // 上に余白が無ければ吹き出しの下に
+      const maxRight = boxRect.left + box.clientWidth - 8;
+      if (r.right > maxRight) picker.style.left = `${Math.max(maxRight - r.right, boxRect.left + 8 - r.left)}px`;
     }
 
     function scrollToBottom() {
@@ -1513,6 +1576,53 @@ const firebaseConfig = {
           : { lastMessage: null, updatedAt: room.createdAt || serverTimestamp() });
       }
       await batch.commit();
+    }
+
+    // ============================================================
+    // リアクション
+    // ============================================================
+
+    // 他の人のメッセージに1人1つ付けられる。同じ絵文字をもう一度選ぶと取り消し
+    async function react(msgId, code) {
+      const room = currentRoom();
+      const m = state.messages.find((x) => x.id === msgId);
+      state.selectedMsgId = null;
+      renderMessages();
+      if (!room || !m || m.type !== "text" || m.senderId === state.me.id || !isMember(room) || !REACTION_EMOJI[code]) return;
+      const same = m.reactions?.[state.me.id] === code;
+      await updateDoc(doc(db, "rooms", room.id, "messages", msgId), { [`reactions.${state.me.id}`]: same ? deleteField() : code });
+    }
+
+    // グループ：リアクションした人の一覧
+    function openReactors(msgId) {
+      const m = state.messages.find((x) => x.id === msgId);
+      const entries = Object.entries(m?.reactions || {}).filter(([, code]) => REACTION_EMOJI[code]);
+      if (!entries.length) return;
+      const order = (code) => REACTION_CODES.indexOf(code);
+      const rows = entries.sort(([idA, a], [idB, b]) =>
+        order(a) - order(b) || (idB === state.me.id) - (idA === state.me.id) || userName(idA).localeCompare(userName(idB), "ja"));
+      const counts = REACTIONS.map(([code, emoji]) => [emoji, entries.filter(([, c]) => c === code).length]).filter(([, n]) => n);
+      openModal(`
+        ${modalHead("リアクション", `${entries.length}人がリアクションしました`)}
+        <div class="px-6 pb-6">
+          <div class="flex flex-wrap gap-2">
+            ${counts.map(([emoji, n]) => `
+              <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-sm">
+                <span class="text-base leading-none">${emoji}</span><span class="font-semibold text-slate-600 tabular-nums">${n}</span>
+              </span>`).join("")}
+          </div>
+          <div class="mt-4 -mx-2 max-h-72 overflow-y-auto scroll-thin">
+            ${rows.map(([id, code]) => `
+              <div class="flex items-center gap-3 px-2 py-2">
+                ${avatar(id, userName(id), "w-9 h-9 text-sm")}
+                <div class="min-w-0 flex-1">
+                  <div class="text-sm font-medium text-slate-800 truncate">${esc(userName(id))}${id === state.me.id ? ` <span class="text-slate-400 font-normal">(あなた)</span>` : ""}</div>
+                  <div class="text-xs text-slate-400 truncate">@${esc(id)}</div>
+                </div>
+                <span class="text-2xl leading-none shrink-0">${REACTION_EMOJI[code]}</span>
+              </div>`).join("")}
+          </div>
+        </div>`);
     }
 
     // DM は参加者なら誰でも、グループは作成者（作成者が退会済みならメンバー）が削除できる
@@ -1888,10 +1998,16 @@ const firebaseConfig = {
       "back": () => exitRoom(),
       "scroll-bottom": () => scrollToBottom(),
       "select-msg": (el) => {
+        if (!getSelection().isCollapsed) return; // 文字を選択（コピー）しようとしているときは開かない
         state.selectedMsgId = state.selectedMsgId === el.dataset.id ? null : el.dataset.id;
         renderMessages();
       },
       "unsend": (el) => unsendMessage(el.dataset.id),
+      "react": (el) => react(el.dataset.id, el.dataset.code),
+      "reactors": (el) => {
+        if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
+        openReactors(el.dataset.id);
+      },
       "delete-room": () => deleteRoom(),
       "delete-account": () => openDeleteAccount(),
     };
@@ -1921,8 +2037,8 @@ const firebaseConfig = {
         if (e.target.closest("[data-close]")) { closeModal(); return; }
         const loginTab = e.target.closest("[data-login-tab]");
         if (loginTab) { setLoginTab(loginTab.dataset.loginTab); return; }
-        // 送信取消メニューは、そのメッセージ以外をクリックしたら閉じる
-        if (state.selectedMsgId && !e.target.closest("[data-msg-id]")) { state.selectedMsgId = null; renderMessages(); }
+        // 送信取消メニュー・リアクションの絵文字は、そのメッセージ以外をクリックしたら閉じる
+        if (state.selectedMsgId && e.target.closest("[data-msg-id]")?.dataset.msgId !== state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
         if (e.target.closest("a[href]")) return; // メッセージ内のリンクは通常どおり開く
         const el = e.target.closest("[data-action]");
         if (!el) return;
