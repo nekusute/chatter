@@ -110,6 +110,15 @@
         @apply relative flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold text-slate-500 transition hover:text-slate-700;
       }
       .tab-btn.is-active { @apply bg-white text-indigo-600 shadow-sm; }
+      .switch {
+        @apply relative shrink-0 w-11 h-6 rounded-full bg-slate-200 transition-colors
+               focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2;
+      }
+      .switch[aria-checked="true"] { @apply bg-indigo-600; }
+      .switch-knob {
+        @apply absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white text-slate-400 shadow grid place-items-center transition-transform;
+      }
+      .switch[aria-checked="true"] .switch-knob { @apply translate-x-5 text-indigo-600; }
       .list-row {
         @apply w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left transition cursor-pointer hover:bg-slate-50
                focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400;
@@ -260,15 +269,19 @@ const firebaseConfig = {
       <!-- サイドバー（トーク一覧 / ユーザー / グループ） -->
       <aside id="sidebar" class="w-full md:w-[340px] lg:w-[380px] shrink-0 flex flex-col bg-white md:rounded-3xl md:shadow-soft md:ring-1 md:ring-slate-200/70 overflow-hidden">
         <div class="px-4 pt-4 pb-3 flex items-center gap-3">
-          <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white grid place-items-center shadow-md shadow-indigo-500/30" data-icon="chat" data-icon-class="w-5 h-5"></div>
+          <div class="w-9 h-9 shrink-0 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-white grid place-items-center shadow-md shadow-indigo-500/30" data-icon="chat" data-icon-class="w-5 h-5"></div>
           <h1 class="text-lg font-bold tracking-tight text-slate-900">Chatter</h1>
-          <button type="button" data-action="profile" class="ml-auto flex items-center gap-2 rounded-full pl-1 pr-3 py-1 hover:bg-slate-100 transition min-w-0" aria-label="プロフィール">
-            <span id="me-avatar"></span>
-            <span class="text-left leading-tight min-w-0">
-              <span id="me-name" class="block text-sm font-semibold text-slate-800 max-w-[120px] truncate"></span>
-              <span id="me-id" class="block text-[11px] text-slate-400 max-w-[120px] truncate"></span>
-            </span>
-          </button>
+          <div class="ml-auto flex items-center gap-2 min-w-0">
+            <!-- 新着メッセージの通知のオン/オフ -->
+            <button type="button" id="notify-toggle" data-action="toggle-notify" class="switch" role="switch" aria-checked="false" aria-label="新着メッセージの通知"><span class="switch-knob"></span></button>
+            <button type="button" data-action="profile" class="flex items-center gap-2 rounded-full pl-1 pr-3 py-1 hover:bg-slate-100 transition min-w-0" aria-label="プロフィール">
+              <span id="me-avatar"></span>
+              <span class="text-left leading-tight min-w-0">
+                <span id="me-name" class="block text-sm font-semibold text-slate-800 max-w-[120px] truncate"></span>
+                <span id="me-id" class="block text-[11px] text-slate-400 max-w-[120px] truncate"></span>
+              </span>
+            </button>
+          </div>
         </div>
 
         <div class="px-4">
@@ -457,7 +470,9 @@ const firebaseConfig = {
       chevron: "M9 5l7 7-7 7",
       trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
       key: "M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z",
+      bell: "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9",
     };
+    ICONS["bell-off"] = ICONS.bell + "M3 3l18 18"; // 斜線入りのベル
     const icon = (name, cls = "w-5 h-5") =>
       `<svg class="${cls}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
     const hydrateIcons = (root = document) =>
@@ -786,6 +801,8 @@ const firebaseConfig = {
     // 購読を止めてログアウトし、状態を初期化してログイン画面へ戻す
     function resetSession() {
       Object.values(state.unsub).forEach((u) => u?.());
+      shownNotifications.forEach((n) => n.close());
+      shownNotifications.clear();
       Object.assign(state, {
         uid: null, me: null, users: new Map(), rooms: [], groups: [], usersLoaded: false, roomsLoaded: false, groupsLoaded: false,
         tab: "talk", search: "", activeRoomId: null, activeRoomFallback: null, messages: [], messagesLoaded: false,
@@ -830,6 +847,102 @@ const firebaseConfig = {
     }
 
     // ============================================================
+    // 通知（新着メッセージ）
+    // ============================================================
+    // ページを開いている間（タブが裏にあっても）ブラウザの通知を出す。オン/オフはこのブラウザの localStorage に保存
+    const NOTIFY_KEY = "chatter:notify";
+    let notifySince = 0;                  // これより前のメッセージは通知しない（ログイン前に届いていた分）
+    const shownNotifications = new Map(); // roomId -> Notification
+
+    const notifyEnabled = () => store.get(NOTIFY_KEY) === "on" && "Notification" in window && Notification.permission === "granted";
+
+    function renderNotifyToggle() {
+      const on = notifyEnabled();
+      const btn = $("#notify-toggle");
+      btn.setAttribute("aria-checked", on);
+      btn.title = on ? "通知：オン" : "通知：オフ";
+      btn.firstElementChild.innerHTML = icon(on ? "bell" : "bell-off", "w-3.5 h-3.5");
+    }
+
+    // スマホの Chrome などはページから直接通知を出せず例外になる（Service Worker が必要）
+    function showNotification(title, options) {
+      try {
+        return new Notification(title, options);
+      } catch (e) {
+        console.warn(e);
+        return null;
+      }
+    }
+
+    async function toggleNotify() {
+      if (notifyEnabled()) {
+        store.set(NOTIFY_KEY, "off");
+        renderNotifyToggle();
+        toast("通知をオフにしました");
+        return;
+      }
+      if (!("Notification" in window)) throw new Error("このブラウザは通知に対応していません。");
+      if (Notification.permission === "denied") {
+        throw new Error("ブラウザの設定で通知がブロックされています。アドレスバー左のアイコン（サイトの設定）から通知を許可してください。");
+      }
+      if (Notification.permission !== "granted" && (await Notification.requestPermission()) !== "granted") {
+        throw new Error("通知が許可されませんでした。");
+      }
+      // 試しに1件出して、このブラウザで通知を表示できるか確かめる
+      if (!showNotification("Chatter", { body: "通知をオンにしました。このページを開いている間、新着メッセージをお知らせします。", tag: "chatter:test" })) {
+        throw new Error("このブラウザでは通知を表示できません。パソコンのブラウザでお試しください。");
+      }
+      store.set(NOTIFY_KEY, "on");
+      renderNotifyToggle();
+      toast("通知をオンにしました");
+    }
+
+    // ルーム一覧の更新で、最後のメッセージが新しくなったトークを通知する
+    function notifyNewMessages(prevLast) {
+      if (!notifyEnabled()) return;
+      for (const room of state.rooms) {
+        const lm = room.lastMessage;
+        const at = ms(lm?.createdAt);
+        if (!lm || lm.type !== "text" || lm.senderId === state.me.id) continue;
+        if (at <= notifySince || at <= (prevLast.get(room.id) || 0)) continue;
+        if (room.id === state.activeRoomId && document.visibilityState === "visible") continue; // 開いて見ているトーク
+        notifyMessage(room, lm, at).catch((e) => console.warn(e));
+      }
+    }
+
+    // 複数のタブで開いていても、1件のメッセージにつき通知は1回だけ出す
+    async function notifyMessage(room, lm, at) {
+      const me = state.me;
+      const show = () => {
+        if (state.me !== me) return;
+        const key = `${room.id}:${at}`;
+        const recent = store.json("chatter:notified", []);
+        if (recent.includes(key)) return;
+        store.set("chatter:notified", JSON.stringify([key, ...recent].slice(0, 50)));
+        const n = showNotification(roomTitle(room), {
+          body: room.type === "group" ? `${userName(lm.senderId, lm.senderName)}: ${lm.text}` : lm.text,
+          tag: `chatter:${room.id}`, // 同じトークの通知は最新の1件に置き換える
+          renotify: true,
+        });
+        if (!n) return;
+        shownNotifications.set(room.id, n);
+        n.onclick = () => {
+          window.focus();
+          n.close();
+          const r = state.me === me && state.rooms.find((x) => x.id === room.id);
+          if (r) openRoom(r.id, r);
+        };
+      };
+      if (navigator.locks) await navigator.locks.request("chatter:notify", show);
+      else show();
+    }
+
+    function closeNotification(roomId) {
+      shownNotifications.get(roomId)?.close();
+      shownNotifications.delete(roomId);
+    }
+
+    // ============================================================
     // Firestore 購読
     // ============================================================
     const withId = (d) => ({ id: d.id, ...d.data({ serverTimestamps: "estimate" }) });
@@ -849,6 +962,7 @@ const firebaseConfig = {
     }
 
     function subscribeCore() {
+      notifySince = Date.now();
       state.unsub.users = onSnapshot(
         query(collection(db, "users"), orderBy("lastSeen", "desc"), limit(300)),
         (snap) => {
@@ -872,9 +986,12 @@ const firebaseConfig = {
         query(collection(db, "rooms"), where("members", "array-contains", state.me.id)),
         (snap) => {
           const before = new Set(state.rooms.map((r) => r.id));
+          const prevLast = new Map(state.rooms.map((r) => [r.id, ms(r.lastMessage?.createdAt)]));
+          const wasLoaded = state.roomsLoaded;
           state.rooms = snap.docs.map(withId).sort((a, b) => ms(b.updatedAt) - ms(a.updatedAt));
           state.roomsLoaded = true;
           checkActiveRoomGone(before);
+          if (wasLoaded) notifyNewMessages(prevLast); // 最初の読み込みでは通知しない
           renderSidebar();
           renderChatHeader();
         },
@@ -938,6 +1055,7 @@ const firebaseConfig = {
       const latest = Math.max(ms(room?.lastMessage?.createdAt), ms(state.messages.at(-1)?.createdAt));
       readMap[roomId] = Math.max(Date.now(), latest); // 端末の時計ずれ対策
       store.set(`chatter:read:${state.me.id}`, JSON.stringify(readMap));
+      closeNotification(roomId);
     }
     function isUnread(room) {
       const lm = room.lastMessage;
@@ -968,6 +1086,7 @@ const firebaseConfig = {
       $("#me-avatar").innerHTML = avatar(state.me.id, state.me.name, "w-9 h-9 text-sm");
       $("#me-name").textContent = state.me.name;
       $("#me-id").textContent = "@" + state.me.id;
+      renderNotifyToggle();
 
       document.querySelectorAll("[data-tab]").forEach((b) => {
         b.classList.toggle("is-active", b.dataset.tab === state.tab);
@@ -1762,6 +1881,7 @@ const firebaseConfig = {
       "open-join": () => openJoinModal(),
       "room-info": () => openRoomInfo(),
       "profile": () => openProfile(),
+      "toggle-notify": () => toggleNotify(),
       "change-password": () => openChangePassword(),
       "logout": () => logout(),
       "copy": (el) => copyText(el.dataset.copy, el.dataset.label),
