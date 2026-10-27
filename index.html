@@ -462,8 +462,11 @@ const firebaseConfig = {
     const $ = (sel) => document.querySelector(sel);
     const isCoarse = () => matchMedia("(pointer: coarse)").matches;
     const isMobile = () => matchMedia("(max-width: 767.98px)").matches;
-    // マウス・タッチパッドがある＝PC（タッチパネル付きの PC でも true。スマホ・タブレット単体は false）
-    const hasFinePointer = () => matchMedia("(any-pointer: fine)").matches;
+    // スマホ・タブレットの OS（iPadOS は Mac と同じ UA なのでタッチ点数で見分ける）
+    const isMobileOS = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+    // マウス・タッチパッドがある PC（タッチパネル付きの PC でも true。スマホ・タブレットは false）
+    // ※ Android は S ペン対応機などでマウスがなくても any-pointer: fine になるので、OS でも判定する
+    const isPC = () => !isMobileOS() && matchMedia("(any-pointer: fine)").matches;
 
     const store = {
       get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -610,8 +613,10 @@ const firebaseConfig = {
     }
 
     let modalCloseCb = null;
-    function openModal(html, onClose = null) {
+    let modalLocked = false; // true なら × ボタンでしか閉じない（背景・Esc・スマホの「戻る」では閉じない）
+    function openModal(html, onClose = null, { locked = false } = {}) {
       const prevCb = modalCloseCb; modalCloseCb = null; prevCb?.();
+      modalLocked = locked;
       const host = $("#modal-host");
       host.innerHTML = `<div class="modal-panel bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[88vh] overflow-y-auto scroll-thin safe-bottom">
         <div class="sm:hidden mx-auto mt-2.5 w-10 h-1.5 rounded-full bg-slate-200"></div>${html}</div>`;
@@ -622,6 +627,7 @@ const firebaseConfig = {
     function closeModal() {
       $("#modal-root").hidden = true;
       $("#modal-host").innerHTML = "";
+      modalLocked = false;
       const cb = modalCloseCb; modalCloseCb = null; cb?.();
     }
     const modalHead = (title, sub = "") => `
@@ -2413,11 +2419,8 @@ const firebaseConfig = {
             <p id="se-size" class="text-xs text-slate-400 mt-1.5"></p>
           </div>
           <p class="form-error" hidden></p>
-          <div class="flex gap-3">
-            <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
-            <button type="submit" class="btn-primary flex-1">保存</button>
-          </div>
-        </form>`, () => { if (editor === ed) editor = null; });
+          <button type="submit" class="btn-primary w-full">保存</button>
+        </form>`, () => { if (editor === ed) editor = null; }, { locked: true }); // 描いた絵を誤って失わないよう × でしか閉じない
       bindCanvas($("#se-canvas"));
       renderEditorTools();
       renderCanvas();
@@ -2853,7 +2856,8 @@ const firebaseConfig = {
 
     function bindEvents() {
       document.addEventListener("click", (e) => {
-        if (e.target.closest("[data-close]")) { closeModal(); return; }
+        const closer = e.target.closest("[data-close]");
+        if (closer) { if (!(modalLocked && closer.parentElement.id === "modal-root")) closeModal(); return; } // ロック中は背景のクリックでは閉じない
         const loginTab = e.target.closest("[data-login-tab]");
         if (loginTab) { setLoginTab(loginTab.dataset.loginTab); return; }
         // 送信取消メニュー・リアクションの絵文字は、そのメッセージ以外をクリックしたら閉じる
@@ -2873,7 +2877,7 @@ const firebaseConfig = {
 
       // role="button" の要素をキーボードでも操作可能に
       document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && !$("#modal-root").hidden) { closeModal(); return; }
+        if (e.key === "Escape" && !$("#modal-root").hidden) { if (!modalLocked) closeModal(); return; }
         // スタンプのエディタ：Ctrl+Z（Mac は ⌘+Z）で取り消し（文字の入力欄では通常の取り消し）
         if (editor && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.target.matches?.("input, textarea")) { e.preventDefault(); undoStroke(); return; }
         if (e.key === "Escape" && stickerBoxOpen) { closeStickerBox(); return; }
@@ -2939,7 +2943,7 @@ const firebaseConfig = {
 
       // 入力欄
       const input = $("#msg-input");
-      input.placeholder = hasFinePointer() ? "メッセージを入力（Enterで送信 / Shift+Enter・Ctrl+Enterで改行）" : "メッセージを入力";
+      input.placeholder = isPC() ?"メッセージを入力（Enterで送信 / Shift+Enter・Ctrl+Enterで改行）" : "メッセージを入力";
       input.addEventListener("input", () => {
         autoGrow();
         updateSendBtn();
@@ -2975,7 +2979,7 @@ const firebaseConfig = {
           input.dispatchEvent(new Event("input")); // 下書き・高さ・送信ボタン・候補を更新
           return;
         }
-        if (!hasFinePointer()) return; // スマホは Enter = 改行、送信は送信ボタン（紙飛行機）のみ
+        if (!isPC()) return; // スマホは Enter = 改行、送信は送信ボタン（紙飛行機）のみ
         e.preventDefault();
         send();
       });
@@ -2994,6 +2998,7 @@ const firebaseConfig = {
       // スマホの「戻る」ボタン
       window.addEventListener("popstate", () => {
         if ($("#app").dataset.view !== "chat") return;
+        if (modalLocked) { history.pushState({ chatter: "chat" }, ""); return; } // 閉じずに、戻った分の履歴を積み直す
         if (!$("#modal-root").hidden) closeModal();
         closeRoom();
       });
