@@ -1534,13 +1534,13 @@ const firebaseConfig = {
         : `<span class="${cls}">${inner}</span>`;
     }
 
-    // 既読表示（管理者だけに表示）：自分のメッセージを読んだ人がいれば、DM は「既読」、グループは「既読 人数」（クリックで読んだ人を表示）
+    // 既読表示（管理者だけに表示。管理者メニューでオフにすると隠す）：自分のメッセージを読んだ人がいれば、DM は「既読」、グループは「既読 人数」（クリックで読んだ人を表示）
     const readersOf = (m, room) => {
       const at = ms(m.createdAt);
       return (room.members || []).filter((id) => id !== state.me.id && (state.reads.get(id) || 0) >= at);
     };
     function readLabel(m, room) {
-      if (!isAdmin() || !state.readsLoaded || m.pending || !room) return "";
+      if (!isAdmin() || !adminSettings.readReceipts || !state.readsLoaded || m.pending || !room) return "";
       const n = readersOf(m, room).length;
       if (!n) return "";
       const cls = "text-[10px] font-semibold text-indigo-500 leading-none tabular-nums";
@@ -3553,7 +3553,8 @@ const firebaseConfig = {
     // 管理者（ユーザーID が ADMIN_ID のユーザーだけ）
     // ============================================================
     // 管理者の設定（admin/settings。ログイン前でも読める）。項目を増やすときは firestore.rules の admin/settings も合わせる
-    let adminSettings = { signupOpen: true };
+    // signupOpen：新規ユーザーの募集 / readReceipts：既読の表示（どちらも文書に無ければオン）
+    let adminSettings = { signupOpen: true, readReceipts: true };
     // 管理者メニューのパスワードのハッシュ。メニューを開いている間だけ持ち、閉じたら消す
     let adminKey = null;
     const ADMIN_PASSWORD_ERROR = "管理者パスワードが正しくありません。";
@@ -3562,12 +3563,18 @@ const firebaseConfig = {
       onSnapshot(
         doc(db, "admin", "settings"),
         (snap) => {
-          adminSettings = { signupOpen: snap.data()?.signupOpen !== false };
-          renderSignupState();
-          renderAdminSettings();
+          const d = snap.data();
+          applySettings({ signupOpen: d?.signupOpen !== false, readReceipts: d?.readReceipts !== false });
         },
-        (e) => console.warn(e), // 読めないときは既定の設定（募集中）のまま
+        (e) => console.warn(e), // 読めないときは既定の設定（募集中・既読を表示）のまま
       );
+    }
+    function applySettings(next) {
+      const readChanged = next.readReceipts !== adminSettings.readReceipts;
+      adminSettings = next;
+      renderSignupState();
+      renderAdminSettings();
+      if (readChanged && isAdmin() && state.activeRoomId && state.messagesLoaded) renderMessages();
     }
     // 新規登録の直前は、最新の設定をサーバーから確かめる
     async function signupOpen() {
@@ -3638,51 +3645,57 @@ const firebaseConfig = {
       openAdminModal(`
         ${modalHead("管理者メニュー", `管理者（@${esc(ADMIN_ID)}）だけが使える設定です`)}
         <div class="px-6 pb-6 space-y-3">
-          <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
-            <div class="flex items-center gap-3">
-              <div class="flex-1 min-w-0">
-                <div class="text-sm font-semibold text-slate-800">新規ユーザーの募集</div>
-                <div id="admin-signup-status" class="text-xs font-semibold mt-0.5"></div>
-              </div>
-              <button type="button" id="admin-signup-toggle" data-action="admin-toggle-signup" class="switch" role="switch" aria-checked="false" aria-label="新規ユーザーの募集"><span class="switch-knob"></span></button>
-            </div>
-            <p class="text-xs text-slate-400 mt-2 leading-relaxed">停止すると、ログイン画面の「新規登録」から新しいアカウントを作れなくなります。登録済みのユーザーは、これまでどおりログインできます。</p>
-          </div>
-          <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
-            <div class="text-sm font-semibold text-slate-800">既読表示</div>
-            <p class="text-xs text-slate-400 mt-1 leading-relaxed">あなたが送ったメッセージの横に、相手が読むと「既読」（グループは読んだ人数。タップでだれが読んだか）が表示されます。この表示は管理者にだけ見えます。</p>
-          </div>
+          ${adminSwitch("signupOpen", "停止すると、ログイン画面の「新規登録」から新しいアカウントを作れなくなります。登録済みのユーザーは、これまでどおりログインできます。")}
+          ${adminSwitch("readReceipts", "オンにすると、あなたが送ったメッセージの横に、相手が読むと「既読」（グループは読んだ人数。タップでだれが読んだか）が表示されます。この表示は管理者にだけ見えます。オフの間も既読は記録されるので、オンに戻すとすぐに表示されます。")}
           <button type="button" data-action="admin-password" class="btn-secondary w-full !mt-5">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
           <button type="button" data-close class="btn-primary w-full">閉じる</button>
         </div>`);
       renderAdminSettings();
     }
+
+    // 管理者メニューのオン/オフの設定（adminSettings の項目ごとの見出し・状態の表示・切り替えたときのトースト）
+    const ADMIN_SWITCHES = {
+      signupOpen: { label: "新規ユーザーの募集", on: "受付中", off: "停止中", toastOn: "新規ユーザーの募集を再開しました", toastOff: "新規ユーザーの募集を停止しました" },
+      readReceipts: { label: "既読の表示", on: "表示する", off: "表示しない", toastOn: "既読を表示するようにしました", toastOff: "既読を表示しないようにしました" },
+    };
+    const adminSwitch = (key, note) => `
+      <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
+        <div class="flex items-center gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-slate-800">${ADMIN_SWITCHES[key].label}</div>
+            <div id="admin-status-${key}" class="text-xs font-semibold mt-0.5"></div>
+          </div>
+          <button type="button" id="admin-switch-${key}" data-action="admin-toggle" data-key="${key}" class="switch" role="switch" aria-checked="false" aria-label="${ADMIN_SWITCHES[key].label}"><span class="switch-knob"></span></button>
+        </div>
+        <p class="text-xs text-slate-400 mt-2 leading-relaxed">${note}</p>
+      </div>`;
     // 管理者メニューを開いているときに設定が変わったら、表示を合わせる
     function renderAdminSettings() {
-      const btn = $("#admin-signup-toggle");
-      if (!btn) return;
-      const open = adminSettings.signupOpen;
-      btn.setAttribute("aria-checked", open);
-      const status = $("#admin-signup-status");
-      status.textContent = open ? "受付中" : "停止中";
-      status.className = `text-xs font-semibold mt-0.5 ${open ? "text-emerald-600" : "text-rose-600"}`;
+      for (const [key, sw] of Object.entries(ADMIN_SWITCHES)) {
+        const btn = $(`#admin-switch-${key}`);
+        if (!btn) continue;
+        const on = adminSettings[key];
+        btn.setAttribute("aria-checked", on);
+        const status = $(`#admin-status-${key}`);
+        status.textContent = on ? sw.on : sw.off;
+        status.className = `text-xs font-semibold mt-0.5 ${on ? "text-emerald-600" : "text-rose-600"}`;
+      }
     }
 
-    async function toggleSignup() {
-      if (!isAdmin() || !adminKey) return;
-      const btn = $("#admin-signup-toggle");
+    async function toggleAdminSetting(key) {
+      const sw = ADMIN_SWITCHES[key];
+      if (!isAdmin() || !adminKey || !sw) return;
+      const btn = $(`#admin-switch-${key}`);
       if (btn?.disabled) return;
-      const open = !adminSettings.signupOpen;
+      const on = !adminSettings[key];
       if (btn) btn.disabled = true;
       try {
-        await adminWrite(adminKey, { settings: { signupOpen: open } });
+        await adminWrite(adminKey, { settings: { [key]: on } });
       } finally {
         if (btn?.isConnected) btn.disabled = false;
       }
-      adminSettings = { ...adminSettings, signupOpen: open };
-      renderSignupState();
-      renderAdminSettings();
-      toast(open ? "新規ユーザーの募集を再開しました" : "新規ユーザーの募集を停止しました");
+      applySettings({ ...adminSettings, [key]: on });
+      toast(on ? sw.toastOn : sw.toastOff);
     }
 
     function openAdminPassword() {
@@ -3731,7 +3744,7 @@ const firebaseConfig = {
     function openReaders(msgId) {
       const room = currentRoom();
       const m = state.messages.find((x) => x.id === msgId);
-      if (!isAdmin() || !room || !m) return;
+      if (!isAdmin() || !adminSettings.readReceipts || !room || !m) return;
       const byName = (a, b) => userName(a).localeCompare(userName(b), "ja");
       const read = readersOf(m, room).sort(byName);
       const unread = (room.members || []).filter((id) => id !== state.me.id && !read.includes(id)).sort(byName);
@@ -3956,7 +3969,7 @@ const firebaseConfig = {
       // 管理者
       "admin-unlock": () => openAdminUnlock(),
       "admin-menu": () => openAdminMenu(),
-      "admin-toggle-signup": () => toggleSignup(),
+      "admin-toggle": (el) => toggleAdminSetting(el.dataset.key),
       "admin-password": () => openAdminPassword(),
       "readers": (el) => {
         if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
