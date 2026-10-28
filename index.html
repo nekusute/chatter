@@ -2298,8 +2298,8 @@ const firebaseConfig = {
     // ============================================================
     // 画像
     // ============================================================
-    // 50KB 以下の JPEG・PNG・WEBP・GIF・SVG はそのまま送る。それより大きい画像は「SVG トレース工房」の変換
-    // （色ごと・白黒で輪郭をなぞるトレース、または圧縮した画像の埋め込み）で 50KB 以下の SVG にして送る。
+    // 50KB 以下の JPEG・PNG・WEBP・GIF・SVG はそのまま送る。それより大きい画像は「SVG トレース工房」の「埋め込み」方式
+    // （画像を圧縮して SVG の中に埋め込む）で 50KB 以下の SVG にして送る。
     // SVG は innerHTML で差し込まず <img> で表示する（SVG 内のスクリプトや外部の読み込みは動かない）
     function imageSrc(image) {
       if (typeof image !== "string") return null;
@@ -2392,25 +2392,15 @@ const firebaseConfig = {
     }
 
     // ---- 送信画面（画像を選ぶ・貼り付ける・ドロップすると開く） ----
-    const IMAGE_MODES = [["original", "元の画像"], ["color", "カラー"], ["mono", "白黒"], ["embed", "埋め込み"]];
+    const IMAGE_MODES = [["original", "元の画像"], ["embed", "SVG に変換"]];
     const IMAGE_MODE_NOTES = {
       original: "変換せずに、そのまま送信します。",
-      color: "色ごとに輪郭をなぞって、図形（パス）だけの SVG にします。イラスト・ロゴ向きです。",
-      mono: "白と黒の2色で輪郭をなぞった SVG にします。線画・文字・シルエット向きです。",
-      embed: "画像を圧縮して SVG の中に埋め込みます。写真向きです。",
+      embed: "画像を圧縮して SVG の中に埋め込みます。",
     };
-    const TRACE_PRESETS = [
-      ["standard", "標準", { colors: 16, omit: 8, precision: 1, blur: 0 }],
-      ["logo", "ロゴ・イラスト", { colors: 8, omit: 8, precision: 1, blur: 0 }],
-      ["photo", "写真", { colors: 32, omit: 2, precision: 0.5, blur: 1 }],
-      ["smooth", "なめらか", { colors: 12, omit: 12, precision: 2.5, blur: 3 }],
-      ["poster", "ポスター調", { colors: 4, omit: 20, precision: 2, blur: 4 }],
-    ];
-    const TRACE_MAX_SIDE = 600;             // トレースする解像度（長辺）。チャットでの表示には十分
     const RASTER_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     const IMAGE_EXT_TYPES = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml" };
 
-    let imgSend = null; // 開いている送信画面 { file, type, url, img, w, h, roomId, original, mode, preset, threshold, cache, result, gen }
+    let imgSend = null; // 開いている送信画面 { file, type, url, img, w, h, dims, roomId, original, mode, cache, result, gen }
 
     async function openImageSender(file) {
       const room = currentRoom();
@@ -2434,11 +2424,9 @@ const firebaseConfig = {
       w = Math.max(1, Math.round(w * k));
       h = Math.max(1, Math.round(h * k));
       const original = await originalImage(file, type).catch(() => null);
-      const saved = store.get("chatter:imageMode");
       const s = {
         file, type, url, img, w, h, dims, roomId: room.id, original,
-        mode: original ? "original" : ["color", "mono", "embed"].includes(saved) ? saved : "color",
-        preset: "standard", threshold: 128, cache: new Map(), result: null, gen: 0,
+        mode: original ? "original" : "embed", cache: new Map(), result: null, gen: 0,
       };
       if (imgSend) cancelImageSender(imgSend);
       imgSend = s;
@@ -2448,7 +2436,7 @@ const firebaseConfig = {
 
     // SVG を描く大きさを決めて width・height に書き込む。大きさの指定が無い（viewBox だけ・% 指定の）SVG は、ブラウザによって
     // 大きさが分からず縦横比がずれたり、小さく描かれたりするため。mm・cm などの単位は px に直す（viewBox が無ければ元の大きさで足す）。
-    // ベクター画像なので、長辺が SVG_RENDER_PX 未満なら拡大して描く（トレース・埋め込みが粗くならないように）
+    // ベクター画像なので、長辺が SVG_RENDER_PX 未満なら拡大して描く（埋め込む画像が粗くならないように）
     const SVG_RENDER_PX = 1024;
     const SVG_UNITS = { "": 1, px: 1, pt: 4 / 3, pc: 16, mm: 96 / 25.4, cm: 96 / 2.54, in: 96 };
     async function sizedSvg(file) {
@@ -2496,8 +2484,6 @@ const firebaseConfig = {
     function cancelImageSender(s) {
       if (imgSend !== s) return;
       s.gen++;
-      cancelTrace();
-      clearTimeout(thresholdTimer);
       URL.revokeObjectURL(s.url);
       imgSend = null;
     }
@@ -2514,8 +2500,8 @@ const firebaseConfig = {
               <div class="flex flex-col items-center gap-2 px-4 text-center">${spinner("w-7 h-7 border-[3px]")}<span id="is-busy-text" class="text-xs font-semibold">変換中…</span></div>
             </div>
           </div>
-          <div class="grid grid-cols-4 gap-1 p-1 bg-slate-100 rounded-2xl" role="group" aria-label="送信のしかた">
-            ${IMAGE_MODES.map(([mode, text]) => `<button type="button" data-action="is-mode" data-mode="${mode}" class="tab-btn px-1 text-xs sm:text-sm disabled:opacity-40 disabled:pointer-events-none"
+          <div class="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-2xl" role="group" aria-label="送信のしかた">
+            ${IMAGE_MODES.map(([mode, text]) => `<button type="button" data-action="is-mode" data-mode="${mode}" class="tab-btn px-1 disabled:opacity-40 disabled:pointer-events-none"
               ${mode === "original" && !s.original ? `disabled title="50KB を超えているため、そのままは送れません"` : ""}>${text}</button>`).join("")}
           </div>
           <div id="is-options"></div>
@@ -2529,27 +2515,14 @@ const firebaseConfig = {
       renderImageStatus();
     }
 
-    // 送信のしかたの説明・プリセット・しきい値（しきい値を動かしている間は描き直さない）
+    // 送信のしかたの切り替えと説明
     function renderImageOptions() {
       const s = imgSend;
       const box = $("#is-options");
       if (!s || !box) return;
       document.querySelectorAll('[data-action="is-mode"]').forEach((b) => b.classList.toggle("is-active", b.dataset.mode === s.mode));
-      const trace = s.mode === "color" || s.mode === "mono";
       box.innerHTML = `
-        <p class="text-xs text-slate-500 leading-relaxed">${IMAGE_MODE_NOTES[s.mode]}${s.original ? "" : `<br>元の画像は 50KB を超えているため、50KB 以下の SVG に変換して送信します。`}</p>
-        ${trace ? `
-          <div class="flex flex-wrap gap-1.5 mt-2.5" role="group" aria-label="プリセット">
-            ${TRACE_PRESETS.map(([id, text]) => `
-              <button type="button" data-action="is-preset" data-preset="${id}" aria-pressed="${s.preset === id}"
-                class="px-3 py-1 rounded-full text-xs font-semibold ring-1 transition active:scale-95 ${s.preset === id ? "bg-indigo-50 text-indigo-700 ring-indigo-300" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"}">${text}</button>`).join("")}
-          </div>` : ""}
-        ${s.mode === "mono" ? `
-          <label class="block mt-3">
-            <span class="flex justify-between text-xs font-semibold text-slate-600"><span>しきい値</span><output id="is-threshold-out" class="tabular-nums font-normal text-slate-500">${s.threshold}</output></span>
-            <input type="range" id="is-threshold" min="1" max="254" step="1" value="${s.threshold}" class="w-full accent-indigo-600 mt-1" />
-            <span class="flex justify-between text-[11px] text-slate-400"><span>黒が少ない</span><span>黒が多い</span></span>
-          </label>` : ""}`;
+        <p class="text-xs text-slate-500 leading-relaxed">${IMAGE_MODE_NOTES[s.mode]}${s.original ? "" : `<br>元の画像は 50KB を超えているため、50KB 以下の SVG に変換して送信します。`}</p>`;
     }
 
     // プレビュー・変換中の表示・結果のサイズ・送信ボタン
@@ -2566,13 +2539,13 @@ const firebaseConfig = {
       let cls, text;
       if (!r.ok) {
         cls = "bg-rose-50 text-rose-700";
-        text = r.error || `50KB 以内に収まりませんでした（最小 ${fmtBytes(r.bytes)}）。${s.mode === "embed" ? "「カラー」や「白黒」" : "「埋め込み」や別のプリセット"}をお試しください。`;
+        text = r.error || `50KB 以内に収まりませんでした（最小 ${fmtBytes(r.bytes)}）。画像を小さくしてからお試しください。`;
       } else if (s.mode === "original") {
         cls = "bg-slate-50 text-slate-600 ring-1 ring-slate-200";
         text = `元の画像（${esc(imageFormat(r.image))} · ${fmtBytes(r.bytes)}）をそのまま送信します。`;
       } else {
         cls = "bg-emerald-50 text-emerald-700";
-        text = `<b>✓ SVG ${fmtBytes(r.bytes)}</b>（50KB 以内）${r.fit ? `<br>${imageFitMessage(r)}` : ""}`;
+        text = `<b>✓ SVG ${fmtBytes(r.bytes)}</b>（50KB 以内）${r.enc ? `<br>${imageEncodeMessage(r.enc)}` : ""}`;
       }
       el.className = `text-xs leading-relaxed rounded-xl px-3 py-2 ${cls}`;
       el.innerHTML = text;
@@ -2580,70 +2553,34 @@ const firebaseConfig = {
 
     const setImageBusy = (text) => { const el = $("#is-busy-text"); if (el) el.textContent = text; };
 
-    // 自動で軽くした内容の説明
-    function imageFitMessage(r) {
-      const fit = r.fit;
-      if (fit.kind === "embed") {
-        const e = r.enc;
-        return `画像を ${e.fmt}${e.q != null ? `・品質 ${Math.round(e.q * 100)}%` : ""}・${e.w}×${e.h}px に圧縮して埋め込みました`;
-      }
-      const head = `変換結果が ${fmtBytes(fit.firstBytes)} だったため、自動で軽くしました：`;
-      const a = fit.from, b = r.p, parts = [];
-      if (b.round !== a.round) parts.push("座標を整数に丸め");
-      if (b.side !== a.side) parts.push(`解像度 ${a.side}→${b.side}px`);
-      if (b.colors !== a.colors && b.mode === "color") parts.push(`色数 ${a.colors}→${b.colors}`);
-      if (b.omit !== a.omit) parts.push(`ノイズ除去 ${a.omit}→${b.omit}px`);
-      if (b.precision !== a.precision) parts.push(`単純化 ${a.precision.toFixed(1)}→${b.precision.toFixed(1)}`);
-      return head + parts.join("、");
-    }
+    // 埋め込んだ画像の形式・品質・大きさの説明
+    const imageEncodeMessage = (e) =>
+      `画像を ${e.fmt}${e.q != null ? `・品質 ${Math.round(e.q * 100)}%` : ""}・${e.w}×${e.h}px に圧縮して埋め込みました`;
 
     function setImageMode(mode) {
       const s = imgSend;
       if (!s || (mode === "original" && !s.original) || !IMAGE_MODES.some(([m]) => m === mode)) return;
       s.mode = mode;
-      if (mode !== "original") store.set("chatter:imageMode", mode); // 次に大きい画像を送るときの変換方式
       renderImageOptions();
       convertImage();
     }
 
-    function setImagePreset(preset) {
-      const s = imgSend;
-      if (!s || !TRACE_PRESETS.some(([p]) => p === preset)) return;
-      s.preset = preset;
-      renderImageOptions();
-      convertImage();
-    }
-
-    let thresholdTimer = null;
-    function setImageThreshold(value) {
-      const s = imgSend;
-      if (!s) return;
-      s.threshold = Math.min(254, Math.max(1, Math.round(Number(value) || 128)));
-      $("#is-threshold-out").textContent = s.threshold;
-      clearTimeout(thresholdTimer);
-      thresholdTimer = setTimeout(convertImage, 280);
-    }
-
-    // 今の設定で変換する（同じ設定の結果は使い回す）
+    // 今の送信のしかたで用意する（一度作った結果は使い回す）
     async function convertImage() {
       const s = imgSend;
       if (!s) return;
-      const key = s.mode === "color" || s.mode === "mono" ? `${s.mode}|${s.preset}|${s.mode === "mono" ? s.threshold : ""}` : s.mode;
       const gen = ++s.gen;
-      cancelTrace();
-      s.result = s.cache.get(key) || null;
+      s.result = s.cache.get(s.mode) || null;
       if (!s.result) {
-        setImageBusy(s.mode === "embed" ? "圧縮中…" : "トレース中…");
+        setImageBusy("圧縮中…");
         renderImageStatus();
         let r;
         try {
-          r = s.mode === "original" ? { ...s.original, ok: true }
-            : s.mode === "embed" ? await embedFit(s, gen)
-            : await traceFit(s, gen);
+          r = s.mode === "original" ? { ...s.original, ok: true } : await embedFit(s, gen);
         } catch (e) {
           if (e?.cancelled || imgSend !== s || gen !== s.gen) return;
           console.error(e);
-          s.result = { ok: false, error: e?.message === "lib" ? "変換ライブラリを読み込めませんでした。ネットワーク接続を確認してください。「埋め込み」はこのままでも使えます。" : "変換に失敗しました。別の変換方式・プリセットをお試しください。" };
+          s.result = { ok: false, error: "変換に失敗しました。別の画像をお試しください。" };
           renderImageStatus();
           return;
         }
@@ -2651,7 +2588,7 @@ const firebaseConfig = {
         if (r.svg != null) r = { ...r, image: r.svg.replace(/[\r\n\u2028\u2029]+/g, " ").trim() };
         r.ok = r.ok ?? (r.bytes <= IMAGE_MAX_BYTES && !!imageSrc(r.image));
         s.result = r;
-        s.cache.set(key, r);
+        s.cache.set(s.mode, r);
       }
       renderImageStatus();
     }
@@ -2681,182 +2618,8 @@ const firebaseConfig = {
       }
     }
 
-    // ---- SVG トレース工房の変換処理 ----
-    // ImageTracer（imagetracerjs）は最初に変換するときに読み込む
-    const TRACER_URL = "https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.js";
-    let tracerPromise = null;
-    function loadTracer() {
-      if (window.ImageTracer) return Promise.resolve(window.ImageTracer);
-      tracerPromise ??= new Promise((resolve, reject) => {
-        const el = document.createElement("script");
-        el.src = TRACER_URL;
-        el.onload = () => (window.ImageTracer ? resolve(window.ImageTracer) : reject(new Error("lib")));
-        el.onerror = () => { tracerPromise = null; el.remove(); reject(new Error("lib")); };
-        document.head.appendChild(el);
-      });
-      return tracerPromise;
-    }
-
-    // トレース結果を SVG にする（Worker でも動くよう、外の変数を使わない）
-    function buildTraceSvg(IT, imgd, options, meta) {
-      const td = IT.imagedataToTracedata(imgd, options);
-      const hex = (c) => "#" + [c.r, c.g, c.b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
-      const out = [];
-      let paths = 0, colors = 0;
-      for (let l = 0; l < td.layers.length; l++) {
-        const c = td.palette[l];
-        if (!c || c.a < 8) continue;
-        let fill;
-        if (meta.mono) {
-          const isWhite = (c.r + c.g + c.b) / 3 > 127;
-          if (isWhite && meta.transparentBg) continue;
-          fill = isWhite ? "#ffffff" : meta.ink;
-        } else {
-          fill = hex(c);
-        }
-        const ds = [];
-        const layer = td.layers[l];
-        for (let p = 0; p < layer.length; p++) {
-          if (layer[p].isholepath) continue;
-          const str = IT.svgpathstring(td, l, p, options);
-          const m = str && str.match(/ d="([^"]*)"/);
-          if (m && m[1].trim()) ds.push(m[1].trim());
-        }
-        if (!ds.length) continue;
-        paths += ds.length; colors++;
-        let attrs = 'fill="' + fill + '"';
-        if (c.a < 250 && !meta.mono) attrs += ' fill-opacity="' + (c.a / 255).toFixed(3) + '"';
-        if (meta.fillGaps && c.a >= 250) attrs += ' stroke="' + fill + '" stroke-width="0.8" stroke-linejoin="round"';
-        out.push("<path " + attrs + ' d="' + ds.join(" ") + '"/>');
-      }
-      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + meta.outW + '" height="' + meta.outH +
-        '" viewBox="0 0 ' + td.width + " " + td.height + '">' + out.join("") + "</svg>";
-      return { svg, paths, colors };
-    }
-
-    // 重いトレースは Worker で行う（使えなければメインスレッドで）。新しい変換を始めたら前の変換は止める
-    let traceWorker = null, traceJob = null, traceWorkerOK = true, traceWorkerUrl = null;
-    function cancelTrace() {
-      if (traceJob) { traceJob.reject({ cancelled: true }); traceJob = null; }
-      if (traceWorker) { traceWorker.terminate(); traceWorker = null; }
-    }
-    function runTrace(IT, imgd, options, meta) {
-      cancelTrace();
-      return new Promise((resolve, reject) => {
-        const runMain = () => setTimeout(() => {
-          try { resolve(buildTraceSvg(IT, imgd, options, meta)); } catch (e) { reject(e); }
-        }, 30);
-        if (traceWorkerOK) {
-          try {
-            traceWorkerUrl ??= URL.createObjectURL(new Blob([
-              `self.ImageTracer = new (${IT.constructor.toString()})();\n` +
-              `var buildTraceSvg = ${buildTraceSvg.toString()};\n` +
-              "self.onmessage = function (e) { var d = e.data; try { self.postMessage({ result: buildTraceSvg(self.ImageTracer, d.imgd, d.options, d.meta) }); } catch (err) { self.postMessage({ error: String(err && err.message || err) }); } };",
-            ], { type: "text/javascript" }));
-            const worker = new Worker(traceWorkerUrl);
-            const job = { reject };
-            const done = () => { if (traceJob === job) traceJob = null; if (traceWorker === worker) traceWorker = null; worker.terminate(); };
-            worker.onmessage = (e) => {
-              if (traceJob !== job) return;
-              done();
-              if (e.data.error) reject(new Error(e.data.error)); else resolve(e.data.result);
-            };
-            worker.onerror = (e) => {
-              e.preventDefault();
-              traceWorkerOK = false;
-              if (traceJob !== job) return;
-              done();
-              runMain();
-            };
-            traceWorker = worker;
-            traceJob = job;
-            const data = new Uint8ClampedArray(imgd.data); // 失敗したときにメインスレッドで使えるよう、コピーを渡す
-            worker.postMessage({ imgd: { width: imgd.width, height: imgd.height, data }, options, meta }, [data.buffer]);
-            return;
-          } catch {
-            traceWorkerOK = false;
-          }
-        }
-        runMain();
-      });
-    }
-
+    // ---- SVG への変換（SVG トレース工房の「埋め込み」方式） ----
     const checkImageGen = (s, gen) => { if (imgSend !== s || s.gen !== gen) throw { cancelled: true }; };
-
-    // 解析用の画像データを作る。白黒は（必要ならぼかしてから）二値化する
-    function traceImageData(s, p) {
-      const scale = Math.min(1, p.side / Math.max(s.w, s.h));
-      const tw = Math.max(1, Math.round(s.w * scale)), th = Math.max(1, Math.round(s.h * scale));
-      const cv = document.createElement("canvas");
-      cv.width = tw; cv.height = th;
-      const ctx = cv.getContext("2d", { willReadFrequently: true });
-      ctx.imageSmoothingQuality = "high";
-      const mono = p.mode === "mono";
-      if (mono) {
-        ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, tw, th);
-        if (p.blur > 0) ctx.filter = `grayscale(1) blur(${p.blur * 0.6}px)`;
-      }
-      ctx.drawImage(s.img, 0, 0, tw, th);
-      ctx.filter = "none";
-      const imgd = ctx.getImageData(0, 0, tw, th);
-      if (mono) {
-        const d = imgd.data, t = p.threshold;
-        for (let i = 0; i < d.length; i += 4) {
-          const v = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2] >= t ? 255 : 0;
-          d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
-        }
-      }
-      return { imgd, tw, th };
-    }
-
-    async function traceOnce(IT, s, p, gen) {
-      checkImageGen(s, gen);
-      const { imgd, tw, th } = traceImageData(s, p);
-      const mono = p.mode === "mono";
-      const options = {
-        ltres: p.precision, qtres: p.precision, pathomit: p.omit,
-        rightangleenhance: true, colorsampling: 2, numberofcolors: p.colors,
-        mincolorratio: 0, colorquantcycles: 3, layering: 0, strokewidth: 1,
-        linefilter: false, scale: 1, roundcoords: p.round, viewbox: true, desc: false,
-        lcpr: 0, qcpr: 0, blurradius: mono ? 0 : p.blur, blurdelta: 20,
-      };
-      if (mono) {
-        options.pal = [{ r: 0, g: 0, b: 0, a: 255 }, { r: 255, g: 255, b: 255, a: 255 }];
-        options.numberofcolors = 2; options.colorquantcycles = 1;
-      }
-      const meta = { mono, ink: "#111827", transparentBg: true, fillGaps: true, outW: s.w, outH: s.h };
-      const r = await runTrace(IT, imgd, options, meta);
-      checkImageGen(s, gen);
-      return { svg: r.svg, paths: r.paths, colors: r.colors, tracedW: tw, tracedH: th, bytes: svgBytes(r.svg), p: { ...p } };
-    }
-
-    // 50KB を超えたら、座標の丸め → 解像度・色数・ノイズ除去・単純化 の順で段階的に軽くして再トレース
-    async function traceFit(s, gen) {
-      let IT;
-      try { IT = await loadTracer(); } catch { throw new Error("lib"); }
-      const preset = TRACE_PRESETS.find(([id]) => id === s.preset)[2];
-      const p = { mode: s.mode, ...preset, threshold: s.threshold, round: 1, side: Math.min(TRACE_MAX_SIDE, Math.max(s.w, s.h)) };
-      const first = await traceOnce(IT, s, p, gen);
-      if (first.bytes <= IMAGE_MAX_BYTES) return first;
-      let best = first, last = first, tries = 1;
-      while (tries < 12 && last.bytes > IMAGE_MAX_BYTES) {
-        if (p.round === 1) {
-          p.round = 0;
-        } else {
-          const k = Math.max(0.45, Math.min(0.88, 0.95 / Math.sqrt(last.bytes / IMAGE_MAX_BYTES)));
-          p.side = Math.max(48, Math.round(p.side * k));
-          if (p.mode === "color") p.colors = Math.max(2, Math.round(p.colors * Math.max(0.6, k)));
-          p.omit = Math.min(200, Math.max(p.omit + 4, Math.round(p.omit * 1.3)));
-          p.precision = Math.min(8, Math.round((p.precision + 0.5) * 10) / 10);
-        }
-        tries++;
-        setImageBusy(`50KB に収まるよう調整中…（${tries}回目）`);
-        last = await traceOnce(IT, s, p, gen);
-        if (last.bytes < best.bytes) best = last;
-      }
-      best.fit = { kind: "trace", from: first.p, firstBytes: first.bytes, tries };
-      return best;
-    }
 
     function embedSvg(w, h, href) {
       return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><image width="${w}" height="${h}" xlink:href="${href}"/></svg>`;
@@ -2914,7 +2677,6 @@ const firebaseConfig = {
       }
       checkImageGen(s, gen);
       if (!best) throw new Error("encode");
-      best.fit = { kind: "embed", tries };
       return best;
     }
 
@@ -3885,7 +3647,6 @@ const firebaseConfig = {
       "export-sticker": (el) => exportSticker(el.dataset.id),
       // 画像
       "is-mode": (el) => setImageMode(el.dataset.mode),
-      "is-preset": (el) => setImagePreset(el.dataset.preset),
       "is-send": () => sendImage(),
       "view-image": (el) => openImageViewer(el.dataset.id),
       "download-image": (el) => downloadImage(el.dataset.id),
@@ -4053,9 +3814,7 @@ const firebaseConfig = {
       });
       // トーク以外（送信画面の上など）にドロップしても、ブラウザでファイルが開かれないようにする
       document.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
-      document.addEventListener("drop", (e) => { if (hasFiles(e)) e.preventDefault(); });
-      document.addEventListener("input", (e) => { if (e.target.id === "is-threshold") setImageThreshold(e.target.value); });
-      document.addEventListener("change", (e) => {
+      document.addEventListener("drop", (e) => { if (hasFiles(e)) e.preventDefault(); });      document.addEventListener("change", (e) => {
         if (e.target.name !== "members") return;
         $("#cg-count").textContent = `${document.querySelectorAll('#cg-list input[name="members"]:checked').length}人選択中`;
       });
