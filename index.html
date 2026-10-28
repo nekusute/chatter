@@ -230,7 +230,15 @@ const firebaseConfig = {
           </form>
 
           <!-- 新規作成（ID自動発行 or 任意指定） -->
-          <form id="form-signup" class="space-y-4" novalidate hidden>
+          <form id="form-signup" novalidate hidden>
+            <!-- 管理者が新規ユーザーの募集を停止しているとき -->
+            <div id="signup-closed" class="text-center py-4" hidden>
+              <div class="mx-auto w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 grid place-items-center mb-3" data-icon="alert" data-icon-class="w-7 h-7"></div>
+              <p class="font-semibold text-slate-700">現在、新規ユーザーの募集を停止しています</p>
+              <p class="text-sm text-slate-500 mt-1 leading-relaxed">登録済みのユーザーIDをお持ちの方は、ログインしてください。</p>
+              <button type="button" data-login-tab="login" class="btn-primary w-full mt-6"><span data-icon="login"></span>ログインへ</button>
+            </div>
+            <div id="signup-fields" class="space-y-4">
             <div>
               <label for="signup-name" class="label">表示名 <span class="text-slate-400 font-normal">（あとで変更できます）</span></label>
               <input id="signup-name" name="name" class="input" maxlength="30" autocomplete="nickname" placeholder="例: たろう" />
@@ -258,6 +266,7 @@ const firebaseConfig = {
             </div>
             <p class="form-error" hidden></p>
             <button type="submit" id="signup-btn" class="btn-primary w-full">IDを発行してはじめる</button>
+            </div>
           </form>
         </div>
 
@@ -418,6 +427,9 @@ const firebaseConfig = {
     const LOGIN_EMAIL_DOMAIN = "chatter.local"; // ログイン用メールアドレス「<ユーザーID>@chatter.local」（firestore.rules と合わせる）
     const MIN_PASSWORD = 6;                 // Firebase Authentication の最小文字数
     const DELETED_NAME = "退会したユーザー";
+    // 管理者のユーザーID（firestore.rules の isAdmin と合わせる）。このアカウントは削除できず、管理者メニューはこのユーザーのプロフィールにだけ表示する
+    const ADMIN_ID = "sousuque";
+    const SIGNUP_CLOSED = "現在、新規ユーザーの募集を停止しています。";
     // リアクション（Firestore にはコードで保存。firestore.rules の一覧と合わせる）
     const REACTIONS = [
       ["good", "👍"], ["ok", "👌"], ["heart", "❤️"], ["hands", "🙌"], ["lol", "🤣"], ["think", "🤔"], ["cry", "😭"], ["angry", "😡"],
@@ -472,9 +484,12 @@ const firebaseConfig = {
       accountDeleting: false,
       stickers: [],           // 自分のスタンプ（新しい順）
       stickersLoaded: false,
-      unsub: { users: null, rooms: null, messages: null, stickers: null },
+      reads: new Map(),       // 開いているトークの既読（管理者のみ）：userId -> 最後にトークを見た時刻（ms）
+      readsLoaded: false,
+      unsub: { users: null, rooms: null, messages: null, stickers: null, reads: null },
     };
     let readMap = {};
+    let readSentMap = {};     // 既読を記録した、管理者の最新メッセージの時刻（roomId -> ms）
 
     // ============================================================
     // ユーティリティ
@@ -529,6 +544,7 @@ const firebaseConfig = {
       photo: "M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z",
       download: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4",
       upload: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12",
+      shield: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z",
     };
     ICONS["bell-off"] = ICONS.bell + "M3 3l18 18"; // 斜線入りのベル
     const icon = (name, cls = "w-5 h-5") =>
@@ -756,6 +772,7 @@ const firebaseConfig = {
       const custom = customRaw == null ? null : normId(customRaw);
       if (custom !== null && !ID_RE.test(custom)) throw new Error(ID_FORMAT_ERROR);
       const pw = checkNewPassword(password, password2);
+      if (!(await signupOpen())) throw new Error(SIGNUP_CLOSED);
 
       for (let attempt = 0; attempt < 5; attempt++) {
         const id = custom ?? generateId();
@@ -822,6 +839,7 @@ const firebaseConfig = {
       let profile;
       if (!snap.exists()) {
         // 新規登録（登録の途中で中断していた場合もここで作成する）
+        if (!(await signupOpen())) return reject(SIGNUP_CLOSED);
         profile = { name: newName || id };
         await setDoc(ref, { name: profile.name, uid: user.uid, createdAt: serverTimestamp(), lastSeen: serverTimestamp() });
       } else {
@@ -857,6 +875,7 @@ const firebaseConfig = {
       state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null };
       document.querySelectorAll('#screen-login input[type="password"]').forEach((el) => { el.value = ""; });
       readMap = store.json(`chatter:read:${user.id}`, {});
+      readSentMap = store.json(`chatter:readsent:${user.id}`, {});
       touchPresence(true);
       subscribeCore();
       $("#app").dataset.view = "list";
@@ -885,9 +904,10 @@ const firebaseConfig = {
         uid: null, me: null, users: new Map(), rooms: [], usersLoaded: false, roomsLoaded: false,
         tab: "talk", search: "", activeRoomId: null, activeRoomFallback: null, messages: [], messagesLoaded: false,
         renderedIds: new Set(), drafts: {}, replyTo: null, selectedMsgId: null, leavingRoomId: null, accountDeleting: false,
-        stickers: [], stickersLoaded: false,
-        unsub: { users: null, rooms: null, messages: null, stickers: null },
+        stickers: [], stickersLoaded: false, reads: new Map(), readsLoaded: false,
+        unsub: { users: null, rooms: null, messages: null, stickers: null, reads: null },
       });
+      adminKey = null;
       signOut(auth).catch((e) => console.warn(e));
       closeModal();
       closeStickerBox();
@@ -1145,6 +1165,7 @@ const firebaseConfig = {
     const partnerOf = (room) => room.members?.find((m) => m !== state.me.id) || state.me.id;
     const userName = (id, fallback) => state.users.get(id)?.name || fallback || id;
     const isMember = (room) => !!room?.members?.includes(state.me.id);
+    const isAdmin = () => state.me?.id === ADMIN_ID;
     // メッセージを送れる（メンバーで、DM の相手が退会していない）
     const canSend = (room) => isMember(room) && !(room.type === "dm" && !!state.users.get(partnerOf(room))?.deleted);
 
@@ -1172,6 +1193,22 @@ const firebaseConfig = {
       readMap[roomId] = Math.max(Date.now(), latest); // 端末の時計ずれ対策
       store.set(`chatter:read:${state.me.id}`, JSON.stringify(readMap));
       closeNotification(roomId);
+      reportRead(roomId);
+    }
+    // 管理者の既読表示のため、管理者が参加しているトークで管理者の新しいメッセージを見たら
+    // rooms/{roomId}/reads/{自分のID} に見た時刻を書く（管理者のメッセージが届くまでは書かない）
+    function reportRead(roomId) {
+      const room = currentRoom();
+      if (isAdmin() || room?.id !== roomId || !room.members?.includes(ADMIN_ID)) return;
+      const latest = Math.max(0, ...state.messages.filter((m) => m.senderId === ADMIN_ID).map((m) => ms(m.createdAt)));
+      if (latest <= (readSentMap[roomId] || 0)) return;
+      const key = `chatter:readsent:${state.me.id}`;
+      readSentMap[roomId] = latest;
+      store.set(key, JSON.stringify(readSentMap));
+      setDoc(doc(db, "rooms", roomId, "reads", state.me.id), { at: serverTimestamp() }).catch((e) => {
+        console.warn(e);
+        if (readSentMap[roomId] === latest) { delete readSentMap[roomId]; store.set(key, JSON.stringify(readSentMap)); } // 次に見たときにもう一度書く
+      });
     }
     function isUnread(room) {
       const lm = room.lastMessage;
@@ -1424,6 +1461,7 @@ const firebaseConfig = {
             <div class="flex justify-end items-end gap-1.5 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""}" data-msg-id="${esc(m.id)}">
               <div class="flex flex-col items-end gap-0.5 shrink-0">
                 ${reactionChip(m, isGroup)}
+                ${readLabel(m, room)}
                 <span class="msg-time">${m.pending ? "送信中…" : hhmm(d)}</span>
               </div>
               <div class="${bubbleCls} ${m.pending ? "" : "cursor-pointer"} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
@@ -1494,6 +1532,21 @@ const firebaseConfig = {
       return isGroup
         ? `<button type="button" data-action="reactors" data-id="${esc(m.id)}" class="${cls} transition hover:ring-indigo-300 active:scale-95" title="リアクションした人を見る">${inner}</button>`
         : `<span class="${cls}">${inner}</span>`;
+    }
+
+    // 既読表示（管理者だけに表示）：自分のメッセージを読んだ人がいれば、DM は「既読」、グループは「既読 人数」（クリックで読んだ人を表示）
+    const readersOf = (m, room) => {
+      const at = ms(m.createdAt);
+      return (room.members || []).filter((id) => id !== state.me.id && (state.reads.get(id) || 0) >= at);
+    };
+    function readLabel(m, room) {
+      if (!isAdmin() || !state.readsLoaded || m.pending || !room) return "";
+      const n = readersOf(m, room).length;
+      if (!n) return "";
+      const cls = "text-[10px] font-semibold text-indigo-500 leading-none tabular-nums";
+      return room.type === "group"
+        ? `<button type="button" data-action="readers" data-id="${esc(m.id)}" class="${cls} py-0.5 hover:underline" title="読んだ人を見る">既読 ${n}</button>`
+        : `<span class="${cls}">既読</span>`;
     }
 
     // 吹き出しの上に出すリアクションの絵文字（選択中のものは強調、もう一度選ぶと取り消し）と返信ボタン
@@ -1621,6 +1674,7 @@ const firebaseConfig = {
             onListenError(e);
           },
         );
+        subscribeReads(roomId);
       }
       const app = $("#app");
       if (app.dataset.view !== "chat") {
@@ -1632,9 +1686,32 @@ const firebaseConfig = {
       if (!isCoarse() && isMember(currentRoom())) $("#msg-input").focus();
     }
 
+    // 既読（管理者のみ）：開いているトークのメンバーが最後にトークを見た時刻
+    function subscribeReads(roomId) {
+      state.unsub.reads?.();
+      state.unsub.reads = null;
+      state.reads = new Map();
+      state.readsLoaded = false;
+      if (!isAdmin()) return;
+      state.unsub.reads = onSnapshot(
+        collection(db, "rooms", roomId, "reads"),
+        (snap) => {
+          if (state.activeRoomId !== roomId) return;
+          state.reads = new Map(snap.docs.map((d) => [d.id, ms(d.data({ serverTimestamps: "estimate" }).at)]));
+          state.readsLoaded = true;
+          if (state.messagesLoaded) renderMessages();
+        },
+        (e) => console.warn(e), // 既読が読めなくても、トークはそのまま使える
+      );
+    }
+
     function closeRoom() {
       state.unsub.messages?.();
       state.unsub.messages = null;
+      state.unsub.reads?.();
+      state.unsub.reads = null;
+      state.reads = new Map();
+      state.readsLoaded = false;
       state.activeRoomId = null;
       state.activeRoomFallback = null;
       state.leavingRoomId = null;
@@ -1810,6 +1887,7 @@ const firebaseConfig = {
         updatedAt: serverTimestamp(),
       });
       batch.set(doc(collection(ref, "messages")), systemMessage(text));
+      batch.delete(doc(ref, "reads", state.me.id)); // 既読の記録も消す
       await batch.commit();
       exitRoom();
       toast("グループを退出しました");
@@ -2039,6 +2117,7 @@ const firebaseConfig = {
       try {
         await deleteMessages();
         const batch = writeBatch(db);
+        (room.members || []).forEach((id) => batch.delete(doc(roomRef, "reads", id))); // 既読の記録
         batch.delete(roomRef);
         await batch.commit();
         await deleteMessages(); // 削除中に届いたメッセージも消す
@@ -2076,6 +2155,7 @@ const firebaseConfig = {
     // アカウント削除：グループから退出し、ユーザー文書を「退会済み」にする
     // （文書と Authentication のアカウントは残して同じIDの再登録を防ぐ。別の人が過去の DM を見られないようにするため）
     async function deleteAccount(password) {
+      if (isAdmin()) throw new Error("管理者のアカウントは削除できません。");
       await reauth(String(password ?? ""));
       const me = { ...state.me };
       const text = `${me.name} さんが退会しました`;
@@ -2092,7 +2172,8 @@ const firebaseConfig = {
             updatedAt: serverTimestamp(),
           });
           batch.set(doc(collection(ref, "messages")), systemMessage(text));
-          count += 2;
+          batch.delete(doc(ref, "reads", me.id)); // 既読の記録
+          count += 3;
           if (count >= 450) { await batch.commit(); batch = writeBatch(db); count = 0; }
         }
         batch.update(doc(db, "users", me.id), { name: DELETED_NAME, icon: deleteField(), deleted: true, deletedAt: serverTimestamp() });
@@ -2102,6 +2183,7 @@ const firebaseConfig = {
         throw e;
       }
       store.remove(`chatter:read:${me.id}`);
+      store.remove(`chatter:readsent:${me.id}`);
       store.remove(mutedKey());
       clearDrafts(me.id);
       resetSession();
@@ -3434,8 +3516,11 @@ const firebaseConfig = {
             <p class="form-error" hidden></p>
           </form>
           <button type="button" data-action="change-password" class="btn-secondary w-full mt-6">${icon("key", "w-5 h-5")}パスワードを変更</button>
+          ${isAdmin() ? `<button type="button" data-action="admin-unlock" class="btn-secondary w-full mt-3">${icon("shield", "w-5 h-5")}管理者メニュー</button>` : ""}
           <button type="button" data-action="logout" class="btn-danger-ghost w-full mt-3">${icon("logout", "w-5 h-5")}ログアウト</button>
-          <button type="button" data-action="delete-account" class="w-full mt-3 py-2 text-sm text-slate-400 hover:text-rose-600 transition">アカウントを削除</button>
+          ${isAdmin()
+            ? `<p class="mt-3 py-2 text-center text-xs text-slate-400">管理者のアカウントは削除できません</p>`
+            : `<button type="button" data-action="delete-account" class="w-full mt-3 py-2 text-sm text-slate-400 hover:text-rose-600 transition">アカウントを削除</button>`}
         </div>`);
     }
 
@@ -3462,6 +3547,210 @@ const firebaseConfig = {
             <button type="submit" class="btn-primary flex-1">変更する</button>
           </div>
         </form>`);
+    }
+
+    // ============================================================
+    // 管理者（ユーザーID が ADMIN_ID のユーザーだけ）
+    // ============================================================
+    // 管理者の設定（admin/settings。ログイン前でも読める）。項目を増やすときは firestore.rules の admin/settings も合わせる
+    let adminSettings = { signupOpen: true };
+    // 管理者メニューのパスワードのハッシュ。メニューを開いている間だけ持ち、閉じたら消す
+    let adminKey = null;
+    const ADMIN_PASSWORD_ERROR = "管理者パスワードが正しくありません。";
+
+    function subscribeSettings() {
+      onSnapshot(
+        doc(db, "admin", "settings"),
+        (snap) => {
+          adminSettings = { signupOpen: snap.data()?.signupOpen !== false };
+          renderSignupState();
+          renderAdminSettings();
+        },
+        (e) => console.warn(e), // 読めないときは既定の設定（募集中）のまま
+      );
+    }
+    // 新規登録の直前は、最新の設定をサーバーから確かめる
+    async function signupOpen() {
+      const snap = await getDoc(doc(db, "admin", "settings")).catch(() => null);
+      return snap ? snap.data()?.signupOpen !== false : adminSettings.signupOpen;
+    }
+    function renderSignupState() {
+      const open = adminSettings.signupOpen;
+      $("#signup-fields").hidden = !open;
+      $("#signup-closed").hidden = open;
+    }
+
+    // パスワードはハッシュ（SHA-256）にして扱う。Firestore にもハッシュだけを保存し、その文書はだれも読めない
+    async function adminHash(password) {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`chatter-admin:${password}`));
+      return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+    }
+    // 管理者の書き込み：admin/secret に今のパスワードのハッシュ（proof）を書いて、ルールでパスワードを確かめる。
+    // 設定の変更は同じトランザクションで書く（トランザクションはこの端末のキャッシュに残らないので、ハッシュが端末に保存されない）
+    async function adminWrite(proof, { hash = proof, settings = null } = {}) {
+      try {
+        await runTransaction(db, async (tx) => {
+          tx.set(doc(db, "admin", "secret"), { hash, proof, at: serverTimestamp() });
+          if (settings) tx.set(doc(db, "admin", "settings"), { ...settings, updatedAt: serverTimestamp() }, { merge: true });
+        });
+      } catch (e) {
+        if (e.code === "permission-denied") throw new Error(ADMIN_PASSWORD_ERROR);
+        throw e;
+      }
+    }
+
+    // 管理者メニューのモーダル（メニュー内で画面を切り替えても、閉じるまではパスワードを入れ直さなくてよい）
+    function openAdminModal(html) {
+      modalCloseCb = null; // 前の画面を閉じたときの処理（パスワードを消す）を呼ばない
+      openModal(html, () => { adminKey = null; });
+    }
+
+    function openAdminUnlock() {
+      if (!isAdmin()) return;
+      adminKey = null;
+      openModal(`
+        ${modalHead("管理者メニュー", "入るには管理者パスワードを入力してください。")}
+        <form id="form-admin-unlock" class="px-6 pb-6 space-y-4">
+          <div>
+            <label class="label" for="admin-password">管理者パスワード</label>
+            <input id="admin-password" name="password" type="password" class="input" autocomplete="off" autofocus />
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
+            <button type="submit" class="btn-primary flex-1">${icon("shield", "w-5 h-5")}入る</button>
+          </div>
+        </form>`);
+    }
+
+    async function unlockAdmin(password) {
+      if (!isAdmin()) return;
+      const pw = String(password ?? "");
+      if (!pw) throw new Error("管理者パスワードを入力してください。");
+      const hash = await adminHash(pw);
+      await adminWrite(hash);
+      adminKey = hash;
+      openAdminMenu();
+    }
+
+    function openAdminMenu() {
+      if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
+      openAdminModal(`
+        ${modalHead("管理者メニュー", `管理者（@${esc(ADMIN_ID)}）だけが使える設定です`)}
+        <div class="px-6 pb-6 space-y-3">
+          <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
+            <div class="flex items-center gap-3">
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-semibold text-slate-800">新規ユーザーの募集</div>
+                <div id="admin-signup-status" class="text-xs font-semibold mt-0.5"></div>
+              </div>
+              <button type="button" id="admin-signup-toggle" data-action="admin-toggle-signup" class="switch" role="switch" aria-checked="false" aria-label="新規ユーザーの募集"><span class="switch-knob"></span></button>
+            </div>
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed">停止すると、ログイン画面の「新規登録」から新しいアカウントを作れなくなります。登録済みのユーザーは、これまでどおりログインできます。</p>
+          </div>
+          <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
+            <div class="text-sm font-semibold text-slate-800">既読表示</div>
+            <p class="text-xs text-slate-400 mt-1 leading-relaxed">あなたが送ったメッセージの横に、相手が読むと「既読」（グループは読んだ人数。タップでだれが読んだか）が表示されます。この表示は管理者にだけ見えます。</p>
+          </div>
+          <button type="button" data-action="admin-password" class="btn-secondary w-full !mt-5">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
+          <button type="button" data-close class="btn-primary w-full">閉じる</button>
+        </div>`);
+      renderAdminSettings();
+    }
+    // 管理者メニューを開いているときに設定が変わったら、表示を合わせる
+    function renderAdminSettings() {
+      const btn = $("#admin-signup-toggle");
+      if (!btn) return;
+      const open = adminSettings.signupOpen;
+      btn.setAttribute("aria-checked", open);
+      const status = $("#admin-signup-status");
+      status.textContent = open ? "受付中" : "停止中";
+      status.className = `text-xs font-semibold mt-0.5 ${open ? "text-emerald-600" : "text-rose-600"}`;
+    }
+
+    async function toggleSignup() {
+      if (!isAdmin() || !adminKey) return;
+      const btn = $("#admin-signup-toggle");
+      if (btn?.disabled) return;
+      const open = !adminSettings.signupOpen;
+      if (btn) btn.disabled = true;
+      try {
+        await adminWrite(adminKey, { settings: { signupOpen: open } });
+      } finally {
+        if (btn?.isConnected) btn.disabled = false;
+      }
+      adminSettings = { ...adminSettings, signupOpen: open };
+      renderSignupState();
+      renderAdminSettings();
+      toast(open ? "新規ユーザーの募集を再開しました" : "新規ユーザーの募集を停止しました");
+    }
+
+    function openAdminPassword() {
+      if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
+      openAdminModal(`
+        ${modalHead("管理者パスワードを変更", "管理者メニューに入るときのパスワードです（ログインのパスワードとは別です）。")}
+        <form id="form-admin-password" class="px-6 pb-6 space-y-4">
+          <div>
+            <label class="label" for="ap-current">現在の管理者パスワード</label>
+            <input id="ap-current" name="current" type="password" class="input" autocomplete="off" autofocus />
+          </div>
+          <div>
+            <label class="label" for="ap-password">新しい管理者パスワード <span class="text-slate-400 font-normal">（${MIN_PASSWORD}文字以上）</span></label>
+            <input id="ap-password" name="password" type="password" class="input" autocomplete="off" />
+          </div>
+          <div>
+            <label class="label" for="ap-password2">新しい管理者パスワード（確認）</label>
+            <input id="ap-password2" name="password2" type="password" class="input" autocomplete="off" />
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-action="admin-menu" class="btn-secondary flex-1">戻る</button>
+            <button type="submit" class="btn-primary flex-1">変更する</button>
+          </div>
+        </form>`);
+    }
+
+    async function changeAdminPassword(current, password, password2) {
+      if (!isAdmin() || !adminKey) return;
+      const cur = String(current ?? "");
+      if (!cur) throw new Error("現在の管理者パスワードを入力してください。");
+      const pw = checkNewPassword(password, password2);
+      const [proof, hash] = await Promise.all([adminHash(cur), adminHash(pw)]);
+      try {
+        await adminWrite(proof, { hash });
+      } catch (e) {
+        if (e.message === ADMIN_PASSWORD_ERROR) throw new Error("現在の管理者パスワードが正しくありません。");
+        throw e;
+      }
+      adminKey = hash;
+      openAdminMenu();
+      toast("管理者パスワードを変更しました");
+    }
+
+    // グループ：自分（管理者）のメッセージを読んだ人・まだ読んでいない人の一覧
+    function openReaders(msgId) {
+      const room = currentRoom();
+      const m = state.messages.find((x) => x.id === msgId);
+      if (!isAdmin() || !room || !m) return;
+      const byName = (a, b) => userName(a).localeCompare(userName(b), "ja");
+      const read = readersOf(m, room).sort(byName);
+      const unread = (room.members || []).filter((id) => id !== state.me.id && !read.includes(id)).sort(byName);
+      const rows = (ids) => ids.map((id) => `
+        <div class="flex items-center gap-3 px-2 py-2">
+          ${avatar(id, userName(id), "w-9 h-9 text-sm")}
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium text-slate-800 truncate">${esc(userName(id))}</div>
+            <div class="text-xs text-slate-400 truncate">@${esc(id)}</div>
+          </div>
+        </div>`).join("");
+      const section = (title, ids) => ids.length ? `
+        <div class="text-xs font-semibold text-slate-500 mt-3 first:mt-0">${title} ${ids.length}人</div>
+        <div class="-mx-2 mt-1">${rows(ids)}</div>` : "";
+      openModal(`
+        ${modalHead("既読", `${read.length}人が読みました`)}
+        <div class="px-6 pb-6 max-h-96 overflow-y-auto scroll-thin">
+          ${section("既読", read)}${section("未読", unread)}
+        </div>`);
     }
 
     // ユーザーを選ぶ一覧（グループ作成・メンバーの招待）。exclude のユーザーは表示しない
@@ -3664,6 +3953,15 @@ const firebaseConfig = {
       },
       "delete-room": () => deleteRoom(),
       "delete-account": () => openDeleteAccount(),
+      // 管理者
+      "admin-unlock": () => openAdminUnlock(),
+      "admin-menu": () => openAdminMenu(),
+      "admin-toggle-signup": () => toggleSignup(),
+      "admin-password": () => openAdminPassword(),
+      "readers": (el) => {
+        if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
+        openReaders(el.dataset.id);
+      },
       // スタンプ
       "toggle-sticker-box": () => toggleStickerBox(),
       "send-sticker": (el) => sendSticker(el.dataset.id),
@@ -3704,6 +4002,8 @@ const firebaseConfig = {
       "form-delete-account": (fd) => deleteAccount(fd.get("password")),
       "form-sticker": (fd) => saveSticker(fd.get("name")),
       "form-icon": () => saveDrawnIcon(),
+      "form-admin-unlock": (fd) => unlockAdmin(fd.get("password")),
+      "form-admin-password": (fd) => changeAdminPassword(fd.get("current"), fd.get("password"), fd.get("password2")),
     };
 
     function setLoginTab(tab) {
@@ -3967,6 +4267,7 @@ const firebaseConfig = {
         return;
       }
 
+      subscribeSettings();
       showScreen("loading");
       let booted = false;
       // ログイン状態は Firebase Authentication がこのブラウザに保存している
