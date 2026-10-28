@@ -441,10 +441,10 @@ const firebaseConfig = {
     const ICON_IMAGE_PX = 192;              // アップロードした画像を縮小する大きさ（正方形の一辺）
     const ICON_MAX_IMAGE = 40000;           // 画像の data URL の最大文字数
     const ICON_IMAGE_RE = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/;
-    // 画像（メッセージの image に保存。50KB 以下の画像はそのまま、それより大きい画像は 50KB 以下の SVG に変換して送る。上限は firestore.rules と合わせる）
-    const IMAGE_MAX_BYTES = 50000;          // 送信できる画像・SVG の最大サイズ（50KB = 50,000 バイト）
+    // 画像（メッセージの image に保存。どの画像も 50KB 以下の SVG に埋め込んで送る。上限は firestore.rules と合わせる）
+    const IMAGE_MAX_BYTES = 50000;          // 送信できる SVG の最大サイズ（50KB = 50,000 バイト）
     const IMAGE_MAX_SVG = 50000;            // SVG の最大文字数
-    const IMAGE_MAX_DATA_URL = 70000;       // そのまま送る画像の data URL の最大文字数（50KB を base64 にした長さ + 前置き）
+    const IMAGE_MAX_DATA_URL = 70000;       // 以前そのまま送られた画像の data URL の最大文字数（表示用。50KB を base64 にした長さ + 前置き）
     const IMAGE_MAX_PX = 20000;             // 幅・高さ（w・h）の上限
     const IMAGE_TEXT = "[画像]";             // 一覧のプレビュー・通知・返信の引用に使う本文（画像のメッセージの text）
     const IMAGE_SVG_RE = /^<svg[ >].*<\/svg>$/; // 改行を含まない SVG（firestore.rules の isValidImage と合わせる）
@@ -2103,6 +2103,7 @@ const firebaseConfig = {
       }
       store.remove(`chatter:read:${me.id}`);
       store.remove(mutedKey());
+      clearDrafts(me.id);
       resetSession();
       toast("アカウントを削除しました");
     }
@@ -2135,6 +2136,7 @@ const firebaseConfig = {
       const svg = buildStickerSvg(ed.strokes);
       if (svg.length > ICON_MAX_SVG) throw new Error("アイコンのデータが大きすぎます。線の数を減らしてください。");
       await setIcon(svg);
+      store.remove(draftKey(ed));
       openProfile(); // プロフィールに戻る
       toast("アイコンを変更しました");
     }
@@ -2298,8 +2300,8 @@ const firebaseConfig = {
     // ============================================================
     // 画像
     // ============================================================
-    // 50KB 以下の JPEG・PNG・WEBP・GIF・SVG はそのまま送る。それより大きい画像は「SVG トレース工房」の「埋め込み」方式
-    // （画像を圧縮して SVG の中に埋め込む）で 50KB 以下の SVG にして送る。
+    // どの画像（SVG も）も「SVG トレース工房」の「埋め込み」方式（画像を SVG の中に埋め込む。50KB を超えるときは圧縮する）で
+    // 50KB 以下の SVG にして送る。画像をそのまま送ることはできない（以前そのまま送られた data URL の画像は表示だけする）。
     // SVG は innerHTML で差し込まず <img> で表示する（SVG 内のスクリプトや外部の読み込みは動かない）
     function imageSrc(image) {
       if (typeof image !== "string") return null;
@@ -2367,7 +2369,7 @@ const firebaseConfig = {
         </div>`);
     }
 
-    // 画像をファイルとして保存（SVG は .svg、そのまま送られた画像は元の形式）
+    // 画像をファイルとして保存（SVG は .svg、以前そのまま送られた画像は元の形式）
     function downloadImage(msgId) {
       const m = state.messages.find((x) => x.id === msgId);
       if (m?.type !== "image" || !imageSrc(m.image)) return;
@@ -2392,15 +2394,10 @@ const firebaseConfig = {
     }
 
     // ---- 送信画面（画像を選ぶ・貼り付ける・ドロップすると開く） ----
-    const IMAGE_MODES = [["original", "元の画像"], ["embed", "SVG に変換"]];
-    const IMAGE_MODE_NOTES = {
-      original: "変換せずに、そのまま送信します。",
-      embed: "画像を圧縮して SVG の中に埋め込みます。",
-    };
     const RASTER_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     const IMAGE_EXT_TYPES = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml" };
 
-    let imgSend = null; // 開いている送信画面 { file, type, url, img, w, h, dims, roomId, original, mode, cache, result, gen }
+    let imgSend = null; // 開いている送信画面 { file, type, url, img, w, h, dims, roomId, result, gen }
 
     async function openImageSender(file) {
       const room = currentRoom();
@@ -2423,11 +2420,7 @@ const firebaseConfig = {
       const k = Math.min(1, IMAGE_MAX_PX / Math.max(w, h));
       w = Math.max(1, Math.round(w * k));
       h = Math.max(1, Math.round(h * k));
-      const original = await originalImage(file, type).catch(() => null);
-      const s = {
-        file, type, url, img, w, h, dims, roomId: room.id, original,
-        mode: original ? "original" : "embed", cache: new Map(), result: null, gen: 0,
-      };
+      const s = { file, type, url, img, w, h, dims, roomId: room.id, result: null, gen: 0 };
       if (imgSend) cancelImageSender(imgSend);
       imgSend = s;
       renderImageSender();
@@ -2464,23 +2457,6 @@ const firebaseConfig = {
       };
     }
 
-    // 50KB 以下の画像は変換せずに送れる（JPEG・PNG・WEBP・GIF は data URL、SVG は改行を取り除いたテキスト）
-    async function originalImage(file, type) {
-      if (file.size > IMAGE_MAX_BYTES) return null;
-      if (type === "image/svg+xml") {
-        const svg = String(await file.text())
-          .replace(/^﻿/, "")
-          .replace(/<\?xml[\s\S]*?\?>|<!--[\s\S]*?-->|<!DOCTYPE[^>[]*(\[[\s\S]*?\])?\s*>/gi, "")
-          .replace(/[\r\n\u2028\u2029]+/g, " ")
-          .trim();
-        const ok = IMAGE_SVG_RE.test(svg) && svg.includes('xmlns="http://www.w3.org/2000/svg"') && svg.length <= IMAGE_MAX_SVG && svgBytes(svg) <= IMAGE_MAX_BYTES;
-        return ok ? { image: svg, bytes: svgBytes(svg) } : null;
-      }
-      if (!RASTER_TYPES.includes(type)) return null;
-      const url = `data:${type};base64,${String(await blobToDataURL(file)).split(",")[1] || ""}`;
-      return IMAGE_DATA_RE.test(url) && url.length <= IMAGE_MAX_DATA_URL ? { image: url, bytes: file.size } : null;
-    }
-
     function cancelImageSender(s) {
       if (imgSend !== s) return;
       s.gen++;
@@ -2500,29 +2476,14 @@ const firebaseConfig = {
               <div class="flex flex-col items-center gap-2 px-4 text-center">${spinner("w-7 h-7 border-[3px]")}<span id="is-busy-text" class="text-xs font-semibold">変換中…</span></div>
             </div>
           </div>
-          <div class="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-2xl" role="group" aria-label="送信のしかた">
-            ${IMAGE_MODES.map(([mode, text]) => `<button type="button" data-action="is-mode" data-mode="${mode}" class="tab-btn px-1 disabled:opacity-40 disabled:pointer-events-none"
-              ${mode === "original" && !s.original ? `disabled title="50KB を超えているため、そのままは送れません"` : ""}>${text}</button>`).join("")}
-          </div>
-          <div id="is-options"></div>
+          <p class="text-xs text-slate-500 leading-relaxed">画像は SVG の中に埋め込んで送信します（50KB を超えるときは圧縮します）。</p>
           <p id="is-status" class="text-xs leading-relaxed rounded-xl px-3 py-2" hidden></p>
           <div class="flex gap-3">
             <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
             <button type="button" id="is-send" data-action="is-send" class="btn-primary flex-1" disabled>${icon("send", "w-5 h-5")}送信</button>
           </div>
         </div>`, () => cancelImageSender(s));
-      renderImageOptions();
       renderImageStatus();
-    }
-
-    // 送信のしかたの切り替えと説明
-    function renderImageOptions() {
-      const s = imgSend;
-      const box = $("#is-options");
-      if (!s || !box) return;
-      document.querySelectorAll('[data-action="is-mode"]').forEach((b) => b.classList.toggle("is-active", b.dataset.mode === s.mode));
-      box.innerHTML = `
-        <p class="text-xs text-slate-500 leading-relaxed">${IMAGE_MODE_NOTES[s.mode]}${s.original ? "" : `<br>元の画像は 50KB を超えているため、50KB 以下の SVG に変換して送信します。`}</p>`;
     }
 
     // プレビュー・変換中の表示・結果のサイズ・送信ボタン
@@ -2540,9 +2501,6 @@ const firebaseConfig = {
       if (!r.ok) {
         cls = "bg-rose-50 text-rose-700";
         text = r.error || `50KB 以内に収まりませんでした（最小 ${fmtBytes(r.bytes)}）。画像を小さくしてからお試しください。`;
-      } else if (s.mode === "original") {
-        cls = "bg-slate-50 text-slate-600 ring-1 ring-slate-200";
-        text = `元の画像（${esc(imageFormat(r.image))} · ${fmtBytes(r.bytes)}）をそのまま送信します。`;
       } else {
         cls = "bg-emerald-50 text-emerald-700";
         text = `<b>✓ SVG ${fmtBytes(r.bytes)}</b>（50KB 以内）${r.enc ? `<br>${imageEncodeMessage(r.enc)}` : ""}`;
@@ -2557,46 +2515,35 @@ const firebaseConfig = {
     const imageEncodeMessage = (e) =>
       `画像を ${e.fmt}${e.q != null ? `・品質 ${Math.round(e.q * 100)}%` : ""}・${e.w}×${e.h}px に圧縮して埋め込みました`;
 
-    function setImageMode(mode) {
-      const s = imgSend;
-      if (!s || (mode === "original" && !s.original) || !IMAGE_MODES.some(([m]) => m === mode)) return;
-      s.mode = mode;
-      renderImageOptions();
-      convertImage();
-    }
-
-    // 今の送信のしかたで用意する（一度作った結果は使い回す）
+    // 画像を埋め込んだ SVG を用意する
     async function convertImage() {
       const s = imgSend;
       if (!s) return;
       const gen = ++s.gen;
-      s.result = s.cache.get(s.mode) || null;
-      if (!s.result) {
-        setImageBusy("圧縮中…");
+      s.result = null;
+      setImageBusy("圧縮中…");
+      renderImageStatus();
+      let r;
+      try {
+        r = await embedFit(s, gen);
+      } catch (e) {
+        if (e?.cancelled || imgSend !== s || gen !== s.gen) return;
+        console.error(e);
+        s.result = { ok: false, error: "変換に失敗しました。別の画像をお試しください。" };
         renderImageStatus();
-        let r;
-        try {
-          r = s.mode === "original" ? { ...s.original, ok: true } : await embedFit(s, gen);
-        } catch (e) {
-          if (e?.cancelled || imgSend !== s || gen !== s.gen) return;
-          console.error(e);
-          s.result = { ok: false, error: "変換に失敗しました。別の画像をお試しください。" };
-          renderImageStatus();
-          return;
-        }
-        if (imgSend !== s || gen !== s.gen) return;
-        if (r.svg != null) r = { ...r, image: r.svg.replace(/[\r\n\u2028\u2029]+/g, " ").trim() };
-        r.ok = r.ok ?? (r.bytes <= IMAGE_MAX_BYTES && !!imageSrc(r.image));
-        s.result = r;
-        s.cache.set(s.mode, r);
+        return;
       }
+      if (imgSend !== s || gen !== s.gen) return;
+      if (r.svg != null) r = { ...r, image: r.svg.replace(/[\r\n\u2028\u2029]+/g, " ").trim() };
+      r.ok = r.bytes <= IMAGE_MAX_BYTES && isSvgImage(r.image) && !!imageSrc(r.image);
+      s.result = r;
       renderImageStatus();
     }
 
     async function sendImage() {
       const s = imgSend;
       const r = s?.result;
-      if (!r?.ok) return;
+      if (!r?.ok || !isSvgImage(r.image)) return; // SVG に埋め込んだ画像だけを送る
       const room = currentRoom();
       if (!room || room.id !== s.roomId || !canSend(room)) { closeModal(); throw new Error("トークが切り替わったため、画像を送信できませんでした。"); }
       const { w, h } = s;
@@ -2642,7 +2589,7 @@ const firebaseConfig = {
     async function embedFit(s, gen) {
       let first = null;
       if (RASTER_TYPES.includes(s.type) && s.file.size <= IMAGE_MAX_BYTES) {
-        const svg = embedSvg(s.w, s.h, s.original?.image || await blobToDataURL(s.file));
+        const svg = embedSvg(s.w, s.h, await blobToDataURL(s.file.slice(0, s.file.size, s.type))); // 拡張子で判定した形式を data URL に付ける
         first = { svg, bytes: svgBytes(svg) };
         if (first.bytes <= IMAGE_MAX_BYTES) return first;
       }
@@ -2764,6 +2711,7 @@ const firebaseConfig = {
       } else {
         await setDoc(doc(collection(db, "users", state.me.id, "stickers")), { name, svg, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
       }
+      store.remove(draftKey(ed));
       closeModal();
       toast(ed.id ? "スタンプを保存しました" : "スタンプを作成しました");
     }
@@ -3137,7 +3085,7 @@ const firebaseConfig = {
     }
 
     // ---- SVG エディタ ----
-    // editor: { kind（"sticker" / "icon"）, id（編集中のスタンプ。新規は null）, strokes, history（取り消し用のストロークの配列の履歴）, tool, color, width, maxSvg }
+    // editor: { kind（"sticker" / "icon"）, id（編集中のスタンプ。新規は null）, strokes, history（取り消し用のストロークの配列の履歴）, tool, color, width, maxSvg, draftShown（下書きを開いた・保存した・削除した） }
     let editor = null;
     const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -3164,6 +3112,7 @@ const firebaseConfig = {
       openModal(`
         ${modalHead(title, isIcon ? "枠の中に指やマウスで描きます（丸い枠の外は表示されません）" : "枠の中に指やマウスで描きます")}
         <form id="form-${kind}" class="px-6 pb-6 space-y-4">
+          <div id="se-draft" hidden></div>
           <div class="mx-auto w-full max-w-[320px] aspect-square ${isIcon ? "rounded-full bg-white" : "rounded-2xl chat-bg"} ring-1 ring-slate-200 overflow-hidden">
             <svg id="se-canvas" viewBox="0 0 ${STICKER_SIZE} ${STICKER_SIZE}" class="block w-full h-full touch-none cursor-crosshair" fill="none" stroke-linecap="round" stroke-linejoin="round"></svg>
           </div>
@@ -3210,11 +3159,89 @@ const firebaseConfig = {
             <p id="se-size" class="text-xs text-slate-400 mt-1.5"></p>
           </div>
           <p class="form-error" hidden></p>
-          <button type="submit" class="btn-primary w-full">保存</button>
+          <div class="flex gap-3">
+            <button type="button" data-action="se-save-draft" class="btn-secondary flex-1">下書き保存</button>
+            <button type="submit" class="btn-primary flex-1">保存</button>
+          </div>
         </form>`, () => { if (editor === ed) editor = null; }, { locked: true }); // 描いた絵を誤って失わないよう × でしか閉じない
       bindCanvas($("#se-canvas"));
       renderEditorTools();
       renderCanvas();
+      renderDraftBar();
+    }
+
+    // ---- 下書き（この端末の localStorage に一時的に保存。スタンプは作成中・編集中のスタンプごと、アイコンは 1 つ） ----
+    // { svg, name, at }。SVG にして保存し、開くときは保存済みのスタンプと同じく parseStickerSvg で読み取る
+    const DRAFT_TTL = 7 * 86400e3; // 7日たった下書きは捨てる
+    const draftPrefix = (userId) => `chatter:draft:${userId}:`;
+    const draftKey = (ed) => `${draftPrefix(state.me.id)}${ed.kind}:${ed.id || "new"}`;
+
+    function loadDraft(ed) {
+      const d = store.json(draftKey(ed), null);
+      if (!d || typeof d.svg !== "string" || !(Date.now() - Number(d.at) < DRAFT_TTL)) {
+        if (d) store.remove(draftKey(ed));
+        return null;
+      }
+      return d;
+    }
+
+    function clearDrafts(userId) {
+      try {
+        Object.keys(localStorage).filter((k) => k.startsWith(draftPrefix(userId))).forEach((k) => localStorage.removeItem(k));
+      } catch {}
+    }
+
+    function saveDraft() {
+      const ed = editor;
+      if (!ed) return;
+      const name = ed.kind === "sticker" ? String($("#se-name")?.value ?? "").trim() : "";
+      if (!ed.strokes.length && !name) throw new Error("下書きに保存する内容がありません。");
+      const draft = { svg: buildStickerSvg(ed.strokes), name, at: Date.now() };
+      try {
+        localStorage.setItem(draftKey(ed), JSON.stringify(draft));
+      } catch {
+        throw new Error("下書きを保存できませんでした（ブラウザの保存領域がいっぱいか、使えない設定になっています）。");
+      }
+      ed.draftShown = true; // 今の内容が下書きなので、「下書きを開く」は出さない
+      renderDraftBar();
+      toast("下書きを保存しました（この端末に7日間保存されます）");
+    }
+
+    // エディタを開いたとき、保存してある下書きがあれば「開く・削除」を出す
+    function renderDraftBar() {
+      const bar = $("#se-draft");
+      const ed = editor;
+      if (!bar || !ed) return;
+      const d = !ed.draftShown && loadDraft(ed);
+      bar.hidden = !d;
+      if (!d) return;
+      bar.className = "flex items-center gap-2 rounded-xl bg-amber-50 ring-1 ring-amber-200 px-3 py-2 text-xs text-amber-800";
+      bar.innerHTML = `
+        <span class="flex-1 min-w-0">保存した下書きがあります（${relTime(new Date(Number(d.at)))}）</span>
+        <button type="button" data-action="se-open-draft" class="shrink-0 font-semibold text-indigo-600 hover:underline">開く</button>
+        <button type="button" data-action="se-discard-draft" class="shrink-0 font-semibold text-slate-500 hover:text-rose-600 hover:underline">削除</button>`;
+    }
+
+    function openDraft() {
+      const ed = editor;
+      const d = ed && loadDraft(ed);
+      if (!d) return;
+      pushHistory(); // 取り消しで下書きを開く前に戻せるように
+      ed.strokes = parseStickerSvg(d.svg);
+      const nameEl = $("#se-name");
+      if (nameEl && d.name) nameEl.value = [...String(d.name)].slice(0, STICKER_MAX_NAME).join("");
+      ed.draftShown = true;
+      renderCanvas();
+      renderDraftBar();
+    }
+
+    function discardDraft() {
+      const ed = editor;
+      if (!ed) return;
+      store.remove(draftKey(ed));
+      ed.draftShown = true;
+      renderDraftBar();
+      toast("下書きを削除しました");
     }
 
     // ストローク・読み込んだ図形を <path> 要素として描く（文字列の HTML は使わない）
@@ -3646,7 +3673,6 @@ const firebaseConfig = {
       "delete-sticker": (el) => deleteSticker(el.dataset.id),
       "export-sticker": (el) => exportSticker(el.dataset.id),
       // 画像
-      "is-mode": (el) => setImageMode(el.dataset.mode),
       "is-send": () => sendImage(),
       "view-image": (el) => openImageViewer(el.dataset.id),
       "download-image": (el) => downloadImage(el.dataset.id),
@@ -3658,6 +3684,9 @@ const firebaseConfig = {
         if (editor.tool === "eraser") editor.tool = "pen"; // 太さを選んだらペンに戻す
         renderEditorTools();
       },
+      "se-save-draft": () => saveDraft(),
+      "se-open-draft": () => openDraft(),
+      "se-discard-draft": () => discardDraft(),
       "se-undo": () => undoStroke(),
       "se-clear": () => clearStrokes(),
     };
