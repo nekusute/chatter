@@ -430,7 +430,7 @@ const firebaseConfig = {
       "#111827", "#6b7280", "#ffffff", "#ef4444", "#f97316", "#facc15",
       "#22c55e", "#14b8a6", "#3b82f6", "#6366f1", "#a855f7", "#ec4899",
     ];
-    const STICKER_WIDTHS = [4, 8, 14, 22];
+    const STICKER_WIDTHS = [2, 8, 14, 44];
     // アイコン（users/{id}.icon に保存。描いた SVG はスタンプと同じ形式、アップロードした画像は縮小した JPEG の data URL。上限は firestore.rules と合わせる）
     const ICON_MAX_SVG = 20000;             // 描いたアイコンの SVG の最大文字数
     const ICON_IMAGE_PX = 192;              // アップロードした画像を縮小する大きさ（正方形の一辺）
@@ -2512,7 +2512,7 @@ const firebaseConfig = {
         for (let i = 0; i + 1 < nums.length; i += 2) points.push([clampCoord(nums[i]), clampCoord(nums[i + 1])]);
         if (!points.length) continue;
         const color = /^#[0-9a-f]{6}$/i.test(attr.stroke || "") ? attr.stroke.toLowerCase() : STICKER_COLORS[0];
-        const width = Math.min(40, Math.max(1, Number(attr["stroke-width"]) || STICKER_WIDTHS[1]));
+        const width = Math.min(44, Math.max(1, Number(attr["stroke-width"]) || STICKER_WIDTHS[1]));
         strokes.push({ color, width, points });
       }
       return strokes;
@@ -2799,7 +2799,7 @@ const firebaseConfig = {
             <div class="flex gap-1.5">
               ${STICKER_WIDTHS.map((w) => `
                 <button type="button" data-action="se-width" data-width="${w}" class="se-width w-11 h-11 rounded-xl grid place-items-center ring-1 transition" aria-label="太さ ${w}" aria-pressed="false">
-                  <span class="rounded-full bg-slate-700" style="width:${Math.max(3, w * 0.9)}px;height:${Math.max(3, w * 0.9)}px"></span>
+                  <span class="rounded-full bg-slate-700" style="width:${Math.max(2, w * 0.9)}px;height:${Math.max(2, w * 0.9)}px"></span>
                 </button>`).join("")}
             </div>
           </div>
