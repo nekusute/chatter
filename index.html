@@ -375,6 +375,8 @@ const firebaseConfig = {
     <div id="modal-host" class="relative w-full sm:max-w-md"></div>
   </div>
   <div id="toast-root" class="fixed z-[60] top-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm flex flex-col items-center gap-2 pointer-events-none"></div>
+  <!-- スタンプにする SVG の選択（一覧を描き直してもファイル選択が途切れないよう、一覧の外に置いて <label for> で開く） -->
+  <input type="file" id="sticker-file" accept=".svg,image/svg+xml" class="sr-only" style="position:fixed" tabindex="-1" aria-hidden="true" />
 
   <script type="module">
     // ============================================================
@@ -512,6 +514,8 @@ const firebaseConfig = {
       eraser: "M7 21h13M5.5 16.5l9.9-9.9a2 2 0 012.83 0l1.17 1.17a2 2 0 010 2.83L11 19H7.5l-2-2a.35.35 0 010-.5zM9.5 12.5l4 4",
       undo: "M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3",
       photo: "M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z",
+      download: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4",
+      upload: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12",
     };
     ICONS["bell-off"] = ICONS.bell + "M3 3l18 18"; // 斜線入りのベル
     const icon = (name, cls = "w-5 h-5") =>
@@ -1300,18 +1304,19 @@ const firebaseConfig = {
           </button>`).join("");
     }
 
-    // 自分のスタンプ一覧（名前・プレビュー・編集・削除）
+    // 自分のスタンプ一覧（名前・プレビュー・書き出し・編集・削除）
     function renderStickerList(q) {
       const toolbar = `
-        <div class="px-2 pt-1 pb-3">
-          <button type="button" data-action="new-sticker" class="btn-chip w-full text-white bg-gradient-to-r from-indigo-600 to-violet-600 shadow-md shadow-indigo-500/20 hover:from-indigo-500 hover:to-violet-500">${icon("plus", "w-4 h-4")}新規作成</button>
+        <div class="px-2 pt-1 pb-3 flex gap-2">
+          <button type="button" data-action="new-sticker" class="btn-chip flex-1 text-white bg-gradient-to-r from-indigo-600 to-violet-600 shadow-md shadow-indigo-500/20 hover:from-indigo-500 hover:to-violet-500">${icon("plus", "w-4 h-4")}新規作成</button>
+          <label for="sticker-file" role="button" tabindex="0" class="btn-chip flex-1 cursor-pointer bg-white text-indigo-600 ring-1 ring-indigo-200 hover:bg-indigo-50" title="SVG ファイルを読み込んでスタンプにする">${icon("upload", "w-4 h-4")}SVGを読み込む</label>
         </div>`;
       if (!state.stickersLoaded) return toolbar + skeleton();
       const stickers = state.stickers.filter((s) => !q || String(s.name).toLowerCase().includes(q));
       if (!stickers.length) {
         return toolbar + (q
           ? emptyList("search", "該当するスタンプはありません")
-          : emptyList("sticker", "スタンプはまだありません", "「新規作成」で描いたスタンプを、<br>チャットの入力欄の横のボタンから送れます。"));
+          : emptyList("sticker", "スタンプはまだありません", "「新規作成」で描いたスタンプや読み込んだ SVG を、<br>チャットの入力欄の横のボタンから送れます。"));
       }
       return toolbar + `<p class="px-3 pb-2 text-xs font-medium text-slate-400">${state.stickers.length}個のスタンプ</p>` +
         stickers.map((s) => `
@@ -1321,6 +1326,7 @@ const firebaseConfig = {
               <div class="font-semibold truncate text-slate-800">${esc(s.name)}</div>
               <div class="text-xs text-slate-400 truncate">${esc(relTime(s.updatedAt || s.createdAt))}</div>
             </div>
+            <button type="button" data-action="export-sticker" data-id="${esc(s.id)}" class="icon-btn w-9 h-9 shrink-0 hover:text-indigo-600" aria-label="SVG で書き出し" title="SVG で書き出し">${icon("download", "w-4 h-4")}</button>
             <button type="button" data-action="edit-sticker" data-id="${esc(s.id)}" class="icon-btn w-9 h-9 shrink-0 hover:text-indigo-600" aria-label="編集" title="編集">${icon("pencil", "w-4 h-4")}</button>
             <button type="button" data-action="delete-sticker" data-id="${esc(s.id)}" class="icon-btn w-9 h-9 shrink-0 hover:text-rose-600 hover:bg-rose-50" aria-label="削除" title="削除">${icon("trash", "w-4 h-4")}</button>
           </div>`).join("");
@@ -2393,10 +2399,38 @@ const firebaseConfig = {
       toast(`「${name}」を自分のスタンプに保存しました`);
     }
 
+    // ---- SVG ファイルの書き出し・読み込み ----
+    // 保存してある SVG をそのまま「スタンプ名.svg」としてダウンロードする
+    function exportSticker(id) {
+      const s = state.stickers.find((x) => x.id === id);
+      if (!s) return;
+      const url = URL.createObjectURL(new Blob([s.svg], { type: "image/svg+xml" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${String(s.name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim() || "sticker"}.svg`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }
+
+    // SVG ファイルを図形に変換してエディタで開く（名前を決めて「保存」でスタンプになる。上から描き足すこともできる）
+    async function importStickerFile(file) {
+      if (!/\.svg$/i.test(file.name) && file.type !== "image/svg+xml") throw new Error("SVG ファイル（.svg）を選んでください。");
+      if (file.size > 5 * 1024 * 1024) throw new Error("ファイルが大きすぎます（5MB まで）。");
+      const { strokes, skipped } = svgToStrokes(await file.text());
+      closeStickerBox();
+      const name = [...file.name.replace(/\.svg$/i, "").trim()].slice(0, STICKER_MAX_NAME).join("");
+      openDrawEditor({ kind: "sticker", strokes, name, title: "SVG から作成" });
+      if (skipped) toast(`文字・画像など${skipped}個の要素は読み込めませんでした`);
+    }
+
     // ---- SVG の作成・読み込み ----
     // ストローク { color: "#rrggbb", width, points: [[x, y], …] } を、座標を間引いて整数に丸めた <path> にする
+    // 読み込んだ SVG の図形 { attrs: { d, fill, … } }（SHAPE_ATTRS で確認済みの属性）は、そのまま <path> にする
     function buildStickerSvg(strokes) {
       const paths = strokes.map((s) => {
+        if (s.attrs) return `<path ${Object.entries(s.attrs).map(([k, v]) => `${k}="${v}"`).join(" ")}/>`;
         const pts = simplifyPoints(s.points, 0.8)
           .map(([x, y]) => [Math.round(clampCoord(x)), Math.round(clampCoord(y))])
           .filter((p, i, a) => i === 0 || p[0] !== a[i - 1][0] || p[1] !== a[i - 1][1]);
@@ -2438,12 +2472,41 @@ const firebaseConfig = {
       return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
     }
 
-    // 保存済みの SVG（このアプリで作った形式）からストロークを取り出す。読み取れない部分は無視する
+    // 読み込んだ図形の <path> に使える属性と値（エディタでは属性をそのまま DOM に設定するので、イベント属性や外部 URL は通さない）
+    const SVG_NUM_RE = /^-?(\d+\.?\d*|\.\d+)(e-?\d+)?$/i;
+    const SVG_PAINT_RE = /^(none|#[0-9a-f]{6})$/i;
+    const SHAPE_ATTRS = {
+      d: /^[MmZzLlHhVvCcSsQqTtAa0-9\s.,eE+-]+$/,
+      fill: SVG_PAINT_RE,
+      "fill-opacity": SVG_NUM_RE,
+      "fill-rule": /^(nonzero|evenodd)$/,
+      stroke: SVG_PAINT_RE,
+      "stroke-width": SVG_NUM_RE,
+      "stroke-opacity": SVG_NUM_RE,
+      "stroke-linecap": /^(butt|round|square)$/,
+      "stroke-linejoin": /^(miter|round|bevel)$/,
+      "stroke-miterlimit": SVG_NUM_RE,
+      transform: /^matrix\([-0-9.e ]+\)$/i,
+    };
+    function pickShapeAttrs(attr) {
+      const out = {};
+      for (const [k, re] of Object.entries(SHAPE_ATTRS)) if (re.test(attr[k] ?? "")) out[k] = attr[k];
+      return out.d ? out : null;
+    }
+
+    // 保存済みの SVG（このアプリで作った形式）からストロークと図形を取り出す。読み取れない部分は無視する
     function parseStickerSvg(svg) {
       const strokes = [];
       if (typeof svg !== "string" || !STICKER_SVG_RE.test(svg)) return strokes;
       for (const [, attrs] of svg.matchAll(/<path ([^<>]*)\/>/g)) {
         const attr = Object.fromEntries([...attrs.matchAll(/([\w-]+)="([^"]*)"/g)].map((a) => [a[1], a[2]]));
+        // エディタで描いた線（d・stroke・stroke-width だけで、d が M と L の座標）以外は、読み込んだ図形として扱う
+        const drawn = Object.keys(attr).every((k) => ["d", "stroke", "stroke-width"].includes(k)) && /^M[\d.\s-]*(L[\d.\s-]*)?$/.test(attr.d || "");
+        if (!drawn) {
+          const shape = pickShapeAttrs(attr);
+          if (shape) strokes.push({ attrs: shape });
+          continue;
+        }
         const nums = (attr.d || "").match(/-?\d+(\.\d+)?/g)?.map(Number) || [];
         const points = [];
         for (let i = 0; i + 1 < nums.length; i += 2) points.push([clampCoord(nums[i]), clampCoord(nums[i + 1])]);
@@ -2453,6 +2516,228 @@ const firebaseConfig = {
         strokes.push({ color, width, points });
       }
       return strokes;
+    }
+
+    // ---- 手持ちの SVG の読み込み ----
+    // 任意の SVG を、スタンプの形式（<svg viewBox="0 0 240 240"> の中に <path> だけ）の図形に変換する。
+    // 画面外で実際に描画して、各図形の最終的な色・線の太さ・座標変換（viewBox・transform）を読み取り、
+    // 図形を path の d と transform="matrix(…)" に置き換える。文字・埋め込み画像・グラデーション（最初の色で塗る）・
+    // クリップ・マスク・破線などは再現しない。サイズに収まらないときは座標の桁数を減らしてやり直す
+    const XLINK_NS = "http://www.w3.org/1999/xlink";
+    function svgToStrokes(text) {
+      const src = new DOMParser().parseFromString(text, "image/svg+xml").documentElement;
+      if (src.namespaceURI !== SVG_NS || src.localName !== "svg") throw new Error("SVG ファイルとして読み込めませんでした。");
+      // このアプリで書き出した SVG は、描いた線を線のまま（あとから消しゴムで消せる形で）読み込む
+      const own = text.trim();
+      if (STICKER_SVG_RE.test(own) && src.getAttribute("viewBox") === `0 0 ${STICKER_SIZE} ${STICKER_SIZE}`) {
+        const strokes = parseStickerSvg(own);
+        if (strokes.length) return { strokes, skipped: 0 };
+      }
+      let skipped = 0;
+      // 画面に入れる前に、スクリプト・イベント属性・外部への参照を取り除く
+      for (const el of src.querySelectorAll("script, foreignObject, image, feImage, iframe, video, audio, canvas, animate, animateMotion, animateTransform, set, discard")) {
+        if (["foreignObject", "image", "iframe", "video", "canvas"].includes(el.localName)) skipped++;
+        el.remove();
+      }
+      const noExternalUrl = (s) => s.replace(/@import[^;]*;?/gi, "").replace(/url\((?!\s*['"]?\s*#)[^)]*\)/gi, "none");
+      for (const el of [src, ...src.querySelectorAll("*")]) {
+        for (const a of [...el.attributes]) {
+          const n = a.name.toLowerCase();
+          if (n.startsWith("on") || (/(^|:)href$/.test(n) && !a.value.trim().startsWith("#"))) el.removeAttributeNode(a);
+          else if (n === "style") a.value = noExternalUrl(a.value);
+        }
+        if (el.localName === "style") el.textContent = noExternalUrl(el.textContent);
+      }
+      // <use> は参照先の複製に置き換える（描画後の <use> の中身は読み取れないため）
+      for (let n = 0; n < 1000; n++) {
+        const use = src.querySelector("use");
+        if (!use) break;
+        if (src.getElementsByTagName("*").length > 20000) throw new Error("SVG が複雑すぎて読み込めません。");
+        const id = (use.getAttribute("href") || use.getAttributeNS(XLINK_NS, "href") || "").trim().slice(1);
+        const ref = id ? src.querySelector(`[id="${CSS.escape(id)}"]`) : null;
+        const g = src.ownerDocument.createElementNS(SVG_NS, "g");
+        for (const a of use.attributes) if (!["x", "y", "width", "height", "href", "xlink:href", "id", "transform"].includes(a.name)) g.setAttribute(a.name, a.value);
+        g.setAttribute("transform", `${use.getAttribute("transform") || ""} translate(${parseFloat(use.getAttribute("x")) || 0} ${parseFloat(use.getAttribute("y")) || 0})`);
+        if (ref && !ref.contains(use)) {
+          if (ref.localName === "symbol" || ref.localName === "svg") {
+            const inner = src.ownerDocument.createElementNS(SVG_NS, "svg");
+            for (const a of ref.attributes) if (a.name !== "id") inner.setAttribute(a.name, a.value);
+            for (const k of ["width", "height"]) inner.setAttribute(k, use.getAttribute(k) || ref.getAttribute(k) || "100%");
+            for (const c of ref.childNodes) inner.appendChild(c.cloneNode(true));
+            g.appendChild(inner);
+          } else g.appendChild(ref.cloneNode(true));
+        }
+        use.replaceWith(g);
+      }
+      if (!src.getAttribute("viewBox")) {
+        const w = src.getAttribute("width") || "", h = src.getAttribute("height") || "";
+        if (parseFloat(w) > 0 && parseFloat(h) > 0 && !/%/.test(w + h)) src.setAttribute("viewBox", `0 0 ${parseFloat(w)} ${parseFloat(h)}`);
+      }
+      for (const k of ["x", "y"]) src.removeAttribute(k);
+      for (const k of ["width", "height"]) src.setAttribute(k, STICKER_SIZE);
+
+      // Shadow DOM の中で描画する（SVG 内の <style> がアプリの画面に効かないように）
+      const host = document.createElement("div");
+      host.style.cssText = "position:fixed;left:-10000px;top:0;width:240px;height:240px;overflow:hidden;opacity:0;pointer-events:none";
+      const outer = document.createElementNS(SVG_NS, "svg");
+      for (const [k, v] of [["width", STICKER_SIZE], ["height", STICKER_SIZE], ["viewBox", `0 0 ${STICKER_SIZE} ${STICKER_SIZE}`]]) outer.setAttribute(k, v);
+      const svg = document.importNode(src, true);
+      outer.appendChild(svg);
+      host.attachShadow({ mode: "closed" }).appendChild(outer);
+      document.body.appendChild(host);
+      const shapes = [];
+      try {
+        // viewBox も width・height もない SVG は、描かれている範囲を枠に合わせる
+        if (!svg.getAttribute("viewBox")) {
+          const b = svg.getBBox();
+          if (b.width > 0 && b.height > 0) svg.setAttribute("viewBox", `${b.x} ${b.y} ${b.width} ${b.height}`);
+        }
+        const base = outer.getScreenCTM().inverse();
+        for (const el of svg.querySelectorAll("path, rect, circle, ellipse, line, polyline, polygon, text")) {
+          if (el.closest("defs, clipPath, mask, symbol, marker, pattern")) continue;
+          if (el.localName === "text") { skipped++; continue; }
+          const cs = getComputedStyle(el);
+          if (cs.visibility !== "visible") continue;
+          let opacity = 1, hidden = false;
+          for (let p = el; p && p !== outer; p = p.parentElement) {
+            const pcs = getComputedStyle(p);
+            if (pcs.display === "none") { hidden = true; break; }
+            opacity *= parseFloat(pcs.opacity);
+          }
+          if (hidden) continue;
+          const fill = svgPaint(svg, cs.fill, opacity * parseFloat(cs.fillOpacity));
+          const strokeWidth = parseFloat(cs.strokeWidth) || 0;
+          const stroke = strokeWidth > 0 ? svgPaint(svg, cs.stroke, opacity * parseFloat(cs.strokeOpacity)) : null;
+          const d = shapeToD(el);
+          const ctm = el.getScreenCTM();
+          if ((!fill && !stroke) || !d || !ctm) continue;
+          shapes.push({ d, fill, stroke, strokeWidth, cs: {
+            fillRule: cs.fillRule, linecap: cs.strokeLinecap, linejoin: cs.strokeLinejoin, miterlimit: parseFloat(cs.strokeMiterlimit) || 4,
+          }, m: base.multiply(ctm) });
+        }
+      } finally {
+        host.remove();
+      }
+      if (!shapes.length) throw new Error("読み込める図形がありませんでした（文字や画像は読み込めません）。");
+      // 誤差（スタンプの 240×240 の座標での許容量）を広げながら、上限に収まる桁数を探す
+      for (const tol of [0.05, 0.2, 0.8]) {
+        const strokes = shapes.map((s) => ({ attrs: shapeAttrs(s, tol) })).filter((s) => s.attrs);
+        if (buildStickerSvg(strokes).length <= STICKER_MAX_SVG) return { strokes, skipped };
+      }
+      throw new Error(`SVG が複雑すぎて、スタンプの上限（${STICKER_MAX_SVG / 1000} KB）に収まりません。`);
+    }
+
+    // 計算済みの塗り（"rgb(…)" / "url(#…)" / "none"）を { color: "#rrggbb", alpha } にする。グラデーションは最初の色で塗る
+    function svgPaint(svg, value, alpha) {
+      if (!value || value === "none" || !(alpha > 0)) return null;
+      let color = value;
+      const ref = value.match(/^url\(["']?[^#"')]*#([^"')]+)["']?\)\s*(.*)$/);
+      if (ref) {
+        let grad = svg.querySelector(`[id="${CSS.escape(ref[1])}"]`);
+        for (let i = 0; i < 5 && grad && !grad.querySelector("stop"); i++) { // 色を別のグラデーションから継承している場合
+          const href = (grad.getAttribute("href") || grad.getAttributeNS(XLINK_NS, "href") || "").trim();
+          grad = href.startsWith("#") ? svg.querySelector(`[id="${CSS.escape(href.slice(1))}"]`) : null;
+        }
+        const stop = grad?.querySelector("stop");
+        if (stop) {
+          const scs = getComputedStyle(stop);
+          color = scs.stopColor;
+          alpha *= parseFloat(scs.stopOpacity);
+        } else color = ref[2] && ref[2] !== "none" ? ref[2] : "rgb(0, 0, 0)";
+      }
+      const rgba = color.match(/rgba?\(([^)]+)\)/)?.[1].split(/[\s,/]+/).filter(Boolean).map(parseFloat);
+      if (rgba?.length === 4) alpha *= rgba[3];
+      if (!(alpha > 0.001)) return null;
+      return { color: rgba?.length >= 3 ? rgbToHex(rgba.slice(0, 3)) : "#000000", alpha: Math.min(1, alpha) };
+    }
+
+    // 基本図形を path の d にする
+    function shapeToD(el) {
+      const v = (name) => el[name].baseVal.value;
+      const ellipse = (cx, cy, rx, ry) => rx > 0 && ry > 0
+        ? `M${cx - rx} ${cy}A${rx} ${ry} 0 1 0 ${cx + rx} ${cy}A${rx} ${ry} 0 1 0 ${cx - rx} ${cy}Z` : null;
+      switch (el.localName) {
+        case "path": return el.getAttribute("d");
+        case "circle": return ellipse(v("cx"), v("cy"), v("r"), v("r"));
+        case "ellipse": return ellipse(v("cx"), v("cy"), v("rx"), v("ry"));
+        case "line": return `M${v("x1")} ${v("y1")}L${v("x2")} ${v("y2")}`;
+        case "polyline":
+        case "polygon": {
+          const pts = Array.from({ length: el.points.numberOfItems }, (_, i) => el.points.getItem(i));
+          return pts.length ? "M" + pts.map((p) => `${p.x} ${p.y}`).join(" ") + (el.localName === "polygon" ? "Z" : "") : null;
+        }
+        case "rect": {
+          const x = v("x"), y = v("y"), w = v("width"), h = v("height");
+          if (!(w > 0 && h > 0)) return null;
+          let rx = v("rx"), ry = v("ry");
+          if (!el.hasAttribute("rx")) rx = ry;
+          if (!el.hasAttribute("ry")) ry = rx;
+          rx = Math.min(rx, w / 2); ry = Math.min(ry, h / 2);
+          if (!(rx > 0 && ry > 0)) return `M${x} ${y}H${x + w}V${y + h}H${x}Z`;
+          const arc = (ex, ey) => `A${rx} ${ry} 0 0 1 ${ex} ${ey}`;
+          return `M${x + rx} ${y}H${x + w - rx}${arc(x + w, y + ry)}V${y + h - ry}${arc(x + w - rx, y + h)}H${x + rx}${arc(x, y + h - ry)}V${y + ry}${arc(x + rx, y)}Z`;
+        }
+      }
+      return null;
+    }
+
+    // 読み取った図形を、SHAPE_ATTRS の形式の属性にする。座標は「240×240 の座標で tol 以内の誤差」になる桁数に丸める
+    function shapeAttrs({ d, fill, stroke, strokeWidth, cs, m }, tol) {
+      const scale = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c));
+      if (!(scale > 0)) return null;
+      const digits = Math.min(6, Math.max(0, Math.ceil(-Math.log10(tol / scale))));
+      const path = roundPathD(d, digits);
+      if (!path) return null;
+      const attrs = { d: path, fill: fill ? fill.color : "none" };
+      if (fill && fill.alpha < 0.999) attrs["fill-opacity"] = svgNum(fill.alpha, 3);
+      if (fill && cs.fillRule === "evenodd") attrs["fill-rule"] = "evenodd";
+      if (stroke) {
+        Object.assign(attrs, { stroke: stroke.color, "stroke-width": svgNum(strokeWidth, digits + 1) });
+        if (stroke.alpha < 0.999) attrs["stroke-opacity"] = svgNum(stroke.alpha, 3);
+        attrs["stroke-linecap"] = ["butt", "round", "square"].includes(cs.linecap) ? cs.linecap : "butt";
+        attrs["stroke-linejoin"] = ["round", "bevel"].includes(cs.linejoin) ? cs.linejoin : "miter";
+        if (attrs["stroke-linejoin"] === "miter" && cs.miterlimit !== 4) attrs["stroke-miterlimit"] = svgNum(cs.miterlimit, 2);
+      }
+      const identity = [m.a - 1, m.b, m.c, m.d - 1, m.e, m.f].every((x) => Math.abs(x) < 1e-6);
+      if (!identity) attrs.transform = `matrix(${[m.a, m.b, m.c, m.d].map((x) => svgNum(x, 6)).join(" ")} ${svgNum(m.e, 3)} ${svgNum(m.f, 3)})`;
+      return pickShapeAttrs(attrs);
+    }
+
+    const svgNum = (v, digits) => String(Number(v.toFixed(digits))).replace(/^(-?)0\./, "$1.");
+
+    // path の d を読み直して、数値を指定の桁数に丸めて書き直す（不正な部分以降は、SVG の仕様どおり捨てる）
+    const PATH_ARGS = { m: 2, l: 2, h: 1, v: 1, c: 6, s: 4, q: 4, t: 2, a: 7, z: 0 };
+    function roundPathD(d, digits) {
+      const tokenRe = /[\s,]*(?:([MmZzLlHhVvCcSsQqTtAa])|(-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?))/y;
+      const flagRe = /[\s,]*([01])/y; // 円弧の大小・向きのフラグは 1 文字（"011" のように詰めて書かれることがある）
+      const cmds = [];
+      let cur = null, pos = 0;
+      while (pos < d.length) {
+        if (cur && /a/i.test(cur.cmd) && [3, 4].includes(cur.args.length % 7)) {
+          flagRe.lastIndex = pos;
+          const f = flagRe.exec(d);
+          if (!f) break;
+          cur.args.push(f[1]);
+          pos = flagRe.lastIndex;
+          continue;
+        }
+        tokenRe.lastIndex = pos;
+        const t = tokenRe.exec(d);
+        if (!t) break;
+        pos = tokenRe.lastIndex;
+        if (t[1]) cmds.push(cur = { cmd: t[1], args: [] });
+        else if (cur && PATH_ARGS[cur.cmd.toLowerCase()]) cur.args.push(Number(t[2]));
+        else break;
+      }
+      let out = "";
+      for (const { cmd, args } of cmds) {
+        if (!out && !/m/i.test(cmd)) break;
+        const n = PATH_ARGS[cmd.toLowerCase()];
+        const used = n ? args.slice(0, args.length - args.length % n) : [];
+        if (n && !used.length) break;
+        out += cmd + used.map((x) => typeof x === "string" ? x : svgNum(x, digits)).join(" ");
+      }
+      return out;
     }
 
     // ---- SVG エディタ ----
@@ -2474,9 +2759,9 @@ const firebaseConfig = {
     }
 
     // スタンプ・アイコン共通のエディタ。アイコンは丸く切り抜いて表示するので、枠も丸くする
-    function openDrawEditor({ kind, id = null, svg, name = "", title }) {
+    function openDrawEditor({ kind, id = null, svg, strokes = parseStickerSvg(svg), name = "", title }) {
       const isIcon = kind === "icon";
-      editor = { kind, id, strokes: parseStickerSvg(svg), history: [], tool: "pen", color: STICKER_COLORS[0], width: STICKER_WIDTHS[1], maxSvg: isIcon ? ICON_MAX_SVG : STICKER_MAX_SVG };
+      editor = { kind, id, strokes, history: [], tool: "pen", color: STICKER_COLORS[0], width: STICKER_WIDTHS[1], maxSvg: isIcon ? ICON_MAX_SVG : STICKER_MAX_SVG };
       const ed = editor;
       const toolBtn = (tool, iconName, label) => `
         <button type="button" data-action="se-tool" data-tool="${tool}" class="se-tool btn-chip py-2 ring-1" aria-pressed="false">${icon(iconName, "w-4 h-4")}${label}</button>`;
@@ -2532,9 +2817,13 @@ const firebaseConfig = {
       renderCanvas();
     }
 
-    // ストロークを <path> 要素として描く（文字列の HTML は使わない）
+    // ストローク・読み込んだ図形を <path> 要素として描く（文字列の HTML は使わない）
     function strokePath(s) {
       const path = document.createElementNS(SVG_NS, "path");
+      if (s.attrs) {
+        for (const [k, v] of Object.entries(s.attrs)) path.setAttribute(k, v);
+        return path;
+      }
       path.setAttribute("stroke", s.color);
       path.setAttribute("stroke-width", s.width);
       path.setAttribute("d", strokeD(s.points));
@@ -2608,12 +2897,14 @@ const firebaseConfig = {
       renderCanvas();
     }
 
-    // 消しゴム：指した位置に重なっている一番上のストロークを削除する
+    // 消しゴム：指した位置に重なっている一番上のストローク（読み込んだ図形も）を削除する
     function eraseAt(pt) {
+      const paths = $("#se-canvas")?.children || [];
       for (let i = editor.strokes.length - 1; i >= 0; i--) {
         const s = editor.strokes[i];
         const reach = s.width / 2 + 6;
-        const hit = s.points.length === 1
+        const hit = s.attrs ? shapeHit(paths[i], s.attrs, pt)
+          : s.points.length === 1
           ? Math.hypot(pt[0] - s.points[0][0], pt[1] - s.points[0][1]) <= reach
           : s.points.some((p, j) => j > 0 && segmentDistance(pt, s.points[j - 1], p) <= reach);
         if (!hit) continue;
@@ -2622,6 +2913,15 @@ const firebaseConfig = {
         renderCanvas();
         return;
       }
+    }
+
+    // 読み込んだ図形の当たり判定：transform を戻した座標で、塗り・線に重なっているか
+    function shapeHit(path, attrs, [x, y]) {
+      if (!path?.isPointInFill) return false;
+      let p = new DOMPoint(x, y);
+      const m = attrs.transform?.match(/-?[\d.]+(?:e-?\d+)?/gi)?.map(Number);
+      if (m?.length === 6) p = p.matrixTransform(new DOMMatrix(m).inverse());
+      return (attrs.fill !== "none" && path.isPointInFill(p)) || (!!attrs.stroke && attrs.stroke !== "none" && path.isPointInStroke(p));
     }
 
     function bindCanvas(canvas) {
@@ -2942,6 +3242,7 @@ const firebaseConfig = {
       "new-sticker": () => openStickerEditor(),
       "edit-sticker": (el) => openStickerEditor(el.dataset.id),
       "delete-sticker": (el) => deleteSticker(el.dataset.id),
+      "export-sticker": (el) => exportSticker(el.dataset.id),
       "se-tool": (el) => { if (editor) { editor.tool = el.dataset.tool; renderEditorTools(); } },
       "se-color": (el) => setEditorColor(el.dataset.color),
       "se-width": (el) => {
@@ -3065,6 +3366,12 @@ const firebaseConfig = {
         const file = e.target.files?.[0];
         e.target.value = ""; // 同じ画像を選び直しても change が起きるように
         if (file) uploadIcon(file).catch((err) => { console.error(err); toast(errMsg(err), "error"); });
+      });
+      // スタンプ：読み込む SVG を選んだとき
+      $("#sticker-file").addEventListener("change", (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = ""; // 同じファイルを選び直しても change が起きるように
+        if (file) importStickerFile(file).catch((err) => { console.error(err); toast(errMsg(err), "error"); });
       });
       document.addEventListener("change", (e) => {
         if (e.target.name !== "members") return;
