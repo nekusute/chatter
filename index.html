@@ -2802,6 +2802,10 @@ const firebaseConfig = {
                   <span class="rounded-full bg-slate-700" style="width:${Math.max(2, w * 0.9)}px;height:${Math.max(2, w * 0.9)}px"></span>
                 </button>`).join("")}
             </div>
+            <div class="flex items-center gap-3 mt-2.5">
+              <input type="range" id="se-width-range" min="${STICKER_WIDTHS[0]}" max="${STICKER_WIDTHS[STICKER_WIDTHS.length - 1]}" step="1" class="flex-1 min-w-0 accent-indigo-600 cursor-pointer" aria-label="太さ" />
+              <span id="se-width-value" class="w-8 text-right text-sm font-semibold tabular-nums text-slate-600"></span>
+            </div>
           </div>
           <div>
             ${isIcon ? "" : `
@@ -2855,6 +2859,8 @@ const firebaseConfig = {
         b.setAttribute("aria-pressed", active);
         b.className = `se-width w-11 h-11 rounded-xl grid place-items-center ring-1 transition ${active ? on : off}`;
       });
+      $("#se-width-range").value = editor.width;
+      $("#se-width-value").textContent = editor.width;
       document.querySelectorAll("#modal-host .se-color").forEach((b) => {
         const active = b.dataset.color === editor.color;
         b.setAttribute("aria-pressed", active);
@@ -3356,6 +3362,11 @@ const firebaseConfig = {
         if (!editor) return;
         if (e.target.dataset?.rgb) setEditorColor(rgbToHex(["r", "g", "b"].map((ch) => $(`#se-${ch}`).value)));
         else if (e.target.id === "se-picker") setEditorColor(e.target.value);
+        else if (e.target.id === "se-width-range") {
+          editor.width = Number(e.target.value);
+          if (editor.tool === "eraser") editor.tool = "pen"; // 太さを選んだらペンに戻す
+          renderEditorTools();
+        }
       });
       document.addEventListener("change", (e) => {
         if (editor && e.target.dataset?.rgb) e.target.value = hexToRgb(editor.color)["rgb".indexOf(e.target.dataset.rgb)]; // 範囲外の値を直す
