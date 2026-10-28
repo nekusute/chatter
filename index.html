@@ -429,11 +429,16 @@ const firebaseConfig = {
       "#22c55e", "#14b8a6", "#3b82f6", "#6366f1", "#a855f7", "#ec4899",
     ];
     const STICKER_WIDTHS = [4, 8, 14, 22];
+    // アイコン（users/{id}.icon に保存。描いた SVG はスタンプと同じ形式、アップロードした画像は縮小した JPEG の data URL。上限は firestore.rules と合わせる）
+    const ICON_MAX_SVG = 20000;             // 描いたアイコンの SVG の最大文字数
+    const ICON_IMAGE_PX = 192;              // アップロードした画像を縮小する大きさ（正方形の一辺）
+    const ICON_MAX_IMAGE = 40000;           // 画像の data URL の最大文字数
+    const ICON_IMAGE_RE = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/;
 
     let auth, db;
     const state = {
       uid: null,
-      me: null,               // { id, name }
+      me: null,               // { id, name, icon }
       users: new Map(),       // userId -> user
       rooms: [],              // 自分が参加しているルーム
       usersLoaded: false,
@@ -506,6 +511,7 @@ const firebaseConfig = {
       pencil: "M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z",
       eraser: "M7 21h13M5.5 16.5l9.9-9.9a2 2 0 012.83 0l1.17 1.17a2 2 0 010 2.83L11 19H7.5l-2-2a.35.35 0 010-.5zM9.5 12.5l4 4",
       undo: "M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3",
+      photo: "M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z",
     };
     ICONS["bell-off"] = ICONS.bell + "M3 3l18 18"; // 斜線入りのベル
     const icon = (name, cls = "w-5 h-5") =>
@@ -522,8 +528,25 @@ const firebaseConfig = {
     ];
     const hash = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.codePointAt(0)) | 0; return Math.abs(h); };
     const gradientOf = (id) => GRADIENTS[hash(id) % GRADIENTS.length];
+    // 設定したアイコンの画像の URL（形式が正しくなければ null で、頭文字のアバターを出す）
+    const iconSrcCache = new Map(); // icon -> URL
+    function iconSrc(icon) {
+      if (typeof icon !== "string" || !icon) return null;
+      let src = iconSrcCache.get(icon);
+      if (src === undefined) {
+        src = ICON_IMAGE_RE.test(icon) && icon.length <= ICON_MAX_IMAGE ? icon
+          : STICKER_SVG_RE.test(icon) && icon.length <= ICON_MAX_SVG ? stickerSrc(icon)
+          : null;
+        if (iconSrcCache.size >= 300) iconSrcCache.clear();
+        iconSrcCache.set(icon, src);
+      }
+      return src;
+    }
+    const userIcon = (id) => (id === state.me?.id ? state.me.icon : state.users.get(id)?.icon);
     function avatar(id, name, size = "w-10 h-10 text-sm") {
-      const ch = [...String(name || id || "?").trim()][0]?.toUpperCase() || "?";
+      const src = iconSrc(userIcon(id));
+      if (src) return `<img src="${src}" alt="" class="${size} shrink-0 rounded-full object-cover bg-white ring-1 ring-slate-200 select-none shadow-sm" draggable="false" decoding="async" />`;
+      const ch =[...String(name || id || "?").trim()][0]?.toUpperCase() || "?";
       return `<div class="${size} shrink-0 rounded-full bg-gradient-to-br ${gradientOf(id)} text-white font-semibold grid place-items-center select-none shadow-sm">${esc(ch)}</div>`;
     }
     const groupAvatar = (id, size = "w-10 h-10") =>
@@ -814,7 +837,7 @@ const firebaseConfig = {
 
     async function enterApp(user) {
       state.uid = auth.currentUser.uid;
-      state.me = { id: user.id, name: user.name || user.id };
+      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null };
       document.querySelectorAll('#screen-login input[type="password"]').forEach((el) => { el.value = ""; });
       readMap = store.json(`chatter:read:${user.id}`, {});
       touchPresence(true);
@@ -1041,7 +1064,9 @@ const firebaseConfig = {
       state.unsub.users = onSnapshot(
         query(collection(db, "users"), orderBy("lastSeen", "desc"), limit(300)),
         (snap) => {
+          const prevIcons = new Map([...state.users].map(([id, u]) => [id, u.icon]));
           state.users = new Map(snap.docs.map((d) => [d.id, withId(d)]));
+          const iconChanged = [...state.users].some(([id, u]) => u.icon !== prevIcons.get(id));
           const mine = state.users.get(state.me.id);
           if (mine?.deleted && !state.accountDeleting) {
             // 別の端末でアカウントが削除された
@@ -1049,10 +1074,11 @@ const firebaseConfig = {
             toast("このアカウントは削除されました", "error");
             return;
           }
-          if (mine) state.me.name = mine.name;
+          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; }
           state.usersLoaded = true;
           renderSidebar();
           renderChatHeader();
+          if (iconChanged && state.activeRoomId && state.messagesLoaded) renderMessages(); // 吹き出しの横のアイコンを更新
         },
         onListenError,
       );
@@ -2047,7 +2073,7 @@ const firebaseConfig = {
           count += 2;
           if (count >= 450) { await batch.commit(); batch = writeBatch(db); count = 0; }
         }
-        batch.update(doc(db, "users", me.id), { name: DELETED_NAME, deleted: true, deletedAt: serverTimestamp() });
+        batch.update(doc(db, "users", me.id), { name: DELETED_NAME, icon: deleteField(), deleted: true, deletedAt: serverTimestamp() });
         await batch.commit();
       } catch (e) {
         state.accountDeleting = false;
@@ -2068,6 +2094,73 @@ const firebaseConfig = {
       renderSidebar();
       closeModal();
       toast("表示名を変更しました");
+    }
+
+    // ---- アイコン ----
+    // icon：描いた SVG / 画像の data URL。null なら頭文字のアバターに戻す
+    async function setIcon(icon) {
+      await updateDoc(doc(db, "users", state.me.id), { icon: icon || deleteField() });
+      state.me.icon = icon || null;
+      renderSidebar();
+      const block = $("#profile-icon");
+      if (block) block.innerHTML = profileIconBlock();
+    }
+
+    async function saveDrawnIcon() {
+      const ed = editor;
+      if (ed?.kind !== "icon") return;
+      if (!ed.strokes.length) throw new Error("アイコンを描いてください。");
+      const svg = buildStickerSvg(ed.strokes);
+      if (svg.length > ICON_MAX_SVG) throw new Error("アイコンのデータが大きすぎます。線の数を減らしてください。");
+      await setIcon(svg);
+      openProfile(); // プロフィールに戻る
+      toast("アイコンを変更しました");
+    }
+
+    async function uploadIcon(file) {
+      if (!file.type.startsWith("image/")) throw new Error("画像ファイルを選んでください。");
+      const block = $("#profile-icon");
+      if (block) block.innerHTML = `<div class="w-20 h-20 grid place-items-center text-indigo-500">${spinner("w-8 h-8 border-[3px]")}</div>`;
+      try {
+        await setIcon(await imageToIcon(file));
+      } catch (e) {
+        if (block?.isConnected) block.innerHTML = profileIconBlock();
+        throw e;
+      }
+      toast("アイコンを変更しました");
+    }
+
+    // 画像の中央を正方形に切り抜いて縮小し、JPEG の data URL にする（容量に収まるまで画質を下げる）
+    async function imageToIcon(file) {
+      let bmp;
+      try { bmp = await createImageBitmap(file); } catch { throw new Error("この画像は読み込めません。JPEG・PNG などの画像を選んでください。"); }
+      const side = Math.min(bmp.width, bmp.height);
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = ICON_IMAGE_PX;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff"; // JPEG は透明にできないので、透明な部分は白にする
+      ctx.fillRect(0, 0, ICON_IMAGE_PX, ICON_IMAGE_PX);
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, ICON_IMAGE_PX, ICON_IMAGE_PX);
+      bmp.close();
+      for (const quality of [0.9, 0.8, 0.7, 0.6, 0.5, 0.4]) {
+        const url = canvas.toDataURL("image/jpeg", quality);
+        if (url.length <= ICON_MAX_IMAGE) return url;
+      }
+      throw new Error("画像を小さくできませんでした。別の画像をお試しください。");
+    }
+
+    async function removeIcon() {
+      if (!state.me.icon) return;
+      const ok = await confirmDialog({
+        title: "アイコンを削除しますか？",
+        message: "設定したアイコンを削除して、表示名の頭文字のアイコンに戻します。",
+        ok: "削除する",
+        danger: true,
+      });
+      if (ok) await setIcon(null);
+      openProfile();
+      if (ok) toast("アイコンを削除しました");
     }
 
     function handleJoinHash() {
@@ -2252,7 +2345,7 @@ const firebaseConfig = {
     // ---- 自分のスタンプの保存・削除 ----
     async function saveSticker(nameRaw) {
       const ed = editor;
-      if (!ed) return;
+      if (ed?.kind !== "sticker") return;
       const name = String(nameRaw ?? "").trim();
       if (!ed.strokes.length) throw new Error("スタンプを描いてください。");
       if (!name) throw new Error("スタンプ名を入力してください。");
@@ -2363,7 +2456,7 @@ const firebaseConfig = {
     }
 
     // ---- SVG エディタ ----
-    // editor: { id（編集中のスタンプ。新規は null）, strokes, history（取り消し用のストロークの配列の履歴）, tool, color, width }
+    // editor: { kind（"sticker" / "icon"）, id（編集中のスタンプ。新規は null）, strokes, history（取り消し用のストロークの配列の履歴）, tool, color, width, maxSvg }
     let editor = null;
     const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -2371,14 +2464,26 @@ const firebaseConfig = {
       const s = id ? state.stickers.find((x) => x.id === id) : null;
       if (id && !s) return;
       closeStickerBox();
-      editor = { id: s?.id || null, strokes: parseStickerSvg(s?.svg), history: [], tool: "pen", color: STICKER_COLORS[0], width: STICKER_WIDTHS[1] };
+      openDrawEditor({ kind: "sticker", id: s?.id || null, svg: s?.svg, name: s?.name, title: s ? "スタンプを編集" : "スタンプを作成" });
+    }
+
+    // アイコンを描く（今のアイコンが描いたものなら、その続きから描ける）
+    function openIconEditor() {
+      const cur = state.me.icon;
+      openDrawEditor({ kind: "icon", svg: STICKER_SVG_RE.test(cur || "") ? cur : null, title: "アイコンを描く" });
+    }
+
+    // スタンプ・アイコン共通のエディタ。アイコンは丸く切り抜いて表示するので、枠も丸くする
+    function openDrawEditor({ kind, id = null, svg, name = "", title }) {
+      const isIcon = kind === "icon";
+      editor = { kind, id, strokes: parseStickerSvg(svg), history: [], tool: "pen", color: STICKER_COLORS[0], width: STICKER_WIDTHS[1], maxSvg: isIcon ? ICON_MAX_SVG : STICKER_MAX_SVG };
       const ed = editor;
       const toolBtn = (tool, iconName, label) => `
         <button type="button" data-action="se-tool" data-tool="${tool}" class="se-tool btn-chip py-2 ring-1" aria-pressed="false">${icon(iconName, "w-4 h-4")}${label}</button>`;
       openModal(`
-        ${modalHead(s ? "スタンプを編集" : "スタンプを作成", "枠の中に指やマウスで描きます")}
-        <form id="form-sticker" class="px-6 pb-6 space-y-4">
-          <div class="mx-auto w-full max-w-[320px] aspect-square rounded-2xl chat-bg ring-1 ring-slate-200 overflow-hidden">
+        ${modalHead(title, isIcon ? "枠の中に指やマウスで描きます（丸い枠の外は表示されません）" : "枠の中に指やマウスで描きます")}
+        <form id="form-${kind}" class="px-6 pb-6 space-y-4">
+          <div class="mx-auto w-full max-w-[320px] aspect-square ${isIcon ? "rounded-full bg-white" : "rounded-2xl chat-bg"} ring-1 ring-slate-200 overflow-hidden">
             <svg id="se-canvas" viewBox="0 0 ${STICKER_SIZE} ${STICKER_SIZE}" class="block w-full h-full touch-none cursor-crosshair" fill="none" stroke-linecap="round" stroke-linejoin="round"></svg>
           </div>
           <div class="flex flex-wrap items-center gap-2">
@@ -2414,8 +2519,9 @@ const firebaseConfig = {
             </div>
           </div>
           <div>
+            ${isIcon ? "" : `
             <label class="label" for="se-name">スタンプ名</label>
-            <input id="se-name" name="name" class="input" maxlength="${STICKER_MAX_NAME}" value="${esc(s?.name || "")}" placeholder="例: ありがとう" autocomplete="off" />
+            <input id="se-name" name="name" class="input" maxlength="${STICKER_MAX_NAME}" value="${esc(name)}" placeholder="例: ありがとう" autocomplete="off" />`}
             <p id="se-size" class="text-xs text-slate-400 mt-1.5"></p>
           </div>
           <p class="form-error" hidden></p>
@@ -2442,8 +2548,8 @@ const firebaseConfig = {
       canvas.replaceChildren(...editor.strokes.map(strokePath));
       const size = editor.strokes.length ? buildStickerSvg(editor.strokes).length : 0;
       const el = $("#se-size");
-      el.textContent = `容量 ${(size / 1000).toFixed(1)} KB / ${STICKER_MAX_SVG / 1000} KB`;
-      el.classList.toggle("text-rose-600", size > STICKER_MAX_SVG);
+      el.textContent = `容量 ${(size / 1000).toFixed(1)} KB / ${editor.maxSvg / 1000} KB`;
+      el.classList.toggle("text-rose-600", size > editor.maxSvg);
     }
 
     function renderEditorTools() {
@@ -2560,12 +2666,26 @@ const firebaseConfig = {
     // ============================================================
     // モーダル各種
     // ============================================================
+    // プロフィールのアイコンと、変更・削除のボタン
+    const profileIconBlock = () => {
+      const chip = "btn-chip py-1.5 text-xs bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100";
+      return `
+        ${avatar(state.me.id, state.me.name, "w-20 h-20 text-3xl")}
+        <div class="flex flex-wrap justify-center gap-2 mt-3">
+          <button type="button" data-action="draw-icon" class="${chip}">${icon("pencil", "w-3.5 h-3.5")}描く</button>
+          <label class="${chip} cursor-pointer focus-within:ring-2 focus-within:ring-indigo-400">${icon("photo", "w-3.5 h-3.5")}画像をアップロード
+            <input type="file" id="icon-file" accept="image/*" class="sr-only" />
+          </label>
+          ${state.me.icon ? `<button type="button" data-action="remove-icon" class="${chip} hover:text-rose-600 hover:bg-rose-50">${icon("trash", "w-3.5 h-3.5")}削除</button>` : ""}
+        </div>`;
+    };
+
     function openProfile() {
       openModal(`
         ${modalHead("プロフィール")}
         <div class="px-6 pb-6">
           <div class="flex flex-col items-center text-center">
-            ${avatar(state.me.id, state.me.name, "w-20 h-20 text-3xl")}
+            <div id="profile-icon" class="flex flex-col items-center">${profileIconBlock()}</div>
             <div class="mt-3 font-bold text-lg text-slate-900">${esc(state.me.name)}</div>
           </div>
           <div class="mt-5 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
@@ -2789,6 +2909,8 @@ const firebaseConfig = {
       "reset-invite": () => resetInviteLink(),
       "room-info": () => openRoomInfo(),
       "profile": () => openProfile(),
+      "draw-icon": () => openIconEditor(),
+      "remove-icon": () => removeIcon(),
       "toggle-notify": () => toggleNotify(),
       "change-password": () => openChangePassword(),
       "logout": () => logout(),
@@ -2844,6 +2966,7 @@ const firebaseConfig = {
       "form-invite": (fd) => inviteMembers(fd.getAll("members")),
       "form-delete-account": (fd) => deleteAccount(fd.get("password")),
       "form-sticker": (fd) => saveSticker(fd.get("name")),
+      "form-icon": () => saveDrawnIcon(),
     };
 
     function setLoginTab(tab) {
@@ -2936,6 +3059,13 @@ const firebaseConfig = {
       document.addEventListener("change", (e) => {
         if (editor && e.target.dataset?.rgb) e.target.value = hexToRgb(editor.color)["rgb".indexOf(e.target.dataset.rgb)]; // 範囲外の値を直す
       });
+      // プロフィール：アイコンにする画像を選んだとき
+      document.addEventListener("change", (e) => {
+        if (e.target.id !== "icon-file") return;
+        const file = e.target.files?.[0];
+        e.target.value = ""; // 同じ画像を選び直しても change が起きるように
+        if (file) uploadIcon(file).catch((err) => { console.error(err); toast(errMsg(err), "error"); });
+      });
       document.addEventListener("change", (e) => {
         if (e.target.name !== "members") return;
         $("#cg-count").textContent = `${document.querySelectorAll('#cg-list input[name="members"]:checked').length}人選択中`;
@@ -2943,7 +3073,7 @@ const firebaseConfig = {
 
       // 入力欄
       const input = $("#msg-input");
-      input.placeholder = isPC() ?"メッセージを入力（Enterで送信 / Shift+Enter・Ctrl+Enterで改行）" : "メッセージを入力";
+      input.placeholder = isPC() ? "メッセージを入力（Enterで送信 / Shift+Enter・Ctrl+Enterで改行）" : "メッセージを入力";
       input.addEventListener("input", () => {
         autoGrow();
         updateSendBtn();
