@@ -34,6 +34,9 @@
           },
           colors: {
             slate: shades('slate', [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950]),
+            // テーマカラー（設定で変えられる。既定は Tailwind の indigo / violet）
+            indigo: shades('p-indigo', [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950]),
+            violet: shades('p-violet', [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950]),
           },
           backgroundColor: { white: cssVar('bg-white'), slate: { 900: cssVar('bg-slate-900') }, ...tints },
           borderColor: tints,
@@ -52,6 +55,59 @@
       const theme = localStorage.getItem('chatter:theme');
       if (theme === 'dark' || (!theme && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark');
     } catch {}
+
+    // テーマカラー：1色（HEX）から indigo / violet の各段階の色を作り、CSS 変数を上書きする（null で既定の色に戻す）
+    // 指定した色を 600 とし、白・黒と混ぜて明るい段階・暗い段階を作る。violet は色相を少しずらした色
+    const ACCENT_DEFAULT = '#4f46e5';
+    const ACCENT_STEPS = { 50: [255, .93], 100: [255, .86], 200: [255, .72], 300: [255, .52], 400: [255, .3], 500: [255, .13], 600: [0, 0], 700: [0, .15], 800: [0, .3], 900: [0, .45], 950: [0, .62] };
+    const mixRgb = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+    function shiftHue([r, g, b], deg) {
+      r /= 255; g /= 255; b /= 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+      if (!d) return [r, g, b].map((v) => Math.round(v * 255));
+      const s = d / (1 - Math.abs(2 * l - 1));
+      let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      h = (((h * 60 + deg) % 360) + 360) % 360;
+      const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2;
+      const [r1, g1, b1] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+      return [r1, g1, b1].map((v) => Math.round((v + m) * 255));
+    }
+    function applyAccent(hex) {
+      let el = document.getElementById('accent-vars');
+      const color = hex || ACCENT_DEFAULT;
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
+      const favicon = document.querySelector('link[rel="icon"]');
+      if (favicon) favicon.href = favicon.href.replace(/fill='%23[0-9a-f]{6}'/i, `fill='%23${color.slice(1)}'`);
+      if (!hex) { el?.remove(); return; }
+      const base = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      const scale = (c) => Object.fromEntries(Object.entries(ACCENT_STEPS).map(([k, [to, t]]) => [k, mixRgb(c, [to, to, to], t)]));
+      const p = scale(base), v = scale(shiftHue(base, 19));
+      const s = (c) => c.join(' ');
+      const dark = [15, 23, 42]; // ダークモードの背景（--c-bg-white）
+      // この <style> は下の既定の色の <style> より前に入ることがあるので、セレクタの詳細度を上げて勝たせる
+      const css = `
+        html:root {
+          ${Object.keys(ACCENT_STEPS).map((k) => `--c-p-indigo-${k}: ${s(p[k])}; --c-p-violet-${k}: ${s(v[k])};`).join(' ')}
+          --c-indigo-50: ${s(p[50])}; --c-indigo-100: ${s(p[100])}; --c-indigo-200: ${s(p[200])}; --c-indigo-300: ${s(p[300])};
+          --c-text-indigo-500: ${s(p[500])}; --c-text-indigo-600: ${s(p[600])}; --c-text-indigo-700: ${s(p[700])};
+          --chat-dot: rgb(${s(p[500])} / .07);
+        }
+        html.dark:root {
+          --c-indigo-50: ${s(mixRgb(dark, base, .15))}; --c-indigo-100: ${s(mixRgb(dark, base, .25))}; --c-indigo-200: ${s(mixRgb(dark, base, .4))}; --c-indigo-300: ${s(base)};
+          --c-text-indigo-500: ${s(p[400])}; --c-text-indigo-600: ${s(p[400])}; --c-text-indigo-700: ${s(p[300])};
+          --chat-dot: rgb(${s(p[400])} / .08);
+        }`;
+      if (!el) {
+        el = document.createElement('style');
+        el.id = 'accent-vars';
+        document.head.append(el);
+      }
+      el.textContent = css;
+    }
+    try {
+      const accent = localStorage.getItem('chatter:accent');
+      if (/^#[0-9a-f]{6}$/i.test(accent || '')) applyAccent(accent);
+    } catch {}
   </script>
 
   <!-- 素の CSS（Tailwind の読み込み前から効かせたいもの・アニメーション） -->
@@ -66,6 +122,12 @@
       --c-rose-50: 255 241 242; --c-rose-100: 255 228 230; --c-rose-200: 254 205 211;
       --c-amber-50: 255 251 235; --c-amber-100: 254 243 199; --c-amber-200: 253 230 138;
       --c-emerald-50: 236 253 245;
+      --c-p-indigo-50: 238 242 255; --c-p-indigo-100: 224 231 255; --c-p-indigo-200: 199 210 254; --c-p-indigo-300: 165 180 252;
+      --c-p-indigo-400: 129 140 248; --c-p-indigo-500: 99 102 241; --c-p-indigo-600: 79 70 229; --c-p-indigo-700: 67 56 202;
+      --c-p-indigo-800: 55 48 163; --c-p-indigo-900: 49 46 129; --c-p-indigo-950: 30 27 75;
+      --c-p-violet-50: 245 243 255; --c-p-violet-100: 237 233 254; --c-p-violet-200: 221 214 254; --c-p-violet-300: 196 181 253;
+      --c-p-violet-400: 167 139 250; --c-p-violet-500: 139 92 246; --c-p-violet-600: 124 58 237; --c-p-violet-700: 109 40 217;
+      --c-p-violet-800: 91 33 182; --c-p-violet-900: 76 29 149; --c-p-violet-950: 46 16 101;
       --c-text-indigo-500: 99 102 241; --c-text-indigo-600: 79 70 229; --c-text-indigo-700: 67 56 202;
       --c-text-rose-600: 225 29 72; --c-text-rose-700: 190 18 60;
       --c-text-amber-600: 217 119 6; --c-text-amber-700: 180 83 9; --c-text-amber-800: 146 64 14;
@@ -1116,6 +1178,71 @@ const firebaseConfig = {
         <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 divide-y divide-slate-100">${rows.join("")}</div>
       </section>`;
 
+    // テーマカラー（HEX）。このブラウザの localStorage に保存（読み込み時は <head> のスクリプトの applyAccent で適用）
+    const ACCENT_KEY = "chatter:accent";
+    const ACCENT_PRESETS = ["#4f46e5", "#2563eb", "#0284c7", "#0d9488", "#16a34a", "#ca8a04", "#ea580c", "#e11d48", "#db2777", "#9333ea", "#475569"];
+    const currentAccent = () => {
+      const hex = store.get(ACCENT_KEY);
+      return /^#[0-9a-f]{6}$/i.test(hex || "") ? hex.toLowerCase() : ACCENT_DEFAULT;
+    };
+    // "#abc" "abc" "AABBCC" などを "#aabbcc" にする（HEX として読めなければ null）
+    function normalizeHex(s) {
+      let h = String(s || "").trim().replace(/^#/, "").toLowerCase();
+      if (/^[0-9a-f]{3}$/.test(h)) h = h.replace(/./g, "$&$&");
+      return /^[0-9a-f]{6}$/.test(h) ? `#${h}` : null;
+    }
+    // 白い文字とのコントラスト比（WCAG）
+    function contrastWithWhite(hex) {
+      const lum = hexToRgb(hex).map((v) => (v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+      return 1.05 / (0.2126 * lum[0] + 0.7152 * lum[1] + 0.0722 * lum[2] + 0.05);
+    }
+
+    function setAccent(hex, { fromInput = false } = {}) {
+      if (hex === ACCENT_DEFAULT) store.remove(ACCENT_KEY);
+      else store.set(ACCENT_KEY, hex);
+      applyAccent(hex === ACCENT_DEFAULT ? null : hex);
+      renderAccentControls({ fromInput });
+    }
+
+    function renderAccentControls({ fromInput = false } = {}) {
+      const picker = $("#accent-picker");
+      if (!picker) return;
+      const hex = currentAccent();
+      picker.value = hex;
+      const input = $("#accent-hex");
+      if (!fromInput) input.value = hex.toUpperCase(); // 入力中の欄は書き換えない
+      input.classList.remove("border-rose-400");
+      $("#accent-reset").hidden = hex === ACCENT_DEFAULT;
+      $("#accent-warn").hidden = contrastWithWhite(hex) >= 3;
+      document.querySelectorAll("[data-action='accent-preset']").forEach((b) => {
+        const on = b.dataset.color === hex;
+        b.setAttribute("aria-pressed", on);
+        b.classList.toggle("ring-2", on);
+      });
+    }
+
+    const accentControl = () => `
+      <div class="px-4 py-3">
+        <div class="flex items-center gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-semibold text-slate-800">テーマカラー</div>
+            <div class="text-xs text-slate-400 leading-relaxed mt-0.5">ボタンや自分の吹き出しなどの色です（このブラウザに保存されます）</div>
+          </div>
+          <button type="button" id="accent-reset" data-action="reset-accent" class="shrink-0 text-xs font-semibold text-indigo-600 hover:underline" hidden>元に戻す</button>
+        </div>
+        <div class="mt-3 flex items-center gap-2">
+          <input type="color" id="accent-picker" class="w-10 h-10 shrink-0 rounded-lg cursor-pointer bg-transparent" aria-label="テーマカラーを選ぶ" />
+          <input type="text" id="accent-hex" maxlength="7" spellcheck="false" autocomplete="off" aria-label="テーマカラーの HEX 値"
+            class="w-28 rounded-xl border border-slate-200 bg-white px-3 py-2 font-mono text-sm uppercase text-slate-800 outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/15" />
+          <div class="ml-auto h-9 px-3 rounded-xl grid place-items-center text-xs font-semibold text-white bg-gradient-to-r from-indigo-600 to-violet-600 shadow-lg shadow-indigo-500/25">プレビュー</div>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          ${ACCENT_PRESETS.map((c) => `<button type="button" data-action="accent-preset" data-color="${c}" aria-label="${c.toUpperCase()}" title="${c.toUpperCase()}"
+            class="w-7 h-7 rounded-full ring-slate-400 ring-offset-2 transition hover:scale-110" style="background:${c}"></button>`).join("")}
+        </div>
+        <p id="accent-warn" class="mt-3 text-xs text-amber-700 bg-amber-50 rounded-xl px-3 py-2 leading-relaxed" hidden>明るい色なので、ボタンなどの白い文字が読みにくくなります。</p>
+      </div>`;
+
     function openSettings() {
       openModal(`
         ${modalHead("設定")}
@@ -1123,9 +1250,11 @@ const firebaseConfig = {
           ${settingSection("表示", [
             settingRow("ダークモード", "画面を暗い配色にします（このブラウザに保存されます）",
               `<button type="button" id="theme-toggle" data-action="toggle-theme" class="switch" role="switch" aria-checked="false" aria-label="ダークモード"><span class="switch-knob"></span></button>`),
+            accentControl(),
           ])}
         </div>`);
       renderThemeToggle();
+      renderAccentControls();
     }
 
     // ============================================================
@@ -5029,6 +5158,8 @@ const firebaseConfig = {
       "toggle-notify": () => toggleNotify(),
       "settings": () => openSettings(),
       "toggle-theme": () => toggleTheme(),
+      "accent-preset": (el) => setAccent(el.dataset.color),
+      "reset-accent": () => setAccent(ACCENT_DEFAULT),
       "change-password": () => openChangePassword(),
       "logout": () => logout(),
       "copy": (el) => copyText(el.dataset.copy, el.dataset.label),
@@ -5262,6 +5393,18 @@ const firebaseConfig = {
           if (editor.tool === "eraser") editor.tool = "pen"; // 太さを選んだらペンに戻す
           renderEditorTools();
         }
+      });
+      // 設定：テーマカラー（ピッカー・HEX の入力欄は、操作している間も色を反映する）
+      document.addEventListener("input", (e) => {
+        if (e.target.id === "accent-picker") setAccent(e.target.value.toLowerCase());
+        else if (e.target.id === "accent-hex") {
+          const hex = normalizeHex(e.target.value);
+          if (hex) setAccent(hex, { fromInput: true });
+          else e.target.classList.add("border-rose-400");
+        }
+      });
+      document.addEventListener("change", (e) => {
+        if (e.target.id === "accent-hex") renderAccentControls(); // 読めない値は今の色に戻す
       });
       document.addEventListener("change", (e) => {
         if (editor && e.target.dataset?.rgb) e.target.value = hexToRgb(editor.color)["rgb".indexOf(e.target.dataset.rgb)]; // 範囲外の値を直す
