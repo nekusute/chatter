@@ -515,6 +515,7 @@ const firebaseConfig = {
     const MESSAGE_MAX_LIMIT = 3000;         // 古いメッセージへ移動するときに、読み込みを増やせる上限
     const SEARCH_PAGE = 500;                // メッセージの検索で一度に読み込む数（「さらに古いメッセージを検索」で増やす）
     const MAX_TEXT = 2000;                  // 1メッセージの最大文字数
+    const EDIT_WINDOW = 10 * 60 * 1000;     // 送信後にテキストのメッセージを編集できる時間（firestore.rules と合わせる）
     const ONLINE_MS = 6 * 60 * 1000;        // この時間内に操作があれば「オンライン」
     const PRESENCE_INTERVAL = 5 * 60 * 1000; // 最終アクティブ時刻の更新間隔
     const TYPING_BEAT = 20 * 1000;          // DM の入力欄にフォーカスしている間、「入力中」の記録を更新する間隔
@@ -582,6 +583,7 @@ const firebaseConfig = {
       renderedIds: new Set(),
       drafts: {},
       replyTo: null,          // 返信先のメッセージ { id, senderId, senderName, text }
+      editing: null,          // 編集中の自分のメッセージ { id, roomId, text（元の本文） }。編集中は入力欄の下書きを保存しない
       selectedMsgId: null,    // 送信取消メニュー / リアクションの絵文字を開いているメッセージ
       pinsOpen: false,        // ピン留めの一覧を開いているか
       messageLimit: MESSAGE_LIMIT, // 開いているトークで読み込む最新メッセージ数（古いメッセージへ移動するときに増やす）
@@ -1030,7 +1032,7 @@ const firebaseConfig = {
       Object.assign(state, {
         uid: null, me: null, users: new Map(), rooms: [], usersLoaded: false, roomsLoaded: false, roomsSynced: false,
         tab: "talk", search: "", activeRoomId: null, activeRoomFallback: null, messages: [], messagesLoaded: false,
-        renderedIds: new Set(), drafts: {}, replyTo: null, selectedMsgId: null, pinsOpen: false, leavingRoomId: null, accountDeleting: false,
+        renderedIds: new Set(), drafts: {}, replyTo: null, editing: null, selectedMsgId: null, pinsOpen: false, leavingRoomId: null, accountDeleting: false,
         stickers: [], stickersLoaded: false, reads: new Map(), readsLoaded: false,
         stickerView: "mine", publicStickers: [], publicStickersLoaded: false, publicStickersError: false,
         publicLimit: PUBLIC_STICKER_PAGE, publicHasMore: false, publicSearch: "", partnerTyping: null,
@@ -2004,14 +2006,15 @@ const firebaseConfig = {
               <div class="flex flex-col items-end gap-0.5 shrink-0">
                 ${reactionChip(m, isGroup)}
                 ${readLabel(m, room)}
-                <span class="msg-time">${m.pending ? "送信中…" : hhmm(d)}</span>
+                <span class="msg-time">${m.pending ? (m.editedAt ? "保存中…" : "送信中…") : `${m.editedAt ? "編集済み " : ""}${hhmm(d)}`}</span>
               </div>
-              <div class="${bubbleCls} ${m.pending ? "" : "cursor-pointer"} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
+              <div class="${bubbleCls} ${m.pending ? "" : "cursor-pointer"} ${selected || state.editing?.id === m.id ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
             </div>
             ${selected ? `
             <div class="flex justify-end gap-2 mt-1.5 fade-in" data-msg-id="${esc(m.id)}">
               ${image ? viewImageChip(m) : ""}
               ${canReply ? `<button type="button" data-action="reply" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("reply", "w-3.5 h-3.5")}返信</button>` : ""}
+              ${canEditMessage(m, room) ? `<button type="button" data-action="edit-msg" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("pencil", "w-3.5 h-3.5")}編集</button>` : ""}
               ${pinChip(m, room)}
               <button type="button" data-action="unsend" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-rose-600 ring-1 ring-rose-200 shadow-sm hover:bg-rose-50">${icon("trash", "w-3.5 h-3.5")}送信取消</button>
             </div>` : ""}`;
@@ -2030,7 +2033,7 @@ const firebaseConfig = {
                   <div class="${bubbleCls} ${canReact ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
                   <div class="flex flex-col items-start gap-0.5 shrink-0">
                     ${reactionChip(m, isGroup)}
-                    <span class="msg-time">${hhmm(d)}</span>
+                    <span class="msg-time">${m.editedAt ? "編集済み " : ""}${hhmm(d)}</span>
                   </div>
                 </div>
                 ${selected && sticker ? saveStickerChip(m) : ""}
@@ -2199,6 +2202,7 @@ const firebaseConfig = {
         state.selectedMsgId = null;
         state.pinsOpen = false;
         state.replyTo = null;
+        state.editing = null;
         mention = null;
         renderReplyBar();
         renderMentionBox();
@@ -2371,6 +2375,7 @@ const firebaseConfig = {
       state.pendingJump = null;
       resetMsgSearch();
       state.replyTo = null;
+      state.editing = null;
       state.messages = [];
       mention = null;
       renderReplyBar();
@@ -2557,6 +2562,7 @@ const firebaseConfig = {
       const m = state.messages.find((x) => x.id === msgId);
       if (!room || !m || m.senderId !== state.me.id) return;
       state.selectedMsgId = null;
+      if (state.editing?.id === msgId) cancelEdit();
       const roomRef = doc(db, "rooms", room.id);
       const batch = writeBatch(db);
       batch.delete(doc(roomRef, "messages", msgId));
@@ -2631,6 +2637,7 @@ const firebaseConfig = {
       state.selectedMsgId = null;
       renderMessages();
       if (!m || !["text", "sticker", "image"].includes(m.type) || m.pending || !canSend(currentRoom())) return; // スタンプ・画像の本文は「[スタンプ]」「[画像]」
+      if (state.editing) cancelEdit(false);
       state.replyTo = { id: m.id, senderId: m.senderId, senderName: m.senderName || "", text: m.text.slice(0, 100) };
       renderReplyBar();
       $("#msg-input").focus();
@@ -2641,13 +2648,104 @@ const firebaseConfig = {
       renderReplyBar();
     }
 
+    // ---- 編集（送信から EDIT_WINDOW 以内の自分のテキストのメッセージ） ----
+    function canEditMessage(m, room) {
+      return !!m && m.type === "text" && m.senderId === state.me.id && !m.pending && !!m.createdAt
+        && Date.now() - ms(m.createdAt) < EDIT_WINDOW && !!room && canSend(room);
+    }
+
+    // 入力欄に本文を入れて編集を始める（入力中だった下書きは state.drafts に残り、編集を終えると戻す）
+    function startEdit(msgId) {
+      const room = currentRoom();
+      const m = state.messages.find((x) => x.id === msgId);
+      state.selectedMsgId = null;
+      if (!canEditMessage(m, room)) { renderMessages(); toast("編集できるのは送信から10分以内のメッセージです", "error"); return; }
+      state.replyTo = null;
+      state.editing = { id: m.id, roomId: room.id, text: m.text };
+      const input = $("#msg-input");
+      input.value = m.text;
+      renderMessages();
+      renderReplyBar();
+      autoGrow();
+      updateSendBtn();
+      updateMentionBox();
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+
+    // 編集をやめて、入力欄を編集前の下書きに戻す
+    function cancelEdit(render = true) {
+      const ed = state.editing;
+      if (!ed) return;
+      state.editing = null;
+      const input = $("#msg-input");
+      input.value = state.drafts[ed.roomId] || "";
+      autoGrow();
+      updateSendBtn();
+      updateMentionBox();
+      if (render) { renderReplyBar(); renderMessages(); }
+    }
+
+    // 編集を保存する：本文とメンションを書き換え、一覧のプレビュー・ピン留めの本文も合わせる
+    async function saveEdit() {
+      const ed = state.editing;
+      const room = currentRoom();
+      const input = $("#msg-input");
+      const text = input.value.trim();
+      if (!ed || !room || room.id !== ed.roomId || !text) return;
+      if (text.length > MAX_TEXT) return toast(`メッセージは${MAX_TEXT}文字以内で入力してください`, "error");
+      const m = state.messages.find((x) => x.id === ed.id);
+      if (!m) { cancelEdit(); toast("このメッセージは送信取消されています", "error"); return; }
+      if (text === m.text) { cancelEdit(); return; }
+      if (!canEditMessage(m, room)) { toast("編集できるのは送信から10分以内のメッセージです", "error"); return; }
+
+      const found = room.type === "group" ? findMentions(text, mentionCandidates(room), true) : [];
+      const mentions = [...new Set(found.map((f) => f.id).filter(Boolean))];
+      const mentionAll = found.some((f) => !f.id);
+      const roomRef = doc(db, "rooms", room.id);
+      const batch = writeBatch(db);
+      batch.update(doc(roomRef, "messages", m.id), {
+        text, editedAt: serverTimestamp(),
+        ...(room.type === "group" ? { mentions: mentions.length ? mentions : deleteField(), mentionAll: mentionAll || deleteField() } : {}),
+      });
+      const roomUpdate = {};
+      const lm = room.lastMessage;
+      if (lm && lm.senderId === m.senderId && ms(lm.createdAt) === ms(m.createdAt)) roomUpdate["lastMessage.text"] = text.slice(0, 100);
+      if (isPinned(room, m.id)) roomUpdate.pins = pinsOf(room).map((p) => (p.id === m.id ? { ...p, text: text.slice(0, 100) } : p));
+      if (Object.keys(roomUpdate).length) batch.update(roomRef, roomUpdate);
+
+      cancelEdit(); // すぐに入力欄を戻す（失敗したら編集中に戻す）
+      try {
+        await batch.commit();
+      } catch (e) {
+        console.error(e);
+        const expired = e?.code === "permission-denied" && Date.now() - ms(m.createdAt) >= EDIT_WINDOW - 60 * 1000;
+        toast(expired ? "編集できるのは送信から10分以内のメッセージです" : errMsg(e), "error");
+        if (state.activeRoomId === room.id && !state.editing && !expired) {
+          state.editing = ed;
+          input.value = text;
+          renderReplyBar();
+          renderMessages();
+          autoGrow();
+          updateSendBtn();
+        }
+      }
+    }
+
     function renderReplyBar() {
       const bar = $("#reply-bar");
       const r = state.replyTo;
+      const ed = state.editing;
       const box = $("#messages");
       const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 150;
-      bar.hidden = !r;
-      bar.innerHTML = r ? `
+      bar.hidden = !r && !ed;
+      bar.innerHTML = ed ? `
+        <span class="shrink-0 text-indigo-500">${icon("pencil", "w-4 h-4")}</span>
+        <div class="flex-1 min-w-0 border-l-[3px] border-indigo-400 pl-2.5 fade-in">
+          <div class="text-xs font-semibold text-indigo-600 truncate">メッセージを編集</div>
+          <div class="text-xs text-slate-500 truncate">${esc(ed.text.replace(/\s+/g, " "))}</div>
+        </div>
+        <button type="button" data-action="cancel-edit" class="icon-btn w-8 h-8 shrink-0" aria-label="編集をやめる">${icon("x", "w-4 h-4")}</button>` : r ? `
         <span class="shrink-0 text-indigo-500">${icon("reply", "w-4 h-4")}</span>
         <div class="flex-1 min-w-0 border-l-[3px] border-indigo-400 pl-2.5 fade-in">
           <div class="text-xs font-semibold text-indigo-600 truncate">${esc(r.senderId === state.me.id ? "自分" : userName(r.senderId, r.senderName))} への返信</div>
@@ -3020,6 +3118,7 @@ const firebaseConfig = {
     // メッセージ送信
     // ============================================================
     async function send() {
+      if (state.editing) return saveEdit();
       const input = $("#msg-input");
       const text = input.value.trim();
       const room = currentRoom();
@@ -4917,6 +5016,8 @@ const firebaseConfig = {
       "unsend": (el) => unsendMessage(el.dataset.id),
       "reply": (el) => startReply(el.dataset.id),
       "cancel-reply": () => cancelReply(),
+      "edit-msg": (el) => startEdit(el.dataset.id),
+      "cancel-edit": () => cancelEdit(),
       "jump-to": (el) => jumpToMessage(el.dataset.id),
       "jump-to-pin": (el) => jumpToPin(el.dataset.id),
       "toggle-pins": () => togglePins(),
@@ -5002,6 +5103,9 @@ const firebaseConfig = {
       if (!isCoarse()) (tab === "login" ? $("#login-id") : $("#signup-name")).focus();
     }
 
+    // 文字の入力欄（チェックボックス・ファイル選択などは除く）
+    const TEXT_FIELD = "textarea, input:not([type=checkbox], [type=radio], [type=file], [type=button], [type=submit], [type=range], [type=color], [type=hidden])";
+
     function bindEvents() {
       document.addEventListener("click", (e) => {
         const closer = e.target.closest("[data-close]");
@@ -5044,6 +5148,8 @@ const firebaseConfig = {
         if (e.key === "Escape" && state.pinsOpen) { togglePins(false); return; }
         if (e.key === "Escape" && msgSearch?.open) { e.preventDefault(); closeMsgSearch(); return; }
         if (e.key === "Escape" && state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); return; }
+        // 何も入力されていない文字の入力欄では、Esc でフォーカスを外す（入力があるときは今までどおり）
+        if (e.key === "Escape" && !e.isComposing && e.target.matches?.(TEXT_FIELD) && !e.target.value) { e.preventDefault(); e.target.blur(); return; }
         // チャットを開いていて文字の入力欄にフォーカスしていなければ、Esc でチャットを抜ける（PC は「Chatter へようこそ」、スマホは一覧に戻る）
         if (e.key === "Escape" && !e.defaultPrevented && state.activeRoomId && !e.target.closest?.("input, textarea, select, [contenteditable]")) { exitRoom(); return; }
         if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('[role="button"]')) { e.preventDefault(); e.target.click(); }
@@ -5195,7 +5301,7 @@ const firebaseConfig = {
         autoGrow();
         updateSendBtn();
         updateMentionBox();
-        if (state.activeRoomId) state.drafts[state.activeRoomId] = input.value;
+        if (state.activeRoomId && !state.editing) state.drafts[state.activeRoomId] = input.value;
       });
       // DM の「入力中」：入力欄・ウィンドウのフォーカス、タブの表示状態が変わったら記録し、フォーカス中は定期的に更新する
       input.addEventListener("focus", () => updateTyping());
@@ -5224,6 +5330,7 @@ const firebaseConfig = {
           if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); mention = null; renderMentionBox(); return; }
         }
         if (e.key === "Escape" && stickerBoxOpen) { e.preventDefault(); e.stopPropagation(); closeStickerBox(); return; }
+        if (e.key === "Escape" && state.editing && !state.selectedMsgId) { e.preventDefault(); e.stopPropagation(); cancelEdit(); return; }
         if (e.key === "Escape" && state.replyTo && !state.selectedMsgId) { e.preventDefault(); e.stopPropagation(); cancelReply(); return; }
         if (e.key !== "Enter" || e.shiftKey) return; // Shift+Enter = 改行（テキストエリアの既定の動作）
         if (e.ctrlKey) {
