@@ -499,6 +499,8 @@ const firebaseConfig = {
     const MAX_TEXT = 2000;                  // 1メッセージの最大文字数
     const ONLINE_MS = 6 * 60 * 1000;        // この時間内に操作があれば「オンライン」
     const PRESENCE_INTERVAL = 5 * 60 * 1000; // 最終アクティブ時刻の更新間隔
+    const TYPING_BEAT = 20 * 1000;          // DM の入力欄にフォーカスしている間、「入力中」の記録を更新する間隔
+    const TYPING_TTL = 45 * 1000;           // 相手の記録の更新がこの時間止まったら「入力中」を消す（タブを閉じた場合など）
     const LOGIN_EMAIL_DOMAIN = "chatter.local"; // ログイン用メールアドレス「<ユーザーID>@chatter.local」（firestore.rules と合わせる）
     const MIN_PASSWORD = 6;                 // Firebase Authentication の最小文字数
     const DELETED_NAME = "退会したユーザー";
@@ -516,8 +518,11 @@ const firebaseConfig = {
     const STICKER_MAX_SVG = 50000;          // SVG 文字列の最大文字数
     const STICKER_MAX_NAME = 20;            // スタンプ名の最大文字数
     const STICKER_TEXT = "[スタンプ]";       // 一覧のプレビュー・通知・返信の引用に使う本文（スタンプのメッセージの text）
-    // SVG の形式：<svg …> の中に <path …/> だけが並ぶ（firestore.rules の isValidSvg と合わせる）
-    const STICKER_SVG_RE = /^<svg [^<>]*>(<path [^<>]*\/>)*<\/svg>$/;
+    // SVG の形式：<svg …> の中に <path …/> と、読み込んだ文字・画像を画像にした <image …/> が並ぶ（firestore.rules の isValidSvg と合わせる）
+    const STICKER_IMAGE_HREF_RE = /^data:image\/(png|webp|jpeg);base64,[A-Za-z0-9+/]+=*$/;
+    const STICKER_SVG_RE = /^<svg [^<>]*>(<path [^<>]*\/>|<image x="-?[0-9.]+" y="-?[0-9.]+" width="[0-9.]+" height="[0-9.]+" href="data:image\/(png|webp|jpeg);base64,[A-Za-z0-9+/]+=*"\/>)*<\/svg>$/;
+    // アイコンの SVG は <path> だけ（firestore.rules の isValidIcon と合わせる）
+    const PATH_SVG_RE = /^<svg [^<>]*>(<path [^<>]*\/>)*<\/svg>$/;
     const STICKER_COLORS = [
       "#111827", "#6b7280", "#ffffff", "#ef4444", "#f97316", "#facc15",
       "#22c55e", "#14b8a6", "#3b82f6", "#6366f1", "#a855f7", "#ec4899",
@@ -569,7 +574,8 @@ const firebaseConfig = {
       publicSearch: "",
       reads: new Map(),       // 開いているトークの既読（管理者のみ）：userId -> 最後にトークを見た時刻（ms）
       readsLoaded: false,
-      unsub: { users: null, rooms: null, messages: null, stickers: null, publicStickers: null, reads: null },
+      partnerTyping: null,    // 開いている DM の相手の入力中 { on, at（書いた時刻 ms）, seen（受け取った時刻 ms） }
+      unsub: { users: null, rooms: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null },
     };
     let readMap = {};
     let readSentMap = {};     // 既読を記録した、管理者の最新メッセージの時刻（roomId -> ms）
@@ -656,7 +662,7 @@ const firebaseConfig = {
       let src = iconSrcCache.get(icon);
       if (src === undefined) {
         src = ICON_IMAGE_RE.test(icon) && icon.length <= ICON_MAX_IMAGE ? icon
-          : STICKER_SVG_RE.test(icon) && icon.length <= ICON_MAX_SVG ? stickerSrc(icon)
+          : PATH_SVG_RE.test(icon) && icon.length <= ICON_MAX_SVG ? stickerSrc(icon)
           : null;
         if (iconSrcCache.size >= 300) iconSrcCache.clear();
         iconSrcCache.set(icon, src);
@@ -989,6 +995,9 @@ const firebaseConfig = {
 
     // 購読を止めてログアウトし、状態を初期化してログイン画面へ戻す
     function resetSession() {
+      if (typingRoomId && !state.accountDeleting) writeTyping(typingRoomId, false); // ログアウトの前に「入力中」を消す（間に合わなくても TYPING_TTL で消える）
+      typingRoomId = null;
+      clearTimeout(typingExpireTimer);
       Object.values(state.unsub).forEach((u) => u?.());
       shownNotifications.forEach((n) => n.close());
       shownNotifications.clear();
@@ -998,8 +1007,8 @@ const firebaseConfig = {
         renderedIds: new Set(), drafts: {}, replyTo: null, selectedMsgId: null, leavingRoomId: null, accountDeleting: false,
         stickers: [], stickersLoaded: false, reads: new Map(), readsLoaded: false,
         stickerView: "mine", publicStickers: [], publicStickersLoaded: false, publicStickersError: false,
-        publicLimit: PUBLIC_STICKER_PAGE, publicHasMore: false, publicSearch: "",
-        unsub: { users: null, rooms: null, messages: null, stickers: null, publicStickers: null, reads: null },
+        publicLimit: PUBLIC_STICKER_PAGE, publicHasMore: false, publicSearch: "", partnerTyping: null,
+        unsub: { users: null, rooms: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null },
       });
       adminKey = null;
       signOut(auth).catch((e) => console.warn(e));
@@ -1647,6 +1656,8 @@ const firebaseConfig = {
         const u = state.users.get(pid);
         subtitle = u?.deleted
           ? "退会済み"
+          : partnerIsTyping()
+          ? `<span class="text-indigo-600 font-medium animate-pulse">入力中...</span>`
           : isOnline(u)
             ? `<span class="text-emerald-600 font-medium">● オンライン</span>`
             : `@${esc(pid)}${u ? ` ・ 最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}`;
@@ -1922,6 +1933,7 @@ const firebaseConfig = {
           },
         );
         subscribeReads(roomId);
+        subscribeTyping(roomId);
       }
       const app = $("#app");
       if (app.dataset.view !== "chat") {
@@ -1931,6 +1943,54 @@ const firebaseConfig = {
       autoGrow(); // スマホではここで初めて入力欄が表示される
       renderSidebar();
       if (!isCoarse() && isMember(currentRoom())) $("#msg-input").focus();
+      updateTyping();
+    }
+
+    // ---- 入力中（DM のみ） ----
+    // 自分：DM の入力欄にフォーカスしている間は typing/{自分のID} = { on: true, at } を TYPING_BEAT ごとに書き直し、
+    // フォーカスが外れたら（別のトーク・別のウィンドウ・タブを隠した場合も）on: false にする
+    let typingRoomId = null;  // on: true を書いているルーム
+    let typingSentAt = 0;
+    function updateTyping(focused = document.activeElement === $("#msg-input") && document.hasFocus()) {
+      if (!state.me) return;
+      const room = currentRoom();
+      const want = focused && room?.type === "dm" && canSend(room) && document.visibilityState === "visible" ? room.id : null;
+      if (typingRoomId && typingRoomId !== want) writeTyping(typingRoomId, false);
+      if (want && (typingRoomId !== want || Date.now() - typingSentAt >= TYPING_BEAT - 1000)) writeTyping(want, true);
+      typingRoomId = want;
+    }
+    function writeTyping(roomId, on) {
+      if (on) typingSentAt = Date.now();
+      setDoc(doc(db, "rooms", roomId, "typing", state.me.id), { on, at: serverTimestamp() }).catch((e) => console.warn(e));
+    }
+
+    // 相手：開いている DM の相手の typing を購読し、チャットのヘッダーに「入力中...」を出す
+    let typingExpireTimer = null;
+    function subscribeTyping(roomId) {
+      state.unsub.typing?.();
+      state.unsub.typing = null;
+      state.partnerTyping = null;
+      clearTimeout(typingExpireTimer);
+      const room = currentRoom();
+      if (room?.type !== "dm") return;
+      state.unsub.typing = onSnapshot(
+        doc(db, "rooms", roomId, "typing", partnerOf(room)),
+        (snap) => {
+          if (state.activeRoomId !== roomId) return;
+          const d = snap.data({ serverTimestamps: "estimate" });
+          state.partnerTyping = d ? { on: d.on === true, at: ms(d.at), seen: Date.now() } : null;
+          renderChatHeader();
+          // 更新が止まったら消す
+          clearTimeout(typingExpireTimer);
+          if (state.partnerTyping?.on) typingExpireTimer = setTimeout(renderChatHeader, TYPING_TTL + 100);
+        },
+        (e) => console.warn(e), // 読めなくても、トークはそのまま使える
+      );
+    }
+    // 受け取ってから TYPING_TTL 以内で、書かれた時刻も古すぎない（以前に残ったままの記録を除く。端末の時計のずれは 1 分まで許す）
+    function partnerIsTyping() {
+      const t = state.partnerTyping, now = Date.now();
+      return !!t?.on && now - t.seen < TYPING_TTL && now - t.at < TYPING_TTL + 60 * 1000;
     }
 
     // 既読（管理者のみ）：開いているトークのメンバーが最後にトークを見た時刻
@@ -1959,8 +2019,13 @@ const firebaseConfig = {
       state.unsub.reads = null;
       state.reads = new Map();
       state.readsLoaded = false;
+      state.unsub.typing?.();
+      state.unsub.typing = null;
+      state.partnerTyping = null;
+      clearTimeout(typingExpireTimer);
       state.activeRoomId = null;
       state.activeRoomFallback = null;
+      updateTyping(false); // 「入力中」を消す
       state.leavingRoomId = null;
       state.selectedMsgId = null;
       state.replyTo = null;
@@ -2352,6 +2417,7 @@ const firebaseConfig = {
       });
       if (!ok) return;
       state.leavingRoomId = room.id;
+      if (typingRoomId === room.id) typingRoomId = null; // 削除したあとに「入力中」の記録を書き戻さない
       const roomRef = doc(db, "rooms", room.id);
       const deleteMessages = async () => {
         const snap = await getDocs(collection(roomRef, "messages"));
@@ -2365,6 +2431,7 @@ const firebaseConfig = {
         await deleteMessages();
         const batch = writeBatch(db);
         (room.members || []).forEach((id) => batch.delete(doc(roomRef, "reads", id))); // 既読の記録
+        if (isDm) room.members.forEach((id) => batch.delete(doc(roomRef, "typing", id))); // 入力中の記録
         batch.delete(roomRef);
         await batch.commit();
         await deleteMessages(); // 削除中に届いたメッセージも消す
@@ -2548,7 +2615,7 @@ const firebaseConfig = {
     function openGroupIconEditor() {
       const room = currentRoom();
       if (!room || room.type !== "group" || !isMember(room)) return;
-      openDrawEditor({ kind: "groupIcon", id: room.id, svg: STICKER_SVG_RE.test(room.icon || "") ? room.icon : null, title: "グループのアイコンを描く" });
+      openDrawEditor({ kind: "groupIcon", id: room.id, svg: PATH_SVG_RE.test(room.icon || "") ? room.icon : null, title: "グループのアイコンを描く" });
     }
 
     async function saveDrawnGroupIcon() {
@@ -3261,19 +3328,22 @@ const firebaseConfig = {
     async function importStickerFile(file) {
       if (!/\.svg$/i.test(file.name) && file.type !== "image/svg+xml") throw new Error("SVG ファイル（.svg）を選んでください。");
       if (file.size > 5 * 1024 * 1024) throw new Error("ファイルが大きすぎます（5MB まで）。");
-      const { strokes, skipped } = svgToStrokes(await file.text());
+      const { strokes, skipped, tooLarge } = await svgToStrokes(await file.text());
       closeStickerBox();
       const name = [...file.name.replace(/\.svg$/i, "").trim()].slice(0, STICKER_MAX_NAME).join("");
       openDrawEditor({ kind: "sticker", strokes, name, title: "SVG から作成" });
-      if (skipped) toast(`文字・画像など${skipped}個の要素は読み込めませんでした`);
+      if (tooLarge) toast(`容量の上限に収まらない文字・画像が${tooLarge}か所あり、読み込めませんでした`);
+      else if (skipped) toast(`外部ファイルの画像など${skipped}個の要素は読み込めませんでした`);
     }
 
     // ---- SVG の作成・読み込み ----
     // ストローク { color: "#rrggbb", width, points: [[x, y], …] } を、座標を間引いて整数に丸めた <path> にする
     // 読み込んだ SVG の図形 { attrs: { d, fill, … } }（SHAPE_ATTRS で確認済みの属性）は、そのまま <path> にする
+    // 読み込んだ文字・画像 { image: { x, y, w, h, href } }（href は PNG / WEBP / JPEG の data URL）は <image> にする
     function buildStickerSvg(strokes) {
       const paths = strokes.map((s) => {
         if (s.attrs) return `<path ${Object.entries(s.attrs).map(([k, v]) => `${k}="${v}"`).join(" ")}/>`;
+        if (s.image) return stickerImageTag(s.image);
         const pts = simplifyPoints(s.points, 0.8)
           .map(([x, y]) => [Math.round(clampCoord(x)), Math.round(clampCoord(y))])
           .filter((p, i, a) => i === 0 || p[0] !== a[i - 1][0] || p[1] !== a[i - 1][1]);
@@ -3285,6 +3355,7 @@ const firebaseConfig = {
     }
 
     const clampCoord = (v) => Math.min(STICKER_SIZE, Math.max(0, v));
+    const stickerImageTag = ({ x, y, w, h, href }) => `<image x="${x}" y="${y}" width="${w}" height="${h}" href="${href}"/>`;
 
     // Ramer–Douglas–Peucker 法で、線の形を保ったまま点を間引く
     function simplifyPoints(points, tolerance) {
@@ -3341,8 +3412,13 @@ const firebaseConfig = {
     function parseStickerSvg(svg) {
       const strokes = [];
       if (typeof svg !== "string" || !STICKER_SVG_RE.test(svg)) return strokes;
-      for (const [, attrs] of svg.matchAll(/<path ([^<>]*)\/>/g)) {
+      for (const [, tag, attrs] of svg.matchAll(/<(path|image) ([^<>]*)\/>/g)) {
         const attr = Object.fromEntries([...attrs.matchAll(/([\w-]+)="([^"]*)"/g)].map((a) => [a[1], a[2]]));
+        if (tag === "image") {
+          const image = { x: attr.x, y: attr.y, w: attr.width, h: attr.height, href: attr.href };
+          if (["x", "y", "w", "h"].every((k) => SVG_NUM_RE.test(image[k] ?? "")) && STICKER_IMAGE_HREF_RE.test(image.href ?? "")) strokes.push({ image });
+          continue;
+        }
         // エディタで描いた線（d・stroke・stroke-width だけで、d が M と L の座標）以外は、読み込んだ図形として扱う
         const drawn = Object.keys(attr).every((k) => ["d", "stroke", "stroke-width"].includes(k)) && /^M[\d.\s-]*(L[\d.\s-]*)?$/.test(attr.d || "");
         if (!drawn) {
@@ -3362,23 +3438,27 @@ const firebaseConfig = {
     }
 
     // ---- 手持ちの SVG の読み込み ----
-    // 任意の SVG を、スタンプの形式（<svg viewBox="0 0 240 240"> の中に <path> だけ）の図形に変換する。
+    // 任意の SVG を、スタンプの形式（<svg viewBox="0 0 240 240"> の中に <path> と <image>）に変換する。
     // 画面外で実際に描画して、各図形の最終的な色・線の太さ・座標変換（viewBox・transform）を読み取り、
-    // 図形を path の d と transform="matrix(…)" に置き換える。文字・埋め込み画像・グラデーション（最初の色で塗る）・
-    // クリップ・マスク・破線などは再現しない。サイズに収まらないときは座標の桁数を減らしてやり直す
+    // 図形を path の d と transform="matrix(…)" に置き換える。グラデーション（最初の色で塗る）・クリップ・マスク・破線などは再現しない。
+    // 文字と埋め込み画像（data URL）は、重なり順を保つよう、続けて並んでいる分ごとに画像にして <image> で入れる（STICKER_IMAGE_HREF_RE の形式）。
+    // サイズに収まらないときは、画像の解像度・画質と、図形の座標の桁数を減らしてやり直す
     const XLINK_NS = "http://www.w3.org/1999/xlink";
-    function svgToStrokes(text) {
+    const RASTER_RUN_ATTR = "data-chatter-run"; // 画像にする文字・画像の要素に付ける、何番目のまとまりか
+    async function svgToStrokes(text) {
       const src = new DOMParser().parseFromString(text, "image/svg+xml").documentElement;
       if (src.namespaceURI !== SVG_NS || src.localName !== "svg") throw new Error("SVG ファイルとして読み込めませんでした。");
       // このアプリで書き出した SVG は、描いた線を線のまま（あとから消しゴムで消せる形で）読み込む
       const own = text.trim();
       if (STICKER_SVG_RE.test(own) && src.getAttribute("viewBox") === `0 0 ${STICKER_SIZE} ${STICKER_SIZE}`) {
         const strokes = parseStickerSvg(own);
-        if (strokes.length) return { strokes, skipped: 0 };
+        if (strokes.length) return { strokes, skipped: 0, tooLarge: 0 };
       }
       let skipped = 0;
-      // 画面に入れる前に、スクリプト・イベント属性・外部への参照を取り除く
+      // 画面に入れる前に、スクリプト・イベント属性・外部への参照を取り除く（画像は、ファイルに埋め込まれた data URL のものだけ残す）
+      const embeddedImage = (el) => el.localName === "image" && /^data:image\//i.test((el.getAttribute("href") || el.getAttributeNS(XLINK_NS, "href") || "").trim());
       for (const el of src.querySelectorAll("script, foreignObject, image, feImage, iframe, video, audio, canvas, animate, animateMotion, animateTransform, set, discard")) {
+        if (embeddedImage(el)) continue;
         if (["foreignObject", "image", "iframe", "video", "canvas"].includes(el.localName)) skipped++;
         el.remove();
       }
@@ -3386,7 +3466,8 @@ const firebaseConfig = {
       for (const el of [src, ...src.querySelectorAll("*")]) {
         for (const a of [...el.attributes]) {
           const n = a.name.toLowerCase();
-          if (n.startsWith("on") || (/(^|:)href$/.test(n) && !a.value.trim().startsWith("#"))) el.removeAttributeNode(a);
+          const ref = a.value.trim();
+          if (n.startsWith("on") || (/(^|:)href$/.test(n) && !ref.startsWith("#") && !(el.localName === "image" && /^data:image\//i.test(ref)))) el.removeAttributeNode(a);
           else if (n === "style") a.value = noExternalUrl(a.value);
         }
         if (el.localName === "style") el.textContent = noExternalUrl(el.textContent);
@@ -3428,7 +3509,9 @@ const firebaseConfig = {
       outer.appendChild(svg);
       host.attachShadow({ mode: "closed" }).appendChild(outer);
       document.body.appendChild(host);
-      const shapes = [];
+      // items：図形 { shape } と、画像にする文字・画像のまとまり { run: 番号 } を、重なり順（文書の順）に並べたもの
+      const items = [];
+      let runs = 0, rasterSvg = null;
       try {
         // viewBox も width・height もない SVG は、描かれている範囲を枠に合わせる
         if (!svg.getAttribute("viewBox")) {
@@ -3436,9 +3519,8 @@ const firebaseConfig = {
           if (b.width > 0 && b.height > 0) svg.setAttribute("viewBox", `${b.x} ${b.y} ${b.width} ${b.height}`);
         }
         const base = outer.getScreenCTM().inverse();
-        for (const el of svg.querySelectorAll("path, rect, circle, ellipse, line, polyline, polygon, text")) {
+        for (const el of svg.querySelectorAll("path, rect, circle, ellipse, line, polyline, polygon, text, image")) {
           if (el.closest("defs, clipPath, mask, symbol, marker, pattern")) continue;
-          if (el.localName === "text") { skipped++; continue; }
           const cs = getComputedStyle(el);
           if (cs.visibility !== "visible") continue;
           let opacity = 1, hidden = false;
@@ -3447,27 +3529,113 @@ const firebaseConfig = {
             if (pcs.display === "none") { hidden = true; break; }
             opacity *= parseFloat(pcs.opacity);
           }
-          if (hidden) continue;
+          if (hidden || !(opacity > 0)) continue;
+          if (el.localName === "text" || el.localName === "image") {
+            // 直前も文字・画像なら同じまとまりにする（間に図形があれば別のまとまり）
+            if (!items.length || items[items.length - 1].run === undefined) items.push({ run: runs++ });
+            el.setAttribute(RASTER_RUN_ATTR, items[items.length - 1].run);
+            continue;
+          }
           const fill = svgPaint(svg, cs.fill, opacity * parseFloat(cs.fillOpacity));
           const strokeWidth = parseFloat(cs.strokeWidth) || 0;
           const stroke = strokeWidth > 0 ? svgPaint(svg, cs.stroke, opacity * parseFloat(cs.strokeOpacity)) : null;
           const d = shapeToD(el);
           const ctm = el.getScreenCTM();
           if ((!fill && !stroke) || !d || !ctm) continue;
-          shapes.push({ d, fill, stroke, strokeWidth, cs: {
+          items.push({ shape: { d, fill, stroke, strokeWidth, cs: {
             fillRule: cs.fillRule, linecap: cs.strokeLinecap, linejoin: cs.strokeLinejoin, miterlimit: parseFloat(cs.strokeMiterlimit) || 4,
-          }, m: base.multiply(ctm) });
+          }, m: base.multiply(ctm) } });
         }
+        if (runs) rasterSvg = svg.cloneNode(true);
       } finally {
         host.remove();
       }
-      if (!shapes.length) throw new Error("読み込める図形がありませんでした（文字や画像は読み込めません）。");
+      if (!items.length) throw new Error("読み込める図形・文字・画像がありませんでした。");
+      const shapeStrokes = (tol) => items.map((it) => (it.shape ? { attrs: shapeAttrs(it.shape, tol) } : null)).filter((s) => s?.attrs);
+      // 文字・画像のまとまりを画像にする。容量は、図形を一番粗く丸めたときの残りを、まとまりの数で分ける
+      const images = new Map(); // run -> { x, y, w, h, href }
+      let tooLarge = 0;
+      if (rasterSvg) {
+        let budget = STICKER_MAX_SVG - buildStickerSvg(shapeStrokes(0.8)).length;
+        for (let r = 0; r < runs; r++) {
+          const image = await rasterizeRun(rasterSvg, r, Math.floor(budget / (runs - r)));
+          if (image === null) continue; // 何も描かれていない
+          if (!image) { tooLarge++; continue; }
+          images.set(r, image);
+          budget -= stickerImageTag(image).length;
+        }
+      }
+      const build = (tol) => items.map((it) => (it.shape ? { attrs: shapeAttrs(it.shape, tol) } : images.has(it.run) ? { image: images.get(it.run) } : null)).filter((s) => s?.attrs || s?.image);
+      if (!build(0.8).length) {
+        throw new Error(tooLarge ? `文字・画像が大きすぎて、スタンプの上限（${STICKER_MAX_SVG / 1000} KB）に収まりません。` : "読み込める図形・文字・画像がありませんでした。");
+      }
       // 誤差（スタンプの 240×240 の座標での許容量）を広げながら、上限に収まる桁数を探す
       for (const tol of [0.05, 0.2, 0.8]) {
-        const strokes = shapes.map((s) => ({ attrs: shapeAttrs(s, tol) })).filter((s) => s.attrs);
-        if (buildStickerSvg(strokes).length <= STICKER_MAX_SVG) return { strokes, skipped };
+        const strokes = build(tol);
+        if (buildStickerSvg(strokes).length <= STICKER_MAX_SVG) return { strokes, skipped, tooLarge };
       }
       throw new Error(`SVG が複雑すぎて、スタンプの上限（${STICKER_MAX_SVG / 1000} KB）に収まりません。`);
+    }
+
+    // 文字・画像のまとまり（RASTER_RUN_ATTR が run の要素）だけを残した SVG を、240×240 の枠の座標のまま画像にする。
+    // 描かれた範囲で切り抜き、タグ全体が budget 文字以内になるまで解像度・画質を下げる。何も描かれていなければ null、収まらなければ false
+    const RASTER_SCALE = 3; // 枠の 1 単位を何ピクセルで描くか（拡大しても粗くならないように）
+    async function rasterizeRun(svg, run, budget) {
+      const clone = svg.cloneNode(true);
+      for (const el of clone.querySelectorAll("path, rect, circle, ellipse, line, polyline, polygon, text, image")) {
+        if (el.closest("defs, clipPath, mask, symbol, marker, pattern")) continue;
+        if (el.getAttribute(RASTER_RUN_ATTR) !== String(run)) el.remove();
+      }
+      const px = STICKER_SIZE * RASTER_SCALE;
+      clone.setAttribute("width", px);
+      clone.setAttribute("height", px);
+      const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" }));
+      const cv = document.createElement("canvas");
+      cv.width = cv.height = px;
+      const ctx = cv.getContext("2d", { willReadFrequently: true });
+      try {
+        const img = new Image();
+        img.src = url;
+        await img.decode();
+        ctx.drawImage(img, 0, 0, px, px);
+      } catch {
+        return null; // 描けない（壊れた画像など）
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      // 描かれた範囲（不透明度のあるピクセル）
+      const data = ctx.getImageData(0, 0, px, px).data;
+      let x0 = px, y0 = px, x1 = -1, y1 = -1;
+      for (let y = 0; y < px; y++) {
+        for (let x = 0; x < px; x++) {
+          if (data[(y * px + x) * 4 + 3] > 2) {
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+          }
+        }
+      }
+      if (x1 < 0) return null;
+      const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+      const pos = { x: svgNum(x0 / RASTER_SCALE, 2), y: svgNum(y0 / RASTER_SCALE, 2), w: svgNum(cw / RASTER_SCALE, 2), h: svgNum(ch / RASTER_SCALE, 2) };
+      // 解像度（枠の 1 単位あたりのピクセル数）と形式を、きれいな順に試す。WEBP を書き出せないブラウザでは PNG だけ
+      const out = document.createElement("canvas");
+      const octx = out.getContext("2d");
+      for (const scale of [RASTER_SCALE, 2, 1.5, 1, 0.75, 0.5]) {
+        out.width = Math.max(1, Math.round(cw * scale / RASTER_SCALE));
+        out.height = Math.max(1, Math.round(ch * scale / RASTER_SCALE));
+        octx.clearRect(0, 0, out.width, out.height);
+        octx.imageSmoothingQuality = "high";
+        octx.drawImage(cv, x0, y0, cw, ch, 0, 0, out.width, out.height);
+        for (const [type, q] of [["image/png"], ["image/webp", 0.9], ["image/webp", 0.75], ["image/webp", 0.6]]) {
+          const href = out.toDataURL(type, q);
+          if (!href.startsWith(`data:${type};`) || !STICKER_IMAGE_HREF_RE.test(href)) continue;
+          const image = { ...pos, href };
+          if (stickerImageTag(image).length <= budget) return image;
+        }
+      }
+      return false;
     }
 
     // 計算済みの塗り（"rgb(…)" / "url(#…)" / "none"）を { color: "#rrggbb", alpha } にする。グラデーションは最初の色で塗る
@@ -3598,7 +3766,7 @@ const firebaseConfig = {
     // アイコンを描く（今のアイコンが描いたものなら、その続きから描ける）
     function openIconEditor() {
       const cur = state.me.icon;
-      openDrawEditor({ kind: "icon", svg: STICKER_SVG_RE.test(cur || "") ? cur : null, title: "アイコンを描く" });
+      openDrawEditor({ kind: "icon", svg: PATH_SVG_RE.test(cur || "") ? cur : null, title: "アイコンを描く" });
     }
 
     // スタンプ・アイコン共通のエディタ。ユーザーのアイコンは丸く、グループのアイコンは角を丸めて表示するので、枠もその形にする
@@ -3749,6 +3917,11 @@ const firebaseConfig = {
 
     // ストローク・読み込んだ図形を <path> 要素として描く（文字列の HTML は使わない）
     function strokePath(s) {
+      if (s.image) {
+        const img = document.createElementNS(SVG_NS, "image");
+        for (const [k, v] of [["x", s.image.x], ["y", s.image.y], ["width", s.image.w], ["height", s.image.h], ["href", s.image.href]]) img.setAttribute(k, v);
+        return img;
+      }
       const path = document.createElementNS(SVG_NS, "path");
       if (s.attrs) {
         for (const [k, v] of Object.entries(s.attrs)) path.setAttribute(k, v);
@@ -3835,7 +4008,8 @@ const firebaseConfig = {
       for (let i = editor.strokes.length - 1; i >= 0; i--) {
         const s = editor.strokes[i];
         const reach = s.width / 2 + 6;
-        const hit = s.attrs ? shapeHit(paths[i], s.attrs, pt)
+        const hit = s.image ? pt[0] >= +s.image.x && pt[0] <= +s.image.x + +s.image.w && pt[1] >= +s.image.y && pt[1] <= +s.image.y + +s.image.h
+          : s.attrs ? shapeHit(paths[i], s.attrs, pt)
           : s.points.length === 1
           ? Math.hypot(pt[0] - s.points[0][0], pt[1] - s.points[0][1]) <= reach
           : s.points.some((p, j) => j > 0 && segmentDistance(pt, s.points[j - 1], p) <= reach);
@@ -4642,6 +4816,13 @@ const firebaseConfig = {
         updateMentionBox();
         if (state.activeRoomId) state.drafts[state.activeRoomId] = input.value;
       });
+      // DM の「入力中」：入力欄・ウィンドウのフォーカス、タブの表示状態が変わったら記録し、フォーカス中は定期的に更新する
+      input.addEventListener("focus", () => updateTyping());
+      input.addEventListener("blur", () => updateTyping(false));
+      window.addEventListener("focus", () => updateTyping());
+      window.addEventListener("blur", () => updateTyping(false));
+      window.addEventListener("pagehide", () => updateTyping(false));
+      setInterval(() => { if (typingRoomId) updateTyping(); }, 5000);
       // カーソルを動かしたら候補を出し直す・入力欄から離れたら閉じる
       input.addEventListener("click", updateMentionBox);
       input.addEventListener("keyup", (e) => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) updateMentionBox(); });
@@ -4697,6 +4878,7 @@ const firebaseConfig = {
 
       // タブの表示状態
       document.addEventListener("visibilitychange", () => {
+        updateTyping(); // タブを隠したら「入力中」を消す
         if (document.visibilityState !== "visible" || !state.me) return;
         touchPresence();
         if (state.activeRoomId && state.messagesLoaded && isMember(currentRoom())) markRead(state.activeRoomId);
