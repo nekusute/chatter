@@ -551,6 +551,7 @@ const firebaseConfig = {
       rooms: [],              // 自分が参加しているルーム
       usersLoaded: false,
       roomsLoaded: false,
+      roomsSynced: false,     // サーバーから一覧が届いたか（それまでは新着を通知しない）
       tab: "talk",
       search: "",
       activeRoomId: null,
@@ -1002,7 +1003,7 @@ const firebaseConfig = {
       shownNotifications.forEach((n) => n.close());
       shownNotifications.clear();
       Object.assign(state, {
-        uid: null, me: null, users: new Map(), rooms: [], usersLoaded: false, roomsLoaded: false,
+        uid: null, me: null, users: new Map(), rooms: [], usersLoaded: false, roomsLoaded: false, roomsSynced: false,
         tab: "talk", search: "", activeRoomId: null, activeRoomFallback: null, messages: [], messagesLoaded: false,
         renderedIds: new Set(), drafts: {}, replyTo: null, selectedMsgId: null, leavingRoomId: null, accountDeleting: false,
         stickers: [], stickersLoaded: false, reads: new Map(), readsLoaded: false,
@@ -1105,7 +1106,6 @@ const firebaseConfig = {
     // ============================================================
     // ページを開いている間（タブが裏にあっても）ブラウザの通知を出す。オン/オフはこのブラウザの localStorage に保存
     const NOTIFY_KEY = "chatter:notify";
-    let notifySince = 0;                  // これより前のメッセージは通知しない（ログイン前に届いていた分）
     const shownNotifications = new Map(); // roomId（メンションは "<roomId>:mention"）-> Notification
 
     const notifyEnabled = () => store.get(NOTIFY_KEY) === "on" && "Notification" in window && Notification.permission === "granted";
@@ -1175,6 +1175,9 @@ const firebaseConfig = {
     // 自分がメンションされているか（@表示名 または @All）
     const mentionsMe = (m) => !!m && m.senderId !== state.me.id && (!!m.mentionAll || !!m.mentions?.includes(state.me.id));
 
+    const NOTIFY_TYPES = ["text", "sticker", "image"]; // スタンプ・画像の本文は「[スタンプ]」「[画像]」
+    const notifiable = (m) => !!m && NOTIFY_TYPES.includes(m.type) && m.senderId !== state.me.id;
+
     // ルーム一覧の更新で、最後のメッセージが新しくなったトークを通知する
     function notifyNewMessages(prevLast) {
       if (!notifyEnabled()) return;
@@ -1182,46 +1185,75 @@ const firebaseConfig = {
       for (const room of state.rooms) {
         const lm = room.lastMessage;
         const at = ms(lm?.createdAt);
-        if (!lm || !["text", "sticker", "image"].includes(lm.type) || lm.senderId === state.me.id) continue; // スタンプ・画像の本文は「[スタンプ]」「[画像]」
-        if (at <= notifySince || at <= (prevLast.get(room.id) || 0)) continue;
-        if (room.id === state.activeRoomId && document.visibilityState === "visible") continue; // 開いて見ているトーク
+        const prev = prevLast.get(room.id) || 0;
+        // 自分の送信は通知しない（最後がシステムメッセージでも、その前に新着があるかもしれないので確かめる）
+        if (!lm || lm.senderId === state.me.id || at <= prev) continue;
+        // 開いて見ているトーク（ブラウザが画面に出ていても、別のアプリを使っているときは通知する）
+        if (room.id === state.activeRoomId && document.visibilityState === "visible" && document.hasFocus()) continue;
         if (room.type === "group" && muted.has(room.id)) continue; // 通知をオフにしたグループ
-        notifyMessage(room, lm, at).catch((e) => console.warn(e));
+        notifyMessage(room, lm, at, prev).catch((e) => console.warn(e));
       }
     }
 
+    // 前回の一覧の更新から届いたメッセージ（一度の更新に複数件まとまって届くことがあるので、最後の1件だけでなく読み直す）
+    async function newMessagesSince(room, lm, at, prev) {
+      if (!prev) return [lm]; // 新しく加わったトーク（過去のメッセージは通知しない）
+      try {
+        const snap = await getDocs(query(collection(db, "rooms", room.id, "messages"),
+          where("createdAt", ">", new Date(prev)), orderBy("createdAt", "desc"), limit(20)));
+        const list = snap.docs.map(withId).filter((m) => ms(m.createdAt) > prev && ms(m.createdAt) <= at).reverse();
+        if (list.length) return list;
+      } catch (e) {
+        console.warn(e);
+      }
+      return [lm];
+    }
+
     // 複数のタブで開いていても、1件のメッセージにつき通知は1回だけ出す
-    async function notifyMessage(room, lm, at) {
+    async function notifyMessage(room, lm, at, prev) {
       const me = state.me;
-      const show = () => {
+      const show = async () => {
         if (state.me !== me) return;
         const key = `${room.id}:${at}`;
         const recent = store.json("chatter:notified", []);
         if (recent.includes(key)) return;
         store.set("chatter:notified", JSON.stringify([key, ...recent].slice(0, 50)));
-        const sender = userName(lm.senderId, lm.senderName);
-        const mention = room.type === "group" && mentionsMe(lm);
-        // メンションは「だれが」「どのグループで」を見出しに、本文をそのまま表示する
-        const title = !mention ? roomTitle(room)
-          : lm.mentions?.includes(state.me.id) ? `${sender} さんからのメンション（${roomTitle(room)}）`
-          : `${sender} さんから全員へのメンション（${roomTitle(room)}）`;
-        const tagKey = mention ? `${room.id}:mention` : room.id; // メンションの通知は通常の新着で置き換えない
-        const n = showNotification(title, {
-          body: room.type === "group" && !mention ? `${sender}: ${lm.text}` : lm.text,
-          tag: `chatter:${tagKey}`, // 同じトークの通知は最新の1件に置き換える
-          renotify: true,
-        });
-        if (!n) return;
-        shownNotifications.set(tagKey, n);
-        n.onclick = () => {
-          window.focus();
-          n.close();
-          const r = state.me === me && state.rooms.find((x) => x.id === room.id);
-          if (r) openRoom(r.id, r);
+        const msgs = (await newMessagesSince(room, lm, at, prev)).filter(notifiable);
+        if (state.me !== me || !notifyEnabled()) return;
+        const group = room.type === "group";
+        const mentions = group ? msgs.filter(mentionsMe) : [];
+        const others = msgs.filter((m) => !mentions.includes(m));
+        const open = (n, tagKey) => {
+          if (!n) return;
+          shownNotifications.set(tagKey, n);
+          n.onclick = () => {
+            window.focus();
+            n.close();
+            const r = state.me === me && state.rooms.find((x) => x.id === room.id);
+            if (r) openRoom(r.id, r);
+          };
         };
+        // メンションは「だれが」「どのグループで」を見出しに、本文をそのまま表示する。通常の新着で置き換えない
+        const m = mentions.at(-1);
+        if (m) {
+          const sender = userName(m.senderId, m.senderName);
+          const title = m.mentions?.includes(state.me.id) ? `${sender} さんからのメンション（${roomTitle(room)}）`
+            : `${sender} さんから全員へのメンション（${roomTitle(room)}）`;
+          open(showNotification(title, { body: m.text.slice(0, 100), tag: `chatter:${room.id}:mention`, renotify: true }), `${room.id}:mention`);
+        }
+        const o = others.at(-1);
+        if (o) {
+          const sender = userName(o.senderId, o.senderName);
+          const text = o.text.slice(0, 100);
+          open(showNotification(others.length > 1 ? `${roomTitle(room)}（新着 ${others.length} 件）` : roomTitle(room), {
+            body: group ? `${sender}: ${text}` : text,
+            tag: `chatter:${room.id}`, // 同じトークの通知は最新の1件に置き換える
+            renotify: true,
+          }), room.id);
+        }
       };
       if (navigator.locks) await navigator.locks.request("chatter:notify", show);
-      else show();
+      else await show();
     }
 
     function closeNotification(roomId) {
@@ -1251,7 +1283,6 @@ const firebaseConfig = {
     }
 
     function subscribeCore() {
-      notifySince = Date.now();
       state.unsub.users = onSnapshot(
         query(collection(db, "users"), orderBy("lastSeen", "desc"), limit(300)),
         (snap) => {
@@ -1274,16 +1305,19 @@ const firebaseConfig = {
         onListenError,
       );
       // 複合インデックス不要にするため、並び替えはクライアント側で行う
+      // 端末のキャッシュから読んだ一覧は古いことがある。サーバーから最初に届いた一覧までは通知しない（ログイン前に届いていた分）
       state.unsub.rooms = onSnapshot(
         query(collection(db, "rooms"), where("members", "array-contains", state.me.id)),
+        { includeMetadataChanges: true }, // キャッシュからサーバーへの切り替わりを知るため
         (snap) => {
           const before = new Set(state.rooms.map((r) => r.id));
           const prevLast = new Map(state.rooms.map((r) => [r.id, ms(r.lastMessage?.createdAt)]));
-          const wasLoaded = state.roomsLoaded;
+          const wasSynced = state.roomsSynced;
+          if (!snap.metadata.fromCache) state.roomsSynced = true;
           state.rooms = snap.docs.map(withId).sort((a, b) => ms(b.updatedAt) - ms(a.updatedAt));
           state.roomsLoaded = true;
           checkActiveRoomGone(before);
-          if (wasLoaded) notifyNewMessages(prevLast); // 最初の読み込みでは通知しない
+          if (wasSynced) notifyNewMessages(prevLast);
           renderSidebar();
           renderChatHeader();
         },
