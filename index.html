@@ -479,7 +479,7 @@ const firebaseConfig = {
   </div>
   <div id="toast-root" class="fixed z-[60] top-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm flex flex-col items-center gap-2 pointer-events-none"></div>
   <!-- スタンプにする SVG の選択（一覧を描き直してもファイル選択が途切れないよう、一覧の外に置いて <label for> で開く） -->
-  <input type="file" id="sticker-file" accept=".svg,image/svg+xml" class="sr-only" style="position:fixed" tabindex="-1" aria-hidden="true" />
+  <input type="file" id="sticker-file" accept=".svg,image/svg+xml" multiple class="sr-only" style="position:fixed" tabindex="-1" aria-hidden="true" />
   <!-- チャットで送る画像の選択 -->
   <input type="file" id="image-file" accept="image/*" class="sr-only" style="position:fixed" tabindex="-1" aria-hidden="true" />
 
@@ -1626,7 +1626,7 @@ const firebaseConfig = {
       const toolbar = `
         <div class="px-2 pt-1 pb-3 flex gap-2">
           <button type="button" data-action="new-sticker" class="btn-chip flex-1 text-white bg-gradient-to-r from-indigo-600 to-violet-600 shadow-md shadow-indigo-500/20 hover:from-indigo-500 hover:to-violet-500">${icon("plus", "w-4 h-4")}新規作成</button>
-          <label for="sticker-file" role="button" tabindex="0" class="btn-chip flex-1 cursor-pointer bg-white text-indigo-600 ring-1 ring-indigo-200 hover:bg-indigo-50" title="SVG ファイルを読み込んでスタンプにする">${icon("upload", "w-4 h-4")}SVGを読み込む</label>
+          <label for="sticker-file" role="button" tabindex="0" class="btn-chip flex-1 cursor-pointer bg-white text-indigo-600 ring-1 ring-indigo-200 hover:bg-indigo-50" title="SVG ファイルを読み込んでスタンプにする（複数選ぶと、まとめてそのままスタンプにします）">${icon("upload", "w-4 h-4")}SVGを読み込む</label>
         </div>`;
       if (!state.stickersLoaded) return toolbar + skeleton();
       const stickers = state.stickers.filter((s) => !q || String(s.name).toLowerCase().includes(q));
@@ -3782,6 +3782,32 @@ const firebaseConfig = {
       else if (skipped) toast(`外部ファイルの画像など${skipped}個の要素は読み込めませんでした`);
     }
 
+    // 複数の SVG ファイルを選んだときは、エディタを開かずに1つずつそのままスタンプにする（名前はファイル名）
+    async function importStickerFiles(files) {
+      if (files.length === 1) return importStickerFile(files[0]);
+      closeStickerBox();
+      toast(`${files.length}個の SVG を読み込んでいます…`);
+      let ok = 0;
+      const failed = [];
+      for (const file of files) {
+        try {
+          if (!/\.svg$/i.test(file.name) && file.type !== "image/svg+xml") throw new Error("SVG ファイルではありません。");
+          if (file.size > 5 * 1024 * 1024) throw new Error("ファイルが大きすぎます（5MB まで）。");
+          const { strokes } = await svgToStrokes(await file.text());
+          const svg = buildStickerSvg(strokes);
+          if (svg.length > STICKER_MAX_SVG) throw new Error("スタンプのデータが大きすぎます。");
+          const name = [...file.name.replace(/\.svg$/i, "").trim()].slice(0, STICKER_MAX_NAME).join("") || "スタンプ";
+          await setDoc(doc(collection(db, "users", state.me.id, "stickers")), { name, svg, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+          ok++;
+        } catch (err) {
+          console.error(file.name, err);
+          failed.push(file.name);
+        }
+      }
+      if (ok) toast(`${ok}個のスタンプを作成しました`);
+      if (failed.length) toast(`読み込めなかったファイル（${failed.length}個）：${failed.join("、")}`, "error");
+    }
+
     // ---- SVG の作成・読み込み ----
     // ストローク { color: "#rrggbb", width, points: [[x, y], …] } を、座標を間引いて整数に丸めた <path> にする
     // 読み込んだ SVG の図形 { attrs: { d, fill, … } }（SHAPE_ATTRS で確認済みの属性）は、そのまま <path> にする
@@ -5256,9 +5282,9 @@ const firebaseConfig = {
       });
       // スタンプ：読み込む SVG を選んだとき
       $("#sticker-file").addEventListener("change", (e) => {
-        const file = e.target.files?.[0];
+        const files = [...(e.target.files || [])];
         e.target.value = ""; // 同じファイルを選び直しても change が起きるように
-        if (file) importStickerFile(file).catch((err) => { console.error(err); toast(errMsg(err), "error"); });
+        if (files.length) importStickerFiles(files).catch((err) => { console.error(err); toast(errMsg(err), "error"); });
       });
       // 画像：入力欄の横のボタンで選ぶ・入力欄に貼り付ける・トークにドロップすると送信画面を開く
       const sendImageFile = (file) => openImageSender(file).catch((err) => { console.error(err); toast(errMsg(err), "error"); });
