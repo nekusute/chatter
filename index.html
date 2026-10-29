@@ -415,8 +415,24 @@ const firebaseConfig = {
           <header class="flex items-center gap-1 px-2 sm:px-4 h-16 border-b border-slate-100 bg-white shrink-0">
             <button type="button" data-action="back" class="icon-btn md:hidden" aria-label="戻る"><span data-icon="back"></span></button>
             <div id="chat-header-main" class="flex items-center gap-3 min-w-0 flex-1 pl-1"></div>
+            <button type="button" id="msg-search-btn" data-action="toggle-msg-search" class="icon-btn aria-expanded:bg-slate-100 aria-expanded:text-indigo-600" aria-label="トーク内を検索" title="トーク内を検索" aria-expanded="false"><span data-icon="search"></span></button>
             <button type="button" data-action="room-info" class="icon-btn" aria-label="詳細"><span data-icon="info"></span></button>
           </header>
+
+          <!-- トーク内のメッセージの検索（結果は下に重ねて表示し、クリックでそのメッセージへ移動） -->
+          <div id="msg-search-bar" class="relative z-30 shrink-0 border-b border-slate-100 bg-white" hidden>
+            <div class="max-w-5xl mx-auto flex items-center gap-2 px-2 sm:px-4 py-2">
+              <div class="relative flex-1 min-w-0">
+                <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" data-icon="search" data-icon-class="w-4 h-4"></span>
+                <input id="msg-search-input" type="search" maxlength="100" enterkeyhint="search" class="input pl-10 py-2 bg-slate-50 border-transparent" placeholder="トーク内のメッセージを検索" autocomplete="off" />
+              </div>
+              <button type="button" data-action="close-msg-search" class="icon-btn w-9 h-9 shrink-0" aria-label="検索を閉じる"><span data-icon="x" data-icon-class="w-5 h-5"></span></button>
+            </div>
+            <div id="msg-search-results" class="absolute left-0 right-0 top-full border-b border-slate-100 bg-white shadow-lg" hidden></div>
+          </div>
+
+          <!-- ピン留めしたメッセージ（クリックでそのメッセージへ移動） -->
+          <div id="pin-bar" class="relative z-20 shrink-0 border-b border-slate-100 bg-white" hidden></div>
 
           <div class="relative flex-1 min-h-0 chat-bg">
             <div id="messages" class="absolute inset-0 overflow-y-auto scroll-thin"></div>
@@ -487,8 +503,8 @@ const firebaseConfig = {
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
     import {
       initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
-      doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, orderBy, limit, limitToLast,
-      onSnapshot, serverTimestamp, writeBatch, runTransaction, arrayUnion, arrayRemove, deleteField,
+      doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, orderBy, limit, limitToLast, startAfter,
+      getCountFromServer, onSnapshot, serverTimestamp, writeBatch, runTransaction, arrayUnion, arrayRemove, deleteField,
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
     // ============================================================
@@ -496,6 +512,8 @@ const firebaseConfig = {
     // ============================================================
     const ID_RE = /^[a-z0-9_-]{3,20}$/;
     const MESSAGE_LIMIT = 100;              // 1ルームで読み込む最新メッセージ数
+    const MESSAGE_MAX_LIMIT = 3000;         // 古いメッセージへ移動するときに、読み込みを増やせる上限
+    const SEARCH_PAGE = 500;                // メッセージの検索で一度に読み込む数（「さらに古いメッセージを検索」で増やす）
     const MAX_TEXT = 2000;                  // 1メッセージの最大文字数
     const ONLINE_MS = 6 * 60 * 1000;        // この時間内に操作があれば「オンライン」
     const PRESENCE_INTERVAL = 5 * 60 * 1000; // 最終アクティブ時刻の更新間隔
@@ -542,6 +560,9 @@ const firebaseConfig = {
     const IMAGE_TEXT = "[画像]";             // 一覧のプレビュー・通知・返信の引用に使う本文（画像のメッセージの text）
     const IMAGE_SVG_RE = /^<svg[ >].*<\/svg>$/; // 改行を含まない SVG（firestore.rules の isValidImage と合わせる）
     const IMAGE_DATA_RE = /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/;
+    // ピン留め（rooms/{id}.pins に新しい順で保存。トークのメンバー全員に表示。上限は firestore.rules と合わせる）
+    const PIN_LIMIT = 10;
+    const PINNABLE_TYPES = ["text", "sticker", "image"];
 
     let auth, db;
     const state = {
@@ -562,6 +583,9 @@ const firebaseConfig = {
       drafts: {},
       replyTo: null,          // 返信先のメッセージ { id, senderId, senderName, text }
       selectedMsgId: null,    // 送信取消メニュー / リアクションの絵文字を開いているメッセージ
+      pinsOpen: false,        // ピン留めの一覧を開いているか
+      messageLimit: MESSAGE_LIMIT, // 開いているトークで読み込む最新メッセージ数（古いメッセージへ移動するときに増やす）
+      pendingJump: null,      // 読み込みを増やしたあとに移動するメッセージ { id, missing }
       leavingRoomId: null,    // 自分で退出・削除中のルーム（「削除されました」通知を出さない）
       accountDeleting: false,
       stickers: [],           // 自分のスタンプ（新しい順）
@@ -638,7 +662,8 @@ const firebaseConfig = {
     };
     ICONS.moon = "M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z";
     ICONS.sun = "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z";
-    ICONS["bell-off"] = ICONS.bell + "M3 3l18 18"; // 斜線入りのベル
+    ICONS.pin = "M15 4.5l-4 4-4 1.5-1.5 1.5 7 7 1.5-1.5 1.5-4 4-4M9 15l-4.5 4.5M14.5 4l5.5 5.5"; // 画びょう
+    ICONS["bell-off"] =ICONS.bell + "M3 3l18 18"; // 斜線入りのベル
     ICONS.dots = "M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"; // ケバブメニュー（︙）
     ICONS.globe = "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z";
     ICONS.lock = "M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z";
@@ -1005,7 +1030,7 @@ const firebaseConfig = {
       Object.assign(state, {
         uid: null, me: null, users: new Map(), rooms: [], usersLoaded: false, roomsLoaded: false, roomsSynced: false,
         tab: "talk", search: "", activeRoomId: null, activeRoomFallback: null, messages: [], messagesLoaded: false,
-        renderedIds: new Set(), drafts: {}, replyTo: null, selectedMsgId: null, leavingRoomId: null, accountDeleting: false,
+        renderedIds: new Set(), drafts: {}, replyTo: null, selectedMsgId: null, pinsOpen: false, leavingRoomId: null, accountDeleting: false,
         stickers: [], stickersLoaded: false, reads: new Map(), readsLoaded: false,
         stickerView: "mine", publicStickers: [], publicStickersLoaded: false, publicStickersError: false,
         publicLimit: PUBLIC_STICKER_PAGE, publicHasMore: false, publicSearch: "", partnerTyping: null,
@@ -1320,6 +1345,7 @@ const firebaseConfig = {
           if (wasSynced) notifyNewMessages(prevLast);
           renderSidebar();
           renderChatHeader();
+          if (state.selectedMsgId && state.messagesLoaded) renderMessages(); // 「ピン留め」「ピン留めを解除」を切り替える
         },
         onListenError,
       );
@@ -1708,9 +1734,233 @@ const firebaseConfig = {
       const partnerGone = room.type === "dm" && !!state.users.get(partnerOf(room))?.deleted;
       $("#composer").hidden = !member || partnerGone;
       $("#notice-bar").hidden = !(member && partnerGone);
+      renderPinBar();
     }
 
-    function renderMessages(first = false) {
+    // ---- ピン留め ----
+    // rooms/{id}.pins = [{ id, senderId, senderName, type, text（本文の先頭）, by（ピン留めした人）, at（ms） }, ...]（新しい順）
+    const pinsOf = (room) => (Array.isArray(room?.pins) ? room.pins : [])
+      .filter((p) => p && typeof p.id === "string" && typeof p.text === "string");
+    const isPinned = (room, msgId) => pinsOf(room).some((p) => p.id === msgId);
+
+    // チャットのヘッダーの下：最新のピン留め（クリックで移動）。2件以上なら件数のボタンで一覧を開く
+    function renderPinBar() {
+      const bar = $("#pin-bar");
+      const room = currentRoom();
+      const pins = room ? pinsOf(room) : [];
+      if (!pins.length) state.pinsOpen = false;
+      bar.hidden = !pins.length;
+      if (!pins.length) { bar.innerHTML = ""; return; }
+      const canEdit = isMember(room);
+      const who = (p) => (p.senderId === state.me.id ? "あなた" : userName(p.senderId, p.senderName));
+      const label = (p) => esc(p.text.replace(/\s+/g, " "));
+      const top = pins[0];
+      bar.innerHTML = `
+        <div class="max-w-5xl mx-auto flex items-center gap-1 px-2 sm:px-4 py-1.5">
+          <span class="shrink-0 w-8 h-8 grid place-items-center text-indigo-500">${icon("pin", "w-4 h-4")}</span>
+          <button type="button" data-action="jump-to-pin" data-id="${esc(top.id)}" class="flex-1 min-w-0 text-left px-1 py-0.5 rounded-lg transition hover:bg-slate-50" title="ピン留めしたメッセージへ移動">
+            <span class="block text-[11px] font-semibold text-indigo-600 truncate">${esc(who(top))}</span>
+            <span class="block text-sm text-slate-700 truncate">${label(top)}</span>
+          </button>
+          ${pins.length > 1
+            ? `<button type="button" data-action="toggle-pins" class="btn-chip shrink-0 py-1 text-xs bg-slate-100 text-slate-600 hover:bg-slate-200" aria-expanded="${state.pinsOpen}" aria-label="ピン留めの一覧">${pins.length}件<span class="transition ${state.pinsOpen ? "-rotate-90" : "rotate-90"}">${icon("chevron", "w-3.5 h-3.5")}</span></button>`
+            : canEdit ? `<button type="button" data-action="unpin" data-id="${esc(top.id)}" class="icon-btn w-8 h-8 shrink-0" aria-label="ピン留めを解除" title="ピン留めを解除">${icon("x", "w-4 h-4")}</button>` : ""}
+        </div>
+        ${state.pinsOpen && pins.length > 1 ? `
+        <div class="absolute left-0 right-0 top-full border-b border-slate-100 bg-white shadow-lg fade-in">
+          <div class="max-w-5xl mx-auto max-h-72 overflow-y-auto scroll-thin px-2 sm:px-4 py-1.5" role="list">
+            ${pins.map((p) => `
+              <div class="flex items-center gap-1" role="listitem">
+                <button type="button" data-action="jump-to-pin" data-id="${esc(p.id)}" class="flex-1 min-w-0 text-left px-2 py-1.5 rounded-lg transition hover:bg-slate-50">
+                  <span class="block text-[11px] font-semibold text-indigo-600 truncate">${esc(who(p))}</span>
+                  <span class="block text-sm text-slate-700 truncate">${label(p)}</span>
+                </button>
+                ${canEdit ? `<button type="button" data-action="unpin" data-id="${esc(p.id)}" class="icon-btn w-8 h-8 shrink-0" aria-label="ピン留めを解除" title="ピン留めを解除">${icon("x", "w-4 h-4")}</button>` : ""}
+              </div>`).join("")}
+          </div>
+        </div>` : ""}`;
+    }
+
+    function togglePins(open = !state.pinsOpen) {
+      state.pinsOpen = open;
+      renderPinBar();
+    }
+
+    function jumpToPin(msgId) {
+      togglePins(false);
+      return jumpToMessage(msgId, "このメッセージは表示できません（送信取消されたようです）");
+    }
+
+    // ピン留めする（on = true）・解除する。同時に他のメンバーが変えても消えないよう、トランザクションで書き換える
+    async function setPin(msgId, on) {
+      const room = currentRoom();
+      const m = state.messages.find((x) => x.id === msgId);
+      if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
+      if (!room || !isMember(room)) return;
+      if (on && (!m || !PINNABLE_TYPES.includes(m.type) || m.pending)) return;
+      const roomRef = doc(db, "rooms", room.id);
+      const result = await runTransaction(db, async (tx) => {
+        const snap = await tx.get(roomRef);
+        if (!snap.exists()) return "gone";
+        const pins = pinsOf(snap.data());
+        const rest = pins.filter((p) => p.id !== msgId);
+        if (!on) {
+          if (rest.length === pins.length) return "same";
+          tx.update(roomRef, { pins: rest });
+          return "unpinned";
+        }
+        if (rest.length !== pins.length) return "same";
+        if (pins.length >= PIN_LIMIT) return "full";
+        const pin = { id: m.id, senderId: m.senderId, senderName: m.senderName || "", type: m.type, text: m.text.slice(0, 100), by: state.me.id, at: Date.now() };
+        tx.update(roomRef, { pins: [pin, ...pins] });
+        return "pinned";
+      });
+      if (result === "full") toast(`ピン留めは${PIN_LIMIT}件までです。不要なピン留めを解除してください`, "error");
+      else if (result === "pinned") toast("ピン留めしました");
+      else if (result === "unpinned") toast("ピン留めを解除しました");
+    }
+
+    // ---- トーク内のメッセージの検索 ----
+    // Firestore では部分一致の検索ができないので、新しい順に SEARCH_PAGE 件ずつ読み込んで端末で探す
+    // （表示中のメッセージは購読中のものを使う）。本文（スタンプはスタンプ名）に、空白で区切ったすべての語を含むものが当たり
+    let msgSearch = null; // { roomId, open, q, showResults, older: Map（読み込んだメッセージ）, cursor, hasMore, loaded, loading, error }
+    function resetMsgSearch(roomId = null) {
+      msgSearch = { roomId, open: false, q: "", showResults: false, older: new Map(), cursor: null, hasMore: true, loaded: false, loading: false, error: false };
+      $("#msg-search-input").value = "";
+      renderMsgSearch();
+    }
+
+    function openMsgSearch() {
+      if (!msgSearch || !state.activeRoomId) return;
+      msgSearch.open = true;
+      msgSearch.showResults = true;
+      renderMsgSearch();
+      $("#msg-search-input").focus();
+      if (!msgSearch.loaded && !msgSearch.loading) loadSearchPage();
+    }
+    function closeMsgSearch() {
+      if (!msgSearch?.open) return;
+      msgSearch.open = false;
+      msgSearch.showResults = false;
+      msgSearch.q = "";
+      $("#msg-search-input").value = "";
+      renderMsgSearch();
+    }
+
+    async function loadSearchPage() {
+      const s = msgSearch;
+      if (!s || s.loading || !s.hasMore) return;
+      s.loading = true;
+      s.error = false;
+      renderMsgSearchResults();
+      try {
+        const snap = await getDocs(query(collection(db, "rooms", s.roomId, "messages"), orderBy("createdAt", "desc"),
+          ...(s.cursor ? [startAfter(s.cursor)] : []), limit(SEARCH_PAGE)));
+        if (msgSearch !== s) return;
+        snap.docs.forEach((d) => s.older.set(d.id, withId(d)));
+        s.cursor = snap.docs.at(-1) || s.cursor;
+        s.hasMore = snap.size >= SEARCH_PAGE;
+        s.loaded = true;
+      } catch (e) {
+        if (msgSearch !== s) return;
+        console.warn(e);
+        s.error = true;
+      } finally {
+        if (msgSearch === s) { s.loading = false; renderMsgSearchResults(); }
+      }
+    }
+
+    const searchNorm = (s) => String(s ?? "").normalize("NFKC").toLowerCase();
+    const searchTerms = (q) => searchNorm(q).split(/\s+/).filter(Boolean);
+    const searchText = (m) => (m.type === "text" ? m.text : m.type === "sticker" ? m.name : "") || "";
+
+    // 当たったメッセージ（新しい順）
+    function msgSearchMatches() {
+      const terms = searchTerms(msgSearch.q);
+      if (!terms.length) return [];
+      const all = new Map(msgSearch.older);
+      state.messages.forEach((m) => { if (!m.pending) all.set(m.id, m); }); // 新しく届いた分・リアクションなどの変更を反映
+      return [...all.values()]
+        .filter((m) => { const t = searchNorm(searchText(m)); return t && terms.every((w) => t.includes(w)); })
+        .sort((a, b) => ms(b.createdAt) - ms(a.createdAt));
+    }
+
+    // 当たった語の周りを切り出して強調する
+    function searchSnippet(text, terms) {
+      const flat = text.replace(/\s+/g, " ");
+      const lower = flat.toLowerCase();
+      const found = terms.map((w) => lower.indexOf(w)).filter((i) => i >= 0); // 全角・半角の違いで見つからなければ先頭から
+      const at = found.length ? Math.min(...found) : 0;
+      const start = at > 24 ? at - 16 : 0;
+      const part = (start ? "…" : "") + flat.slice(start, start + 120);
+      const re = new RegExp(terms.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi");
+      let html = "", pos = 0;
+      for (const hit of part.matchAll(re)) {
+        if (!hit[0]) continue;
+        html += esc(part.slice(pos, hit.index)) + `<mark class="rounded px-0.5 bg-amber-100 text-amber-800">${esc(hit[0])}</mark>`;
+        pos = hit.index + hit[0].length;
+      }
+      return html + esc(part.slice(pos));
+    }
+
+    function renderMsgSearch() {
+      const open = !!msgSearch?.open;
+      $("#msg-search-bar").hidden = !open;
+      $("#msg-search-btn").setAttribute("aria-expanded", String(open));
+      renderMsgSearchResults();
+    }
+
+    function renderMsgSearchResults() {
+      const box = $("#msg-search-results");
+      const s = msgSearch;
+      const terms = s?.open ? searchTerms(s.q) : [];
+      box.hidden = !s?.open || !s.showResults || !terms.length;
+      if (box.hidden) { box.innerHTML = ""; return; }
+      const SHOW = 100;
+      const hits = msgSearchMatches();
+      const fmt = (d) => `${d.getFullYear() === new Date().getFullYear() ? "" : d.getFullYear() + "/"}${d.getMonth() + 1}/${d.getDate()} ${hhmm(d)}`;
+      const rows = hits.slice(0, SHOW).map((m) => {
+        const d = toDate(m.createdAt) || new Date();
+        const name = m.senderId === state.me.id ? "あなた" : userName(m.senderId, m.senderName);
+        return `
+          <button type="button" data-action="msg-search-result" data-id="${esc(m.id)}" class="w-full flex items-start gap-3 px-2 py-2 rounded-xl text-left transition hover:bg-slate-50">
+            ${avatar(m.senderId, userName(m.senderId, m.senderName), "w-8 h-8 text-xs")}
+            <span class="min-w-0 flex-1">
+              <span class="flex items-baseline gap-2">
+                <span class="text-xs font-semibold text-slate-700 truncate">${esc(name)}</span>
+                <span class="ml-auto shrink-0 text-[11px] text-slate-400 tabular-nums">${esc(fmt(d))}</span>
+              </span>
+              <span class="block text-sm text-slate-600 truncate">${m.type === "sticker" ? `<span class="text-slate-400">スタンプ：</span>` : ""}${searchSnippet(searchText(m), terms)}</span>
+            </span>
+          </button>`;
+      }).join("");
+      const scanned = new Set([...s.older.keys(), ...state.messages.map((m) => m.id)]).size;
+      const status = s.loading
+        ? `<span class="inline-flex items-center gap-2 text-indigo-500">${spinner("w-4 h-4 border-2")}読み込み中…</span>`
+        : s.error ? `<span class="text-rose-600">古いメッセージを読み込めませんでした</span>`
+        : `${hits.length ? `${hits.length}件` : "見つかりませんでした"}${hits.length > SHOW ? `（新しい${SHOW}件を表示）` : ""}`;
+      box.innerHTML = `
+        <div class="max-w-5xl mx-auto max-h-[60vh] overflow-y-auto scroll-thin px-2 sm:px-4 py-2">
+          <div class="flex items-center gap-2 px-2 pb-1.5 text-xs text-slate-500">
+            <span class="min-w-0 flex-1 truncate">${status}</span>
+            <span class="shrink-0 text-slate-400">${s.hasMore ? `最新${scanned}件から検索` : `全${scanned}件から検索`}</span>
+          </div>
+          ${rows}
+          ${s.hasMore || s.error ? `
+            <div class="flex justify-center pt-1.5">
+              <button type="button" data-action="msg-search-more" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 hover:bg-indigo-50" ${s.loading ? "disabled" : ""}>${icon("search", "w-3.5 h-3.5")}${s.error ? "もう一度読み込む" : "さらに古いメッセージを検索"}</button>
+            </div>` : ""}
+        </div>`;
+    }
+
+    function pickSearchResult(msgId) {
+      msgSearch.showResults = false;
+      renderMsgSearchResults();
+      $("#msg-search-input").blur();
+      return jumpToMessage(msgId, "このメッセージは表示できません（送信取消されたようです）");
+    }
+
+    function renderMessages(first = false, quiet = false) {
       const box = $("#messages");
       const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 150;
       const room = currentRoom();
@@ -1723,7 +1973,7 @@ const firebaseConfig = {
 
       for (const m of state.messages) {
         nextIds.add(m.id);
-        const isNew = !first && !prevIds.has(m.id);
+        const isNew = !first && !quiet && !prevIds.has(m.id);
         if (isNew) { hasNew = true; if (m.senderId === state.me.id) newFromMe = true; }
         const d = toDate(m.createdAt) || new Date();
 
@@ -1762,6 +2012,7 @@ const firebaseConfig = {
             <div class="flex justify-end gap-2 mt-1.5 fade-in" data-msg-id="${esc(m.id)}">
               ${image ? viewImageChip(m) : ""}
               ${canReply ? `<button type="button" data-action="reply" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("reply", "w-3.5 h-3.5")}返信</button>` : ""}
+              ${pinChip(m, room)}
               <button type="button" data-action="unsend" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-rose-600 ring-1 ring-rose-200 shadow-sm hover:bg-rose-50">${icon("trash", "w-3.5 h-3.5")}送信取消</button>
             </div>` : ""}`;
         } else {
@@ -1775,7 +2026,7 @@ const firebaseConfig = {
               <div class="min-w-0 flex-1">
                 ${!cont && isGroup ? `<div class="text-xs text-slate-500 mb-1 ml-1 truncate">${esc(name)}</div>` : ""}
                 <div class="relative flex items-end gap-1.5">
-                  ${selected ? reactionPicker(m, canReply) : ""}
+                  ${selected ? reactionPicker(m, canReply, room) : ""}
                   <div class="${bubbleCls} ${canReact ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
                   <div class="flex flex-col items-start gap-0.5 shrink-0">
                     ${reactionChip(m, isGroup)}
@@ -1803,7 +2054,8 @@ const firebaseConfig = {
       box.innerHTML = `<div class="max-w-5xl mx-auto px-3 sm:px-6 py-4">${html}</div>`;
       state.renderedIds = nextIds;
 
-      if (first || newFromMe || nearBottom) scrollToBottom();
+      if (quiet) { /* 移動先へスクロールする */ }
+      else if (first || newFromMe || nearBottom) scrollToBottom();
       else if (hasNew) $("#new-msg-btn").hidden = false;
       pickerShownFor = box.querySelector(".reaction-picker") ? state.selectedMsgId : null;
       requestAnimationFrame(placePicker); // CDN のスタイル反映後に測る
@@ -1843,8 +2095,10 @@ const firebaseConfig = {
 
     // 吹き出しの上に出すリアクションの絵文字（選択中のものは強調、もう一度選ぶと取り消し）と返信ボタン
     let pickerShownFor = null; // 表示中のピッカーのメッセージ（描き直しのたびにアニメーションさせない）
-    function reactionPicker(m, canReply) {
+    function reactionPicker(m, canReply, room) {
       const current = m.reactions?.[state.me.id];
+      const pinned = isPinned(room, m.id);
+      const canPin = isMember(room) && PINNABLE_TYPES.includes(m.type);
       return `
         <div class="reaction-picker ${pickerShownFor === m.id ? "" : "pop-in"} absolute bottom-full left-0 mb-2 w-max flex items-center gap-0.5 p-1 rounded-full bg-white shadow-lg ring-1 ring-slate-200" role="toolbar" aria-label="リアクション">
           ${REACTIONS.map(([code, emoji]) => `
@@ -1854,7 +2108,18 @@ const firebaseConfig = {
             <span class="w-px h-6 bg-slate-200 mx-0.5"></span>
             <button type="button" data-action="reply" data-id="${esc(m.id)}" aria-label="返信" title="返信"
               class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 active:scale-95">${icon("reply", "w-5 h-5")}</button>` : ""}
+          ${canPin ? `
+            ${canReply ? "" : `<span class="w-px h-6 bg-slate-200 mx-0.5"></span>`}
+            <button type="button" data-action="${pinned ? "unpin" : "pin"}" data-id="${esc(m.id)}" aria-label="${pinned ? "ピン留めを解除" : "ピン留め"}" title="${pinned ? "ピン留めを解除" : "ピン留め"}" aria-pressed="${pinned}"
+              class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center transition hover:bg-slate-100 hover:text-indigo-600 active:scale-95 ${pinned ? "bg-indigo-100 ring-1 ring-indigo-300 text-indigo-600" : "text-slate-500"}">${icon("pin", "w-5 h-5")}</button>` : ""}
         </div>`;
+    }
+
+    // 自分のメッセージを選んだときに出す「ピン留め」「ピン留めを解除」
+    function pinChip(m, room) {
+      if (!isMember(room) || !PINNABLE_TYPES.includes(m.type)) return "";
+      const pinned = isPinned(room, m.id);
+      return `<button type="button" data-action="${pinned ? "unpin" : "pin"}" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("pin", "w-3.5 h-3.5")}${pinned ? "ピン留めを解除" : "ピン留め"}</button>`;
     }
 
     // 本文：URL をリンクに、「@表示名」「@All」を強調表示にする
@@ -1932,6 +2197,7 @@ const firebaseConfig = {
         state.messagesLoaded = false;
         state.renderedIds = new Set();
         state.selectedMsgId = null;
+        state.pinsOpen = false;
         state.replyTo = null;
         mention = null;
         renderReplyBar();
@@ -1948,24 +2214,10 @@ const firebaseConfig = {
         updateSendBtn();
         renderChatHeader();
 
-        state.unsub.messages = onSnapshot(
-          query(collection(db, "rooms", roomId, "messages"), orderBy("createdAt", "asc"), limitToLast(MESSAGE_LIMIT)),
-          { includeMetadataChanges: true }, // 「送信中…」→ 送信完了 の表示切り替えのため
-          (snap) => {
-            if (state.activeRoomId !== roomId) return;
-            state.messages = snap.docs.map((d) => ({ ...withId(d), pending: d.metadata.hasPendingWrites }));
-            const first = !state.messagesLoaded;
-            state.messagesLoaded = true;
-            renderMessages(first);
-            if (document.visibilityState === "visible" && isMember(currentRoom())) markRead(roomId);
-            renderSidebar();
-          },
-          (e) => {
-            // グループを退出すると読めなくなるので、閉じたルームのエラーは無視する
-            if (state.activeRoomId !== roomId || state.leavingRoomId === roomId) return;
-            onListenError(e);
-          },
-        );
+        state.messageLimit = MESSAGE_LIMIT;
+        state.pendingJump = null;
+        resetMsgSearch(roomId);
+        subscribeMessages(roomId);
         subscribeReads(roomId);
         subscribeTyping(roomId);
       }
@@ -1978,6 +2230,59 @@ const firebaseConfig = {
       renderSidebar();
       if (!isCoarse() && isMember(currentRoom())) $("#msg-input").focus();
       updateTyping();
+    }
+
+    // 開いているトークの最新 state.messageLimit 件を購読する（古いメッセージへ移動するときは件数を増やして購読し直す）
+    function subscribeMessages(roomId) {
+      state.unsub.messages?.();
+      state.unsub.messages = onSnapshot(
+        query(collection(db, "rooms", roomId, "messages"), orderBy("createdAt", "asc"), limitToLast(state.messageLimit)),
+        { includeMetadataChanges: true }, // 「送信中…」→ 送信完了 の表示切り替えのため
+        (snap) => {
+          if (state.activeRoomId !== roomId) return;
+          state.messages = snap.docs.map((d) => ({ ...withId(d), pending: d.metadata.hasPendingWrites }));
+          const first = !state.messagesLoaded;
+          state.messagesLoaded = true;
+          const jump = state.pendingJump;
+          // 読み込みを増やした直後は、増えた古いメッセージを新着として扱わず、スクロールもしない（移動先へスクロールする）
+          renderMessages(first, !!jump);
+          if (jump && (state.messages.some((m) => m.id === jump.id) || !snap.metadata.fromCache)) {
+            state.pendingJump = null;
+            jumpToMessage(jump.id, jump.missing, false);
+          }
+          if (msgSearch?.showResults) renderMsgSearchResults(); // 新しく届いたメッセージも検索結果に出す
+          if (document.visibilityState === "visible" && isMember(currentRoom())) markRead(roomId);
+          renderSidebar();
+        },
+        (e) => {
+          // グループを退出すると読めなくなるので、閉じたルームのエラーは無視する
+          if (state.activeRoomId !== roomId || state.leavingRoomId === roomId) return;
+          state.pendingJump = null;
+          onListenError(e);
+        },
+      );
+    }
+
+    // 表示していない古いメッセージ：そのメッセージから最新までの件数を数え、そこまで読み込みを増やしてから移動する
+    async function loadUntilMessage(msgId, missing) {
+      const roomId = state.activeRoomId;
+      if (!roomId || !state.messagesLoaded || state.pendingJump) return;
+      const msgsRef = collection(db, "rooms", roomId, "messages");
+      const snap = await getDoc(doc(msgsRef, msgId));
+      if (state.activeRoomId !== roomId) return;
+      if (!snap.exists() || !snap.data().createdAt) { toast(missing); return; }
+      const count = (await getCountFromServer(query(msgsRef, where("createdAt", ">=", snap.data().createdAt)))).data().count;
+      if (state.activeRoomId !== roomId) return;
+      const need = count + 20; // 移動先の上にも少し表示する
+      if (need > MESSAGE_MAX_LIMIT) { toast("古すぎるため、このメッセージは表示できません"); return; }
+      if (need <= state.messageLimit) { toast(missing); return; }
+      state.messageLimit = need;
+      const jump = { id: msgId, missing };
+      state.pendingJump = jump;
+      toast("古いメッセージを読み込んでいます…");
+      subscribeMessages(roomId);
+      // オフラインなどで届かないときは、あきらめて次の移動を受け付ける
+      setTimeout(() => { if (state.pendingJump === jump) state.pendingJump = null; }, 20 * 1000);
     }
 
     // ---- 入力中（DM のみ） ----
@@ -2062,6 +2367,9 @@ const firebaseConfig = {
       updateTyping(false); // 「入力中」を消す
       state.leavingRoomId = null;
       state.selectedMsgId = null;
+      state.pinsOpen = false;
+      state.pendingJump = null;
+      resetMsgSearch();
       state.replyTo = null;
       state.messages = [];
       mention = null;
@@ -2254,12 +2562,16 @@ const firebaseConfig = {
       batch.delete(doc(roomRef, "messages", msgId));
       // 一覧のプレビューが取り消したメッセージなら、1つ前のメッセージに戻す
       const lm = room.lastMessage;
+      const roomUpdate = {};
       if (lm && lm.senderId === m.senderId && ms(lm.createdAt) === ms(m.createdAt)) {
         const prev = state.messages.filter((x) => x.id !== msgId).at(-1);
-        batch.update(roomRef, prev
+        Object.assign(roomUpdate, prev
           ? { lastMessage: { type: prev.type, text: prev.text.slice(0, 100), senderId: prev.senderId, senderName: prev.senderName, createdAt: prev.createdAt }, updatedAt: prev.createdAt }
           : { lastMessage: null, updatedAt: room.createdAt || serverTimestamp() });
       }
+      // ピン留めしていたら解除する
+      if (isPinned(room, msgId)) roomUpdate.pins = pinsOf(room).filter((p) => p.id !== msgId);
+      if (Object.keys(roomUpdate).length) batch.update(roomRef, roomUpdate);
       await batch.commit();
     }
 
@@ -2346,9 +2658,10 @@ const firebaseConfig = {
     }
 
     // 返信の引用から元のメッセージへ移動して光らせる
-    function jumpToMessage(msgId) {
+    // 表示していない古いメッセージなら、読み込みを増やしてから移動する（loadOlder = false なら増やさない）
+    function jumpToMessage(msgId, missing = "元のメッセージは表示できません（送信取消されたようです）", loadOlder = true) {
       const row = $(`#messages [data-msg-id="${CSS.escape(msgId)}"]`);
-      if (!row) { toast("元のメッセージは表示できません（送信取消されたか、古いメッセージです）"); return; }
+      if (!row) { if (loadOlder) return loadUntilMessage(msgId, missing); toast(missing); return; }
       row.scrollIntoView({ block: "center", behavior: "smooth" });
       row.classList.remove("msg-flash");
       void row.offsetWidth; // アニメーションをやり直す
@@ -4605,6 +4918,14 @@ const firebaseConfig = {
       "reply": (el) => startReply(el.dataset.id),
       "cancel-reply": () => cancelReply(),
       "jump-to": (el) => jumpToMessage(el.dataset.id),
+      "jump-to-pin": (el) => jumpToPin(el.dataset.id),
+      "toggle-pins": () => togglePins(),
+      "toggle-msg-search": () => (msgSearch?.open ? closeMsgSearch() : openMsgSearch()),
+      "close-msg-search": () => closeMsgSearch(),
+      "msg-search-result": (el) => pickSearchResult(el.dataset.id),
+      "msg-search-more": () => loadSearchPage(),
+      "pin": (el) => setPin(el.dataset.id, true),
+      "unpin": (el) => setPin(el.dataset.id, false),
       "pick-mention": (el) => pickMention(Number(el.dataset.index)),
       "toggle-room-notify": () => toggleRoomNotify(),
       "react": (el) => react(el.dataset.id, el.dataset.code),
@@ -4691,6 +5012,10 @@ const firebaseConfig = {
         if (state.selectedMsgId && e.target.closest("[data-msg-id]")?.dataset.msgId !== state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
         // スタンプ一覧は、一覧とスタンプボタン以外をクリックしたら閉じる
         if (stickerBoxOpen && !e.target.closest("#sticker-box, #sticker-btn")) closeStickerBox();
+        // ピン留めの一覧は、ピン留めの表示以外をクリックしたら閉じる
+        if (state.pinsOpen && !e.target.closest("#pin-bar")) togglePins(false);
+        // 検索結果は、検索欄以外をクリックしたら隠す（検索欄をクリックするとまた出す）
+        if (msgSearch?.showResults && !e.target.closest("#msg-search-bar")) { msgSearch.showResults = false; renderMsgSearchResults(); }
         // スタンプの「︙」メニューは、どこをクリックしても閉じる（項目は閉じてから実行。「︙」ボタンは開閉を切り替える）
         if (stickerMenuId !== null && !e.target.closest('[data-action="sticker-menu"]')) closeStickerMenu();
         if (e.target.closest("a[href]")) return; // メッセージ内のリンクは通常どおり開く
@@ -4716,6 +5041,8 @@ const firebaseConfig = {
           return;
         }
         if (e.key === "Escape" && stickerBoxOpen) { closeStickerBox(); return; }
+        if (e.key === "Escape" && state.pinsOpen) { togglePins(false); return; }
+        if (e.key === "Escape" && msgSearch?.open) { e.preventDefault(); closeMsgSearch(); return; }
         if (e.key === "Escape" && state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); return; }
         // チャットを開いていて文字の入力欄にフォーカスしていなければ、Esc でチャットを抜ける（PC は「Chatter へようこそ」、スマホは一覧に戻る）
         if (e.key === "Escape" && !e.defaultPrevented && state.activeRoomId && !e.target.closest?.("input, textarea, select, [contenteditable]")) { exitRoom(); return; }
@@ -4757,6 +5084,26 @@ const firebaseConfig = {
 
       // 検索
       $("#search").addEventListener("input", (e) => { state.search = e.target.value; renderSidebar(); });
+      // トーク内の検索（入力欄は描き直さず、結果だけを更新する）
+      const msgSearchInput = $("#msg-search-input");
+      msgSearchInput.addEventListener("input", () => {
+        if (!msgSearch) return;
+        msgSearch.q = msgSearchInput.value;
+        msgSearch.showResults = true;
+        renderMsgSearchResults();
+      });
+      msgSearchInput.addEventListener("focus", () => {
+        if (!msgSearch?.open || msgSearch.showResults) return;
+        msgSearch.showResults = true;
+        renderMsgSearchResults();
+      });
+      msgSearchInput.addEventListener("keydown", (e) => {
+        // Enter で一番新しい検索結果へ移動
+        if (e.key !== "Enter" || e.isComposing || !msgSearch) return;
+        e.preventDefault();
+        const top = msgSearchMatches()[0];
+        if (top) Promise.resolve(pickSearchResult(top.id)).catch((err) => { console.error(err); toast(errMsg(err), "error"); });
+      });
       // みんなのスタンプの検索（入力中の検索欄は描き直さず、結果だけを更新する）
       document.addEventListener("input", (e) => {
         if (e.target.id !== "public-sticker-search") return;
