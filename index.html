@@ -618,7 +618,7 @@ const firebaseConfig = {
     const stickerSizeOf = (v) => (Object.hasOwn(STICKER_DISPLAY_SIZES, v) ? v : "m");
     const PUBLIC_STICKER_PAGE = 60;         // みんなのスタンプを一度に読み込む数（「もっと見る」で増やす）
     // アイコン（users/{id}.icon に保存。描いた SVG はスタンプと同じ形式、アップロードした画像は縮小した JPEG の data URL。上限は firestore.rules と合わせる）
-    const ICON_MAX_SVG = 80000;           // 描いたアイコンの SVG の最大文字数
+    const ICON_MAX_SVG = 100000;          //描いたアイコンの SVG の最大文字数
     const ICON_IMAGE_PX = 192;              // アップロードした画像を縮小する大きさ（正方形の一辺）
     const ICON_MAX_IMAGE = 40000;           // 画像の data URL の最大文字数
     const ICON_IMAGE_RE = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/;
