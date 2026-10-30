@@ -812,7 +812,9 @@ const firebaseConfig = {
       if (diff < 30 * 86400e3) return `${Math.floor(diff / 86400e3)}日前`;
       return shortTime(t);
     }
-    const isOnline = (u) => !!u && !u.deleted && Date.now() - ms(u.lastSeen) < ONLINE_MS;
+    // 管理者が「オンラインを隠す」をオンにしている間は、その管理者のオンライン状態と入力中を出さない
+    const presenceHidden = (id) => id === ADMIN_ID && adminSettings.hideOnline;
+    const isOnline = (u) => !!u && !u.deleted && !presenceHidden(u.id) && Date.now() - ms(u.lastSeen) < ONLINE_MS;
 
     // エラーメッセージを日本語に
     function errMsg(e) {
@@ -1141,7 +1143,7 @@ const firebaseConfig = {
     // ============================================================
     let lastTouch = 0;
     function touchPresence(force = false) {
-      if (!state.me) return;
+      if (!state.me || presenceHidden(state.me.id)) return;
       if (!force && (document.visibilityState !== "visible" || Date.now() - lastTouch < 60e3)) return;
       lastTouch = Date.now();
       updateDoc(doc(db, "users", state.me.id), { lastSeen: serverTimestamp() }).catch((e) => console.warn(e));
@@ -2434,7 +2436,7 @@ const firebaseConfig = {
     function updateTyping(focused = document.activeElement === $("#msg-input") && document.hasFocus()) {
       if (!state.me) return;
       const room = currentRoom();
-      const want = focused && room?.type === "dm" && canSend(room) && document.visibilityState === "visible" ? room.id : null;
+      const want = focused && room?.type === "dm" && canSend(room) && document.visibilityState === "visible" && !presenceHidden(state.me.id) ? room.id : null;
       if (typingRoomId && typingRoomId !== want) writeTyping(typingRoomId, false);
       if (want && (typingRoomId !== want || Date.now() - typingSentAt >= TYPING_BEAT - 1000)) writeTyping(want, true);
       typingRoomId = want;
@@ -2469,7 +2471,8 @@ const firebaseConfig = {
     }
     // 受け取ってから TYPING_TTL 以内で、書かれた時刻も古すぎない（以前に残ったままの記録を除く。端末の時計のずれは 1 分まで許す）
     function partnerIsTyping() {
-      const t = state.partnerTyping, now = Date.now();
+      const t = state.partnerTyping, now = Date.now(), room = currentRoom();
+      if (room?.type === "dm" && presenceHidden(partnerOf(room))) return false;
       return !!t?.on && now - t.seen < TYPING_TTL && now - t.at < TYPING_TTL + 60 * 1000;
     }
 
@@ -4805,7 +4808,8 @@ const firebaseConfig = {
     // ============================================================
     // 管理者の設定（admin/settings。ログイン前でも読める）。項目を増やすときは firestore.rules の admin/settings も合わせる
     // signupOpen：新規ユーザーの募集 / readReceipts：既読の表示（どちらも文書に無ければオン）
-    let adminSettings = { signupOpen: true, readReceipts: true };
+    // hideOnline：管理者のオンライン状態と入力中を全員から隠す（文書に無ければオフ）
+    let adminSettings = { signupOpen: true, readReceipts: true, hideOnline: false };
     // 管理者メニューのパスワードのハッシュ。メニューを開いている間だけ持ち、閉じたら消す
     let adminKey = null;
     const ADMIN_PASSWORD_ERROR = "管理者パスワードが正しくありません。";
@@ -4815,17 +4819,23 @@ const firebaseConfig = {
         doc(db, "admin", "settings"),
         (snap) => {
           const d = snap.data();
-          applySettings({ signupOpen: d?.signupOpen !== false, readReceipts: d?.readReceipts !== false });
+          applySettings({ signupOpen: d?.signupOpen !== false, readReceipts: d?.readReceipts !== false, hideOnline: d?.hideOnline === true });
         },
         (e) => console.warn(e), // 読めないときは既定の設定（募集中・既読を表示）のまま
       );
     }
     function applySettings(next) {
       const readChanged = next.readReceipts !== adminSettings.readReceipts;
+      const hideChanged = next.hideOnline !== adminSettings.hideOnline;
       adminSettings = next;
       renderSignupState();
       renderAdminSettings();
       if (readChanged && isAdmin() && state.activeRoomId && state.messagesLoaded) renderMessages();
+      if (hideChanged && state.me) {
+        if (isAdmin()) { if (next.hideOnline) updateTyping(false); else { touchPresence(true); updateTyping(); } } // 隠したら「入力中」を消す / 戻したら在席を書く
+        renderSidebar();
+        renderChatHeader();
+      }
     }
     // 新規登録の直前は、最新の設定をサーバーから確かめる
     async function signupOpen() {
@@ -4898,6 +4908,7 @@ const firebaseConfig = {
         <div class="px-6 pb-6 space-y-3">
           ${adminSwitch("signupOpen", "停止すると、ログイン画面の「新規登録」から新しいアカウントを作れなくなります。登録済みのユーザーは、これまでどおりログインできます。")}
           ${adminSwitch("readReceipts", "オンにすると、あなたが送ったメッセージの横に、相手が読むと「既読」（グループは読んだ人数。タップでだれが読んだか）が表示されます。この表示は管理者にだけ見えます。オフの間も既読は記録されるので、オンに戻すとすぐに表示されます。")}
+          ${adminSwitch("hideOnline", "オンにしている間は、あなたのオンライン状態（緑の点・「オンライン」）と DM の「入力中...」が、全員から見えなくなります。最終アクティブの時刻も更新されません。")}
           <button type="button" data-action="admin-password" class="btn-secondary w-full !mt-5">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
           <button type="button" data-close class="btn-primary w-full">閉じる</button>
         </div>`);
@@ -4908,6 +4919,7 @@ const firebaseConfig = {
     const ADMIN_SWITCHES = {
       signupOpen: { label: "新規ユーザーの募集", on: "受付中", off: "停止中", toastOn: "新規ユーザーの募集を再開しました", toastOff: "新規ユーザーの募集を停止しました" },
       readReceipts: { label: "既読の表示", on: "表示する", off: "表示しない", toastOn: "既読を表示するようにしました", toastOff: "既読を表示しないようにしました" },
+      hideOnline: { label: "オンラインを隠す", on: "隠している", off: "隠していない", toastOn: "オンライン状態と入力中を隠しました", toastOff: "オンライン状態と入力中を表示するようにしました" },
     };
     const adminSwitch = (key, note) => `
       <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
