@@ -609,9 +609,16 @@ const firebaseConfig = {
       "#22c55e", "#14b8a6", "#3b82f6", "#6366f1", "#a855f7", "#ec4899",
     ];
     const STICKER_WIDTHS = [2, 8, 14, 44];
+    // チャットでの表示サイズ（スタンプと送ったメッセージの size。無ければ "m"。firestore.rules の isValidStickerSize と合わせる）
+    const STICKER_DISPLAY_SIZES = {
+      s: { label: "小", cls: "w-20 h-20 sm:w-24 sm:h-24", quote: "w-32 sm:w-36" },
+      m: { label: "中", cls: "w-32 h-32 sm:w-36 sm:h-36", quote: "w-32 sm:w-36" },
+      l: { label: "大", cls: "w-48 h-48 sm:w-56 sm:h-56", quote: "w-48 sm:w-56" },
+    };
+    const stickerSizeOf = (v) => (Object.hasOwn(STICKER_DISPLAY_SIZES, v) ? v : "m");
     const PUBLIC_STICKER_PAGE = 60;         // みんなのスタンプを一度に読み込む数（「もっと見る」で増やす）
     // アイコン（users/{id}.icon に保存。描いた SVG はスタンプと同じ形式、アップロードした画像は縮小した JPEG の data URL。上限は firestore.rules と合わせる）
-    const ICON_MAX_SVG = 20000;             // 描いたアイコンの SVG の最大文字数
+    const ICON_MAX_SVG = 80000;           // 描いたアイコンの SVG の最大文字数
     const ICON_IMAGE_PX = 192;              // アップロードした画像を縮小する大きさ（正方形の一辺）
     const ICON_MAX_IMAGE = 40000;           // 画像の data URL の最大文字数
     const ICON_IMAGE_RE = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/;
@@ -1770,7 +1777,7 @@ const firebaseConfig = {
             <div class="w-14 h-14 shrink-0 rounded-xl chat-bg ring-1 ring-slate-200/70 p-1">${stickerImg(s.svg, s.name, "w-full h-full")}</div>
             <div class="min-w-0 flex-1">
               <div class="font-semibold truncate text-slate-800">${esc(s.name)}</div>
-              <div class="text-xs text-slate-400 truncate">${s.public ? `<span class="text-emerald-600 font-medium">公開中</span> ・ ` : ""}${esc(relTime(s.updatedAt || s.createdAt))}</div>
+              <div class="text-xs text-slate-400 truncate">${s.public ? `<span class="text-emerald-600 font-medium">公開中</span> ・ ` : ""}サイズ ${STICKER_DISPLAY_SIZES[stickerSizeOf(s.size)].label} ・ ${esc(relTime(s.updatedAt || s.createdAt))}</div>
             </div>
             <button type="button" data-action="sticker-menu" data-id="${esc(s.id)}" class="icon-btn w-9 h-9 shrink-0 hover:text-indigo-600 aria-expanded:bg-slate-100 aria-expanded:text-indigo-600" aria-label="「${esc(s.name)}」のメニュー" title="メニュー" aria-haspopup="menu" aria-expanded="${stickerMenuId === s.id}">${icon("dots", "w-5 h-5")}</button>
           </div>`).join("");
@@ -2286,8 +2293,9 @@ const firebaseConfig = {
 
     // スタンプのメッセージ：返信先の引用（あれば）とスタンプの画像
     function stickerBody(m) {
-      const quote = m.replyTo ? `<div class="w-32 sm:w-36 mb-1 px-2 pt-1.5 pb-0.5 rounded-xl bg-white ring-1 ring-slate-200/70 shadow-sm">${replyQuote(m, false)}</div>` : "";
-      return quote + stickerImg(m.svg, m.name, "block w-32 h-32 sm:w-36 sm:h-36");
+      const size = STICKER_DISPLAY_SIZES[stickerSizeOf(m.size)];
+      const quote = m.replyTo ? `<div class="${size.quote} mb-1 px-2 pt-1.5 pb-0.5 rounded-xl bg-white ring-1 ring-slate-200/70 shadow-sm">${replyQuote(m, false)}</div>` : "";
+      return quote + stickerImg(m.svg, m.name, `block ${size.cls}`);
     }
 
     // 受け取ったスタンプの下に出す「自分のスタンプに保存」（保存済みなら表示だけ）
@@ -3324,7 +3332,7 @@ const firebaseConfig = {
       state.replyTo = null;
       renderReplyBar();
       const message = {
-        type: "sticker", text: STICKER_TEXT, stickerId: s.id, svg: s.svg, name: s.name,
+        type: "sticker", text: STICKER_TEXT, stickerId: s.id, svg: s.svg, name: s.name, size: stickerSizeOf(s.size),
         senderId: state.me.id, senderName: state.me.name, senderUid: state.uid, createdAt: serverTimestamp(),
         ...(replyTo ? { replyTo } : {}),
       };
@@ -3754,19 +3762,20 @@ const firebaseConfig = {
       if ([...name].length > STICKER_MAX_NAME) throw new Error(`スタンプ名は${STICKER_MAX_NAME}文字以内で入力してください。`);
       const svg = buildStickerSvg(ed.strokes);
       if (svg.length > STICKER_MAX_SVG) throw new Error("スタンプのデータが大きすぎます。線の数を減らしてください。");
+      const size = stickerSizeOf(ed.size);
       if (ed.id) {
         const ref = doc(db, "users", state.me.id, "stickers", ed.id);
         if (state.stickers.find((x) => x.id === ed.id)?.public) {
           // 公開中のスタンプは、みんなのスタンプのコピーも同じ書き込みで更新する
           const batch = writeBatch(db);
-          batch.update(ref, { name, svg, updatedAt: serverTimestamp() });
-          batch.update(doc(db, "publicStickers", publicStickerId(ed.id)), { name, svg, ownerName: state.me.name, updatedAt: serverTimestamp() });
+          batch.update(ref, { name, svg, size, updatedAt: serverTimestamp() });
+          batch.update(doc(db, "publicStickers", publicStickerId(ed.id)), { name, svg, size, ownerName: state.me.name, updatedAt: serverTimestamp() });
           await batch.commit();
         } else {
-          await updateDoc(ref, { name, svg, updatedAt: serverTimestamp() });
+          await updateDoc(ref, { name, svg, size, updatedAt: serverTimestamp() });
         }
       } else {
-        await setDoc(doc(collection(db, "users", state.me.id, "stickers")), { name, svg, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+        await setDoc(doc(collection(db, "users", state.me.id, "stickers")), { name, svg, size, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
       }
       store.remove(draftKey(ed));
       closeModal();
@@ -3815,7 +3824,7 @@ const firebaseConfig = {
       if (!ok) return;
       batch.update(ref, { public: true });
       batch.set(pubRef, {
-        ownerId: state.me.id, ownerName: state.me.name, stickerId: id, name: s.name, svg: s.svg,
+        ownerId: state.me.id, ownerName: state.me.name, stickerId: id, name: s.name, svg: s.svg, size: stickerSizeOf(s.size),
         createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
       });
       await batch.commit();
@@ -3840,7 +3849,11 @@ const firebaseConfig = {
       menu.setAttribute("role", "menu");
       menu.setAttribute("aria-label", `「${s.name}」のメニュー`);
       menu.className = "pop-in fixed z-40 w-48 p-1.5 bg-white rounded-2xl shadow-lg ring-1 ring-slate-200";
+      const cur = stickerSizeOf(s.size);
+      const sizeBtns = Object.entries(STICKER_DISPLAY_SIZES).map(([k, { label }]) => `
+        <button type="button" role="menuitemradio" data-action="set-sticker-size" data-id="${esc(id)}" data-size="${k}" aria-checked="${k === cur}" class="flex-1 py-1.5 rounded-lg text-sm font-semibold transition ${k === cur ? "bg-indigo-50 text-indigo-600 ring-1 ring-indigo-300" : "text-slate-600 hover:bg-slate-100"}">${label}</button>`).join("");
       menu.innerHTML = (s.public ? item("toggle-sticker-public", "lock", "非公開にする") : item("toggle-sticker-public", "globe", "公開する"))
+        + `<div class="px-3 pt-1.5 pb-1 text-xs font-medium text-slate-400">表示サイズ</div><div class="flex gap-1 px-1.5 pb-1">${sizeBtns}</div>`
         + item("edit-sticker", "pencil", "編集")
         + item("export-sticker", "download", "SVG で書き出し")
         + `<div class="my-1 border-t border-slate-100"></div>`
@@ -3859,16 +3872,29 @@ const firebaseConfig = {
       document.querySelectorAll('[data-action="sticker-menu"][aria-expanded="true"]').forEach((b) => b.setAttribute("aria-expanded", "false"));
     }
 
-    // スタンプの名前と SVG をコピーして自分のスタンプに保存する（受け取ったスタンプ・みんなのスタンプ。元のスタンプは読まない）
+    // 表示サイズだけを変える（公開中は、みんなのスタンプのコピーも同じ書き込みで変える）
+    async function setStickerSize(id, sizeRaw) {
+      const s = state.stickers.find((x) => x.id === id);
+      const size = stickerSizeOf(sizeRaw);
+      closeStickerMenu();
+      if (!s || stickerSizeOf(s.size) === size) return;
+      const batch = writeBatch(db);
+      batch.update(doc(db, "users", state.me.id, "stickers", id), { size, updatedAt: serverTimestamp() });
+      if (s.public) batch.update(doc(db, "publicStickers", publicStickerId(id)), { size, ownerName: state.me.name, updatedAt: serverTimestamp() });
+      await batch.commit();
+      toast(`「${s.name}」の表示サイズを「${STICKER_DISPLAY_SIZES[size].label}」にしました`);
+    }
+
+    // スタンプの名前・SVG・表示サイズをコピーして自分のスタンプに保存する（受け取ったスタンプ・みんなのスタンプ。元のスタンプは読まない）
     const savingStickers = new Set(); // 連打による二重保存を防ぐ
-    async function copyToMyStickers(nameRaw, svg) {
+    async function copyToMyStickers(nameRaw, svg, size) {
       if (!state.stickersLoaded) throw new Error("スタンプを読み込み中です。少し待ってからお試しください。");
       if (isStickerSaved(svg) || savingStickers.has(svg)) return;
       if (typeof svg !== "string" || !STICKER_SVG_RE.test(svg) || svg.length > STICKER_MAX_SVG) throw new Error("このスタンプは保存できません。");
       const name = [...String(nameRaw || "").trim()].slice(0, STICKER_MAX_NAME).join("") || "スタンプ";
       savingStickers.add(svg);
       try {
-        await setDoc(doc(collection(db, "users", state.me.id, "stickers")), { name, svg, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+        await setDoc(doc(collection(db, "users", state.me.id, "stickers")), { name, svg, size: stickerSizeOf(size), createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
       } finally {
         savingStickers.delete(svg);
       }
@@ -3879,14 +3905,14 @@ const firebaseConfig = {
     async function saveReceivedSticker(msgId) {
       const m = state.messages.find((x) => x.id === msgId);
       if (!m || m.type !== "sticker" || m.senderId === state.me.id || !isMember(currentRoom())) return;
-      await copyToMyStickers(m.name, m.svg);
+      await copyToMyStickers(m.name, m.svg, m.size);
     }
 
     // みんなのスタンプを自分のスタンプに保存する
     async function savePublicSticker(pubId) {
       const p = state.publicStickers.find((x) => x.id === pubId);
       if (!p || p.ownerId === state.me.id) return;
-      await copyToMyStickers(p.name, p.svg);
+      await copyToMyStickers(p.name, p.svg, p.size);
     }
 
     // ---- SVG ファイルの書き出し・読み込み ----
@@ -4361,7 +4387,7 @@ const firebaseConfig = {
       const s = id ? state.stickers.find((x) => x.id === id) : null;
       if (id && !s) return;
       closeStickerBox();
-      openDrawEditor({ kind: "sticker", id: s?.id || null, svg: s?.svg, name: s?.name, title: s ? "スタンプを編集" : "スタンプを作成" });
+      openDrawEditor({ kind: "sticker", id: s?.id || null, svg: s?.svg, name: s?.name, size: s?.size, title: s ? "スタンプを編集" : "スタンプを作成" });
     }
 
     // アイコンを描く（今のアイコンが描いたものなら、その続きから描ける）
@@ -4371,13 +4397,13 @@ const firebaseConfig = {
     }
 
     // スタンプ・アイコン共通のエディタ。ユーザーのアイコンは丸く、グループのアイコンは角を丸めて表示するので、枠もその形にする
-    function openDrawEditor({ kind, id = null, svg, strokes = parseStickerSvg(svg), name = "", title }) {
+    function openDrawEditor({ kind, id = null, svg, strokes = parseStickerSvg(svg), name = "", size, title }) {
       const isIcon = kind === "icon" || kind === "groupIcon";
       const frame = kind === "icon" ? "rounded-full bg-[#fff]" : kind === "groupIcon" ? "rounded-[25%] bg-[#fff]" : "rounded-2xl chat-bg";
       const hint = kind === "icon" ? "枠の中に指やマウスで描きます（丸い枠の外は表示されません）"
         : kind === "groupIcon" ? "枠の中に指やマウスで描きます（枠の角の外は表示されません）"
         : "枠の中に指やマウスで描きます";
-      editor = { kind, id, strokes, history: [], tool: "pen", color: STICKER_COLORS[0], width: STICKER_WIDTHS[1], maxSvg: isIcon ? ICON_MAX_SVG : STICKER_MAX_SVG };
+      editor = { kind, id, strokes, history: [], tool: "pen", color: STICKER_COLORS[0], width: STICKER_WIDTHS[1], size: stickerSizeOf(size), maxSvg: isIcon ? ICON_MAX_SVG : STICKER_MAX_SVG };
       const ed = editor;
       const toolBtn = (tool, iconName, label) => `
         <button type="button" data-action="se-tool" data-tool="${tool}" class="se-tool btn-chip py-2 ring-1" aria-pressed="false">${icon(iconName, "w-4 h-4")}${label}</button>`;
@@ -4430,6 +4456,14 @@ const firebaseConfig = {
             <input id="se-name" name="name" class="input" maxlength="${STICKER_MAX_NAME}" value="${esc(name)}" placeholder="例: ありがとう" autocomplete="off" />`}
             <p id="se-size" class="text-xs text-slate-400 mt-1.5"></p>
           </div>
+          ${isIcon ? "" : `
+          <div>
+            <div class="label">表示サイズ（チャットでの大きさ）</div>
+            <div class="flex gap-1.5" role="radiogroup" aria-label="表示サイズ">
+              ${Object.entries(STICKER_DISPLAY_SIZES).map(([k, { label }]) => `
+                <button type="button" data-action="se-display-size" data-size="${k}" class="se-display-size btn-chip flex-1 py-2 ring-1" role="radio" aria-checked="false">${label}</button>`).join("")}
+            </div>
+          </div>`}
           <p class="form-error" hidden></p>
           <div class="flex gap-3">
             <button type="button" data-action="se-save-draft" class="btn-secondary flex-1">下書き保存</button>
@@ -4468,7 +4502,7 @@ const firebaseConfig = {
       if (!ed) return;
       const name = ed.kind === "sticker" ? String($("#se-name")?.value ?? "").trim() : "";
       if (!ed.strokes.length && !name) throw new Error("下書きに保存する内容がありません。");
-      const draft = { svg: buildStickerSvg(ed.strokes), name, at: Date.now() };
+      const draft = { svg: buildStickerSvg(ed.strokes), name, size: ed.size, at: Date.now() };
       try {
         localStorage.setItem(draftKey(ed), JSON.stringify(draft));
       } catch {
@@ -4502,7 +4536,9 @@ const firebaseConfig = {
       ed.strokes = parseStickerSvg(d.svg);
       const nameEl = $("#se-name");
       if (nameEl && d.name) nameEl.value = [...String(d.name)].slice(0, STICKER_MAX_NAME).join("");
+      if (d.size) ed.size = stickerSizeOf(d.size);
       ed.draftShown = true;
+      renderEditorTools();
       renderCanvas();
       renderDraftBar();
     }
@@ -4558,6 +4594,11 @@ const firebaseConfig = {
         const active = Number(b.dataset.width) === editor.width;
         b.setAttribute("aria-pressed", active);
         b.className = `se-width w-11 h-11 rounded-xl grid place-items-center ring-1 transition ${active ? on : off}`;
+      });
+      document.querySelectorAll("#modal-host .se-display-size").forEach((b) => {
+        const active = b.dataset.size === editor.size;
+        b.setAttribute("aria-checked", active);
+        b.className = `se-display-size btn-chip flex-1 py-2 ring-1 ${active ? on : off}`;
       });
       $("#se-width-range").value = editor.width;
       $("#se-width-value").textContent = editor.width;
@@ -5212,6 +5253,7 @@ const firebaseConfig = {
       "export-sticker": (el) => exportSticker(el.dataset.id),
       "sticker-menu": (el) => toggleStickerMenu(el),
       "toggle-sticker-public": (el) => toggleStickerPublic(el.dataset.id),
+      "set-sticker-size": (el) => setStickerSize(el.dataset.id, el.dataset.size),
       "sticker-view": (el) => setStickerView(el.dataset.stickerView),
       "save-public-sticker": (el) => savePublicSticker(el.dataset.id),
       "more-public-stickers": () => loadMorePublicStickers(),
@@ -5227,6 +5269,7 @@ const firebaseConfig = {
         if (editor.tool === "eraser") editor.tool = "pen"; // 太さを選んだらペンに戻す
         renderEditorTools();
       },
+      "se-display-size": (el) => { if (editor) { editor.size = stickerSizeOf(el.dataset.size); renderEditorTools(); } },
       "se-save-draft": () => saveDraft(),
       "se-open-draft": () => openDraft(),
       "se-discard-draft": () => discardDraft(),
