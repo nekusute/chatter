@@ -573,8 +573,7 @@ const firebaseConfig = {
     // 定数・状態
     // ============================================================
     const ID_RE = /^[a-z0-9_-]{3,20}$/;
-    const MESSAGE_LIMIT = 100;              // 1ルームで読み込む最新メッセージ数
-    const MESSAGE_MAX_LIMIT = 3000;         // 古いメッセージへ移動するときに、読み込みを増やせる上限
+    const MESSAGE_LIMIT = 100;              // 1ルームで最初に読み込む最新メッセージ数（上へスクロールすると、この件数ずつ古いメッセージを読み込む）
     const SEARCH_PAGE = 500;                // メッセージの検索で一度に読み込む数（「さらに古いメッセージを検索」で増やす）
     const MAX_TEXT = 2000;                  // 1メッセージの最大文字数
     const EDIT_WINDOW = 10 * 60 * 1000;     // 送信後にテキストのメッセージを編集できる時間（firestore.rules と合わせる）
@@ -655,8 +654,10 @@ const firebaseConfig = {
       editing: null,          // 編集中の自分のメッセージ { id, roomId, text（元の本文） }。編集中は入力欄の下書きを保存しない
       selectedMsgId: null,    // 送信取消メニュー / リアクションの絵文字を開いているメッセージ
       pinsOpen: false,        // ピン留めの一覧を開いているか
-      messageLimit: MESSAGE_LIMIT, // 開いているトークで読み込む最新メッセージ数（古いメッセージへ移動するときに増やす）
+      messageLimit: MESSAGE_LIMIT, // 開いているトークで読み込む最新メッセージ数（上へスクロールしたとき・古いメッセージへ移動するときに増やす）
       pendingJump: null,      // 読み込みを増やしたあとに移動するメッセージ { id, missing }
+      hasOlder: false,        // 読み込んでいない古いメッセージがありそうか（読み込んだ件数が上限に達している）
+      loadingOlder: false,    // 上へスクロールして古いメッセージを読み込んでいる途中か
       leavingRoomId: null,    // 自分で退出・削除中のルーム（「削除されました」通知を出さない）
       accountDeleting: false,
       stickers: [],           // 自分のスタンプ（新しい順）
@@ -2182,6 +2183,14 @@ const firebaseConfig = {
         prev = { senderId: m.senderId, d };
       }
 
+      if (state.hasOlder) {
+        html = `
+          <div class="flex justify-center pb-2">
+            ${state.loadingOlder
+              ? `<span class="inline-flex items-center gap-2 py-1.5 text-xs text-slate-500">${spinner("w-4 h-4 border-2")}古いメッセージを読み込んでいます…</span>`
+              : `<button type="button" data-action="load-older" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 hover:bg-indigo-50">さらに古いメッセージを読み込む</button>`}
+          </div>` + html;
+      }
       if (!state.messages.length) {
         html = `
           <div class="min-h-[60vh] grid place-items-center text-center">
@@ -2359,6 +2368,8 @@ const firebaseConfig = {
 
         state.messageLimit = MESSAGE_LIMIT;
         state.pendingJump = null;
+        state.hasOlder = false;
+        state.loadingOlder = false;
         resetMsgSearch(roomId);
         subscribeMessages(roomId);
         subscribeReads(roomId);
@@ -2386,9 +2397,16 @@ const firebaseConfig = {
           state.messages = snap.docs.map((d) => ({ ...withId(d), pending: d.metadata.hasPendingWrites }));
           const first = !state.messagesLoaded;
           state.messagesLoaded = true;
+          const older = state.loadingOlder;
+          if (older && !snap.metadata.fromCache) state.loadingOlder = false; // サーバーから届いたら読み込み完了
+          state.hasOlder = state.loadingOlder || snap.size >= state.messageLimit;
           const jump = state.pendingJump;
           // 読み込みを増やした直後は、増えた古いメッセージを新着として扱わず、スクロールもしない（移動先へスクロールする）
-          renderMessages(first, !!jump);
+          // 上へスクロールして読み込んだときは、上に増えた分だけずらして、見ていた位置を保つ
+          const box = $("#messages");
+          const fromBottom = box.scrollHeight - box.scrollTop;
+          renderMessages(first, !!jump || older);
+          if (older && !jump) box.scrollTop = box.scrollHeight - fromBottom;
           if (jump && (state.messages.some((m) => m.id === jump.id) || !snap.metadata.fromCache)) {
             state.pendingJump = null;
             jumpToMessage(jump.id, jump.missing, false);
@@ -2401,6 +2419,7 @@ const firebaseConfig = {
           // グループを退出すると読めなくなるので、閉じたルームのエラーは無視する
           if (state.activeRoomId !== roomId || state.leavingRoomId === roomId) return;
           state.pendingJump = null;
+          state.loadingOlder = false;
           onListenError(e);
         },
       );
@@ -2417,7 +2436,6 @@ const firebaseConfig = {
       const count = (await getCountFromServer(query(msgsRef, where("createdAt", ">=", snap.data().createdAt)))).data().count;
       if (state.activeRoomId !== roomId) return;
       const need = count + 20; // 移動先の上にも少し表示する
-      if (need > MESSAGE_MAX_LIMIT) { toast("古すぎるため、このメッセージは表示できません"); return; }
       if (need <= state.messageLimit) { toast(missing); return; }
       state.messageLimit = need;
       const jump = { id: msgId, missing };
@@ -2426,6 +2444,20 @@ const firebaseConfig = {
       subscribeMessages(roomId);
       // オフラインなどで届かないときは、あきらめて次の移動を受け付ける
       setTimeout(() => { if (state.pendingJump === jump) state.pendingJump = null; }, 20 * 1000);
+    }
+
+    // 上へスクロールしたとき（または「さらに古いメッセージを読み込む」）：読み込む件数を MESSAGE_LIMIT 件増やして購読し直す
+    function loadOlderMessages() {
+      const roomId = state.activeRoomId;
+      if (!roomId || !state.messagesLoaded || !state.hasOlder || state.loadingOlder || state.pendingJump) return;
+      state.loadingOlder = true;
+      state.messageLimit += MESSAGE_LIMIT;
+      renderMessages(false, true); // 先頭に「読み込んでいます…」を出す
+      subscribeMessages(roomId);
+      // オフラインなどで届かないときは、あきらめて次の読み込みを受け付ける
+      setTimeout(() => {
+        if (state.activeRoomId === roomId && state.loadingOlder) { state.loadingOlder = false; renderMessages(false, true); }
+      }, 20 * 1000);
     }
 
     // ---- 入力中（DM のみ） ----
@@ -5235,6 +5267,7 @@ const firebaseConfig = {
       "close-msg-search": () => closeMsgSearch(),
       "msg-search-result": (el) => pickSearchResult(el.dataset.id),
       "msg-search-more": () => loadSearchPage(),
+      "load-older": () => loadOlderMessages(),
       "pin": (el) => setPin(el.dataset.id, true),
       "unpin": (el) => setPin(el.dataset.id, false),
       "pick-mention": (el) => pickMention(Number(el.dataset.index)),
@@ -5571,10 +5604,11 @@ const firebaseConfig = {
       $("#composer").addEventListener("submit", (e) => { e.preventDefault(); send(); });
       $("#send-btn").addEventListener("mousedown", (e) => e.preventDefault()); // 送信時にキーボードを閉じない
 
-      // メッセージ一覧を最下部までスクロールしたら「新着」ボタンを消す
+      // メッセージ一覧を最下部までスクロールしたら「新着」ボタンを消す。最上部近くまでスクロールしたら古いメッセージを読み込む
       $("#messages").addEventListener("scroll", (e) => {
         const box = e.target;
         if (box.scrollHeight - box.scrollTop - box.clientHeight < 40) $("#new-msg-btn").hidden = true;
+        if (box.scrollTop < 200) loadOlderMessages();
       }, { passive: true });
 
       // 開いているタブで招待リンクを開いたとき
