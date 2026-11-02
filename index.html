@@ -597,7 +597,8 @@ const firebaseConfig = {
     const REACTION_CODES = REACTIONS.map(([code]) => code);
     // スタンプ（自分で描いた SVG を Firestore に保存。上限は firestore.rules と合わせる）
     const STICKER_SIZE = 240;               // エディタの座標の範囲（viewBox="0 0 240 240"）
-    const STICKER_MAX_SVG = 50000;          // SVG 文字列の最大文字数
+    const KB = 1024;                        // 容量の 1KB（バイト数）。スタンプ・アイコンの上限と容量表示に使う
+    const STICKER_MAX_SVG = 75 * KB;         // SVG 文字列の最大文字数（75KB = 76,800）
     const STICKER_MAX_NAME = 20;            // スタンプ名の最大文字数
     const STICKER_TEXT = "[スタンプ]";       // 一覧のプレビュー・通知・返信の引用に使う本文（スタンプのメッセージの text）
     // SVG の形式：<svg …> の中に <path …/> と、読み込んだ文字・画像を画像にした <image …/> が並ぶ（firestore.rules の isValidSvg と合わせる）
@@ -619,7 +620,7 @@ const firebaseConfig = {
     const stickerSizeOf = (v) => (Object.hasOwn(STICKER_DISPLAY_SIZES, v) ? v : "m");
     const PUBLIC_STICKER_PAGE = 60;         // みんなのスタンプを一度に読み込む数（「もっと見る」で増やす）
     // アイコン（users/{id}.icon に保存。描いた SVG はスタンプと同じ形式、アップロードした画像は縮小した JPEG の data URL。上限は firestore.rules と合わせる）
-    const ICON_MAX_SVG = 100000;          //描いたアイコンの SVG の最大文字数
+    const ICON_MAX_SVG = 100 * KB;          // 描いたアイコンの SVG の最大文字数（100KB = 102,400）
     const ICON_IMAGE_PX = 192;              // アップロードした画像を縮小する大きさ（正方形の一辺）
     const ICON_MAX_IMAGE = 40000;           // 画像の data URL の最大文字数
     const ICON_IMAGE_RE = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/;
@@ -4268,14 +4269,14 @@ const firebaseConfig = {
       }
       const build = (tol) => items.map((it) => (it.shape ? { attrs: shapeAttrs(it.shape, tol) } : images.has(it.run) ? { image: images.get(it.run) } : null)).filter((s) => s?.attrs || s?.image);
       if (!build(0.8).length) {
-        throw new Error(tooLarge ? `文字・画像が大きすぎて、スタンプの上限（${STICKER_MAX_SVG / 1000} KB）に収まりません。` : "読み込める図形・文字・画像がありませんでした。");
+        throw new Error(tooLarge ? `文字・画像が大きすぎて、スタンプの上限（${STICKER_MAX_SVG / KB} KB）に収まりません。` : "読み込める図形・文字・画像がありませんでした。");
       }
       // 誤差（スタンプの 240×240 の座標での許容量）を広げながら、上限に収まる桁数を探す
       for (const tol of [0.05, 0.2, 0.8]) {
         const strokes = build(tol);
         if (buildStickerSvg(strokes).length <= STICKER_MAX_SVG) return { strokes, skipped, tooLarge };
       }
-      throw new Error(`SVG が複雑すぎて、スタンプの上限（${STICKER_MAX_SVG / 1000} KB）に収まりません。`);
+      throw new Error(`SVG が複雑すぎて、スタンプの上限（${STICKER_MAX_SVG / KB} KB）に収まりません。`);
     }
 
     // 文字・画像のまとまり（RASTER_RUN_ATTR が run の要素）だけを残した SVG を、240×240 の枠の座標のまま画像にする。
@@ -4651,7 +4652,7 @@ const firebaseConfig = {
       canvas.replaceChildren(...editor.strokes.map(strokePath));
       const size = editor.strokes.length ? buildStickerSvg(editor.strokes).length : 0;
       const el = $("#se-size");
-      el.textContent = `容量 ${(size / 1000).toFixed(1)} KB / ${editor.maxSvg / 1000} KB`;
+      el.textContent = `容量 ${(size / KB).toFixed(1)} KB / ${editor.maxSvg / KB} KB`;
       el.classList.toggle("text-rose-600", size > editor.maxSvg);
     }
 
