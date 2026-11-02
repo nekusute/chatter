@@ -201,6 +201,9 @@
     @keyframes float { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(40px, 30px) scale(1.08); } }
     .blob { position: absolute; border-radius: 9999px; filter: blur(70px); animation: float 18s ease-in-out infinite; }
 
+    /* メッセージ内のリンクはダブルタップで開くので、ダブルタップでの拡大をさせない */
+    .msg-link { touch-action: manipulation; }
+
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
     }
@@ -577,7 +580,7 @@ const firebaseConfig = {
     const SEARCH_PAGE = 500;                // メッセージの検索で一度に読み込む数（「さらに古いメッセージを検索」で増やす）
     const MAX_TEXT = 2000;                  // 1メッセージの最大文字数
     const EDIT_WINDOW = 10 * 60 * 1000;     // 送信後にテキストのメッセージを編集できる時間（firestore.rules と合わせる）
-    const ONLINE_MS = 6 * 60 * 1000;        // この時間内に操作があれば「オンライン」
+    const ONLINE_MS = 6 * 60 * 1000;        // タブを表示していて、この時間内に最終アクティブ時刻の更新があれば「オンライン」
     const PRESENCE_INTERVAL = 5 * 60 * 1000; // 最終アクティブ時刻の更新間隔
     const UPDATE_CHECK_INTERVAL = 5 * 60 * 1000; // 新しいバージョン（公開中の index.html）を確認する間隔
     const UPDATE_CHECK_MIN_GAP = 60 * 1000;      // タブを表示し直したときの確認も、前回からこの時間は空ける
@@ -742,7 +745,8 @@ const firebaseConfig = {
     ICONS.dots = "M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"; // ケバブメニュー（︙）
     ICONS.globe = "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z";
     ICONS.refresh = "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15";
-    ICONS.lock = "M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z";
+    ICONS.crop = "M6 2v14a2 2 0 002 2h14M2 6h14a2 2 0 012 2v14"; // トリミング
+    ICONS.lock ="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z";
     const icon = (name, cls = "w-5 h-5") =>
       `<svg class="${cls}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
     const hydrateIcons = (root = document) =>
@@ -819,7 +823,8 @@ const firebaseConfig = {
     }
     // 管理者が「オンラインを隠す」をオンにしている間は、その管理者のオンライン状態と入力中を出さない
     const presenceHidden = (id) => id === ADMIN_ID && adminSettings.hideOnline;
-    const isOnline = (u) => !!u && !u.deleted && !presenceHidden(u.id) && Date.now() - ms(u.lastSeen) < ONLINE_MS;
+    // タブを表示している間だけオンライン（online が無いのは、これを書かない以前の版を使っている場合）
+    const isOnline = (u) => !!u && !u.deleted && !presenceHidden(u.id) && u.online !== false && Date.now() - ms(u.lastSeen) < ONLINE_MS;
 
     // エラーメッセージを日本語に
     function errMsg(e) {
@@ -1137,6 +1142,8 @@ const firebaseConfig = {
     // 購読を止めてログアウトし、状態を初期化してログイン画面へ戻す
     function resetSession() {
       if (typingRoomId && !state.accountDeleting) writeTyping(typingRoomId, false); // ログアウトの前に「入力中」を消す（間に合わなくても TYPING_TTL で消える）
+      if (state.me && !state.accountDeleting) setPresence(false, true); // オンライン表示も消す（間に合わなくても ONLINE_MS で消える）
+      lastOnline = null;
       typingRoomId = null;
       clearTimeout(typingExpireTimer);
       Object.values(state.unsub).forEach((u) => u?.());
@@ -1183,13 +1190,24 @@ const firebaseConfig = {
     // ============================================================
     // 在席（最終アクティブ時刻）
     // ============================================================
-    let lastTouch = 0;
-    function touchPresence(force = false) {
+    // タブを表示している間だけオンラインにする。lastSeen（最終アクティブ時刻）と online（タブを表示しているか）を書き、
+    // 別のタブに切り替えた・ウィンドウを最小化したら online: false にする。online が true でも lastSeen が ONLINE_MS より古ければ
+    // オフライン（タブを閉じたときに書けなかった・通信が切れた場合など）
+    let lastTouch = 0, lastOnline = null;
+    function setPresence(online, force = false) {
       if (!state.me || presenceHidden(state.me.id)) return;
-      if (!force && (document.visibilityState !== "visible" || Date.now() - lastTouch < 60e3)) return;
+      if (!force && online === lastOnline && (!online || Date.now() - lastTouch < 60e3)) return;
       lastTouch = Date.now();
-      updateDoc(doc(db, "users", state.me.id), { lastSeen: serverTimestamp() }).catch((e) => console.warn(e));
+      lastOnline = online;
+      updateDoc(doc(db, "users", state.me.id), { lastSeen: serverTimestamp(), online }).catch((e) => console.warn(e));
     }
+    const touchPresence = (force = false) => setPresence(document.visibilityState === "visible", force);
+
+    // 同じアカウントで複数のタブを開いているとき、あるタブを隠したら、表示中の別のタブがオンラインに書き直す
+    const presenceChannel = "BroadcastChannel" in window ? new BroadcastChannel("chatter:presence") : null;
+    if (presenceChannel) presenceChannel.onmessage = (e) => {
+      if (e.data?.hidden === state.me?.id && document.visibilityState === "visible") setPresence(true, true);
+    };
 
     // ============================================================
     // 設定
@@ -2194,6 +2212,7 @@ const firebaseConfig = {
             <div class="flex justify-end gap-2 mt-1.5 fade-in" data-msg-id="${esc(m.id)}">
               ${image ? viewImageChip(m) : ""}
               ${canReply ? `<button type="button" data-action="reply" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("reply", "w-3.5 h-3.5")}返信</button>` : ""}
+              ${canCopyMessage(m) ? `<button type="button" data-action="copy-msg" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("copy", "w-3.5 h-3.5")}コピー</button>` : ""}
               ${canEditMessage(m, room) ? `<button type="button" data-action="edit-msg" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("pencil", "w-3.5 h-3.5")}編集</button>` : ""}
               ${pinChip(m, room)}
               <button type="button" data-action="unsend" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-rose-600 ring-1 ring-rose-200 shadow-sm hover:bg-rose-50">${icon("trash", "w-3.5 h-3.5")}送信取消</button>
@@ -2286,6 +2305,16 @@ const firebaseConfig = {
 
     // 吹き出しの上に出すリアクションの絵文字（選択中のものは強調、もう一度選ぶと取り消し）と返信ボタン
     let pickerShownFor = null; // 表示中のピッカーのメッセージ（描き直しのたびにアニメーションさせない）
+    // 文字のメッセージは本文をコピーできる（スタンプ・画像は除く）
+    const canCopyMessage = (m) => m.type !== "sticker" && m.type !== "image" && typeof m.text === "string" && !!m.text;
+    async function copyMessage(msgId) {
+      const m = state.messages.find((x) => x.id === msgId);
+      if (!m || !canCopyMessage(m)) return;
+      state.selectedMsgId = null;
+      renderMessages();
+      await copyText(m.text, "メッセージをコピーしました");
+    }
+
     function reactionPicker(m, canReply, room) {
       const current = m.reactions?.[state.me.id];
       const pinned = isPinned(room, m.id);
@@ -2295,12 +2324,14 @@ const firebaseConfig = {
           ${REACTIONS.map(([code, emoji]) => `
             <button type="button" data-action="react" data-id="${esc(m.id)}" data-code="${code}" aria-label="${emoji}" aria-pressed="${current === code}"
               class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center text-lg sm:text-xl leading-none transition hover:bg-slate-100 hover:scale-110 active:scale-95 ${current === code ? "bg-indigo-100 ring-1 ring-indigo-300" : ""}">${emoji}</button>`).join("")}
+          ${canReply || canCopyMessage(m) || canPin ? `<span class="w-px h-6 bg-slate-200 mx-0.5"></span>` : ""}
           ${canReply ? `
-            <span class="w-px h-6 bg-slate-200 mx-0.5"></span>
             <button type="button" data-action="reply" data-id="${esc(m.id)}" aria-label="返信" title="返信"
               class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 active:scale-95">${icon("reply", "w-5 h-5")}</button>` : ""}
+          ${canCopyMessage(m) ? `
+            <button type="button" data-action="copy-msg" data-id="${esc(m.id)}" aria-label="コピー" title="コピー"
+              class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 active:scale-95">${icon("copy", "w-5 h-5")}</button>` : ""}
           ${canPin ? `
-            ${canReply ? "" : `<span class="w-px h-6 bg-slate-200 mx-0.5"></span>`}
             <button type="button" data-action="${pinned ? "unpin" : "pin"}" data-id="${esc(m.id)}" aria-label="${pinned ? "ピン留めを解除" : "ピン留め"}" title="${pinned ? "ピン留めを解除" : "ピン留め"}" aria-pressed="${pinned}"
               class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center transition hover:bg-slate-100 hover:text-indigo-600 active:scale-95 ${pinned ? "bg-indigo-100 ring-1 ring-indigo-300 text-indigo-600" : "text-slate-500"}">${icon("pin", "w-5 h-5")}</button>` : ""}
         </div>`;
@@ -2329,7 +2360,7 @@ const firebaseConfig = {
       let html = "", pos = 0;
       for (const u of m.text.matchAll(URL_RE)) {
         html += plain(m.text.slice(pos, u.index)) +
-          `<a href="${esc(u[0])}" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 ${mine ? "decoration-white/60" : "text-indigo-600"}">${esc(u[0])}</a>`;
+          `<a href="${esc(u[0])}" target="_blank" rel="noopener noreferrer" title="ダブルクリックで開く" class="msg-link underline underline-offset-2 ${mine ? "decoration-white/60" : "text-indigo-600"}">${esc(u[0])}</a>`;
         pos = u.index + u[0].length;
       }
       return html + plain(m.text.slice(pos));
@@ -3529,7 +3560,19 @@ const firebaseConfig = {
     const RASTER_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     const IMAGE_EXT_TYPES = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml" };
 
-    let imgSend = null; // 開いている送信画面 { file, type, url, img, w, h, dims, roomId, result, gen, strokes（ペンの書き込み）, vw, vh（書き込みの座標の範囲）, drawing }
+    // 開いている送信画面 { file, type, url, img, w, h, dims, roomId, result, gen, crop（トリミングの範囲。w×h の座標。null は全体）,
+    //   strokes（ペンの書き込み。トリミングした範囲の座標）, vw, vh（書き込みの座標の範囲）, inSub（描く・トリミングの画面に切り替え中） }
+    let imgSend = null;
+
+    // 送る範囲（トリミングしていなければ画像全体）
+    const cropOf = (s) => s.crop || { x: 0, y: 0, w: s.w, h: s.h };
+    // トリミングの範囲を決め、ペンの書き込みの座標の範囲を合わせる（長辺を STICKER_SIZE にして、ペンの太さがスタンプのエディタと同じ見た目になるように）
+    function setImageCrop(s, crop) {
+      s.crop = crop;
+      const c = cropOf(s), k = STICKER_SIZE / Math.max(c.w, c.h);
+      s.vw = c.w * k;
+      s.vh = c.h * k;
+    }
 
     async function openImageSender(file) {
       const room = currentRoom();
@@ -3552,9 +3595,8 @@ const firebaseConfig = {
       const k = Math.min(1, IMAGE_MAX_PX / Math.max(w, h));
       w = Math.max(1, Math.round(w * k));
       h = Math.max(1, Math.round(h * k));
-      // ペンの書き込みの座標：長辺を STICKER_SIZE にする（ペンの太さがスタンプのエディタと同じ見た目になるように）
-      const vk = STICKER_SIZE / Math.max(w, h);
-      const s = { file, type, url, img, w, h, dims, roomId: room.id, result: null, gen: 0, strokes: [], vw: w * vk, vh: h * vk, drawing: false };
+      const s = { file, type, url, img, w, h, dims, roomId: room.id, result: null, gen: 0, strokes: [], inSub: false };
+      setImageCrop(s, null);
       if (imgSend) cancelImageSender(imgSend);
       imgSend = s;
       renderImageSender();
@@ -3600,7 +3642,7 @@ const firebaseConfig = {
 
     function renderImageSender() {
       const s = imgSend;
-      s.drawing = false;
+      s.inSub = false;
       const label = { "image/jpeg": "JPG", "image/png": "PNG", "image/webp": "WEBP", "image/gif": "GIF", "image/svg+xml": "SVG" }[s.type] || "画像";
       openModal(`
         ${modalHead("画像を送信", `${label} · ${s.dims.w}×${s.dims.h} · ${fmtBytes(s.file.size)}`)}
@@ -3611,14 +3653,17 @@ const firebaseConfig = {
               <div class="flex flex-col items-center gap-2 px-4 text-center">${spinner("w-7 h-7 border-[3px]")}<span id="is-busy-text" class="text-xs font-semibold">変換中…</span></div>
             </div>
           </div>
-          <p class="text-xs text-slate-500 leading-relaxed">画像は SVG の中に埋め込んで送信します（50KB を超えるときは圧縮します）。圧縮のあと「描く」で画像にペンで書き込めます。</p>
-          <p id="is-status" class="text-xs leading-relaxed rounded-xl px-3 py-2" hidden></p>
-          <div class="flex gap-2 sm:gap-3">
-            <button type="button" data-close class="btn-secondary flex-1 px-2">キャンセル</button>
-            <button type="button" id="is-draw" data-action="is-draw" class="btn-secondary flex-1 px-2" disabled>${icon("pencil", "w-5 h-5")}描く</button>
-            <button type="button" id="is-send" data-action="is-send" class="btn-primary flex-1 px-2" disabled>${icon("send", "w-5 h-5")}送信</button>
+          <div class="flex gap-2">
+            <button type="button" id="is-crop" data-action="is-crop" class="btn-secondary flex-1 py-2.5 text-sm" disabled>${icon("crop", "w-4 h-4")}トリミング</button>
+            <button type="button" id="is-draw" data-action="is-draw" class="btn-secondary flex-1 py-2.5 text-sm" disabled>${icon("pencil", "w-4 h-4")}描く</button>
           </div>
-        </div>`, () => { if (!s.drawing) cancelImageSender(s); }); // 「描く」でエディタに切り替えるときは閉じない
+          <p class="text-xs text-slate-500 leading-relaxed">画像は SVG の中に埋め込んで送信します（50KB を超えるときは圧縮します）。圧縮のあと「トリミング」で送る範囲を選んだり、「描く」で画像にペンで書き込んだりできます。</p>
+          <p id="is-status" class="text-xs leading-relaxed rounded-xl px-3 py-2" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
+            <button type="button" id="is-send" data-action="is-send" class="btn-primary flex-1" disabled>${icon("send", "w-5 h-5")}送信</button>
+          </div>
+        </div>`, () => { if (!s.inSub) cancelImageSender(s); }); // 「描く」「トリミング」の画面に切り替えるときは閉じない
       renderImageStatus();
     }
 
@@ -3631,6 +3676,7 @@ const firebaseConfig = {
       $("#is-busy").hidden = !!r;
       $("#is-send").disabled = !r?.ok;
       $("#is-draw").disabled = !r || (!r.ok && !s.strokes.length); // 圧縮が終わってから描ける（書き込んで収まらなくなったときも直せるように）
+      $("#is-crop").disabled = !r; // 収まらなかったときも、範囲を狭めれば収まることがある
       $("#is-preview").src = r?.ok ? imageSrc(r.image) : s.url;
       el.hidden = !r;
       if (!r) return;
@@ -3640,7 +3686,7 @@ const firebaseConfig = {
         text = r.error || `50KB 以内に収まりませんでした（最小 ${fmtBytes(r.bytes)}）。画像を小さくしてからお試しください。`;
       } else {
         cls = "bg-emerald-50 text-emerald-700";
-        text = `<b>✓ SVG ${fmtBytes(r.bytes)}</b>（50KB 以内${s.strokes.length ? "・ペンの書き込みあり" : ""}）${r.enc ? `<br>${imageEncodeMessage(r.enc)}` : ""}`;
+        text = `<b>✓ SVG ${fmtBytes(r.bytes)}</b>（50KB 以内${s.crop ? `・${s.crop.w}×${s.crop.h} にトリミング` : ""}${s.strokes.length ? "・ペンの書き込みあり" : ""}）${r.enc ? `<br>${imageEncodeMessage(r.enc)}` : ""}`;
       }
       el.className = `text-xs leading-relaxed rounded-xl px-3 py-2 ${cls}`;
       el.innerHTML = text;
@@ -3683,7 +3729,7 @@ const firebaseConfig = {
       if (!r?.ok || !isSvgImage(r.image)) return; // SVG に埋め込んだ画像だけを送る
       const room = currentRoom();
       if (!room || room.id !== s.roomId || !canSend(room)) { closeModal(); throw new Error("トークが切り替わったため、画像を送信できませんでした。"); }
-      const { w, h } = s;
+      const { w, h } = cropOf(s);
       closeModal();
       const replyTo = state.replyTo;
       state.replyTo = null;
@@ -3725,24 +3771,26 @@ const firebaseConfig = {
     // 埋め込み方式：50KB を超えたら WEBP（非対応なら JPEG・PNG）に再圧縮し、品質 → サイズ の順に下げる
     async function embedFit(s, gen) {
       let first = null;
-      const drawn = s.strokes.length > 0; // ペンで書き込んだら、元のファイルはそのまま使えない
-      if (!drawn && RASTER_TYPES.includes(s.type) && s.file.size <= IMAGE_MAX_BYTES) {
+      const drawn = s.strokes.length > 0; // ペンで書き込んだ・トリミングしたら、元のファイルはそのまま使えない
+      const c = cropOf(s);
+      if (!drawn && !s.crop && RASTER_TYPES.includes(s.type) && s.file.size <= IMAGE_MAX_BYTES) {
         const svg = embedSvg(s.w, s.h, await blobToDataURL(s.file.slice(0, s.file.size, s.type))); // 拡張子で判定した形式を data URL に付ける
         first = { svg, bytes: svgBytes(svg) };
         if (first.bytes <= IMAGE_MAX_BYTES) return first;
       }
       const alpha = imageHasAlpha(s);
-      let scale = Math.min(1, 1600 / Math.max(s.w, s.h)), q = 0.85, tries = 0, best = null;
+      let scale = Math.min(1, 1600 / Math.max(c.w, c.h)), q = 0.85, tries = 0, best = null;
       while (tries < 24) {
         checkImageGen(s, gen);
         tries++;
         setImageBusy(`50KB に収まるよう圧縮中…（${tries}回目）`);
-        const tw = Math.max(8, Math.round(s.w * scale)), th = Math.max(8, Math.round(s.h * scale));
+        const tw = Math.max(8, Math.round(c.w * scale)), th = Math.max(8, Math.round(c.h * scale));
         const cv = document.createElement("canvas");
         cv.width = tw; cv.height = th;
         const ctx = cv.getContext("2d");
         ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(s.img, 0, 0, tw, th);
+        const kx = tw / c.w, ky = th / c.h; // 画像全体をずらして描き、送る範囲の外はキャンバスの外に出す
+        ctx.drawImage(s.img, -c.x * kx, -c.y * ky, s.w * kx, s.h * ky);
         if (drawn) drawStrokes(ctx, s.strokes, tw / s.vw, th / s.vh);
         let blob = await canvasBlob(cv, "image/webp", q), fmt = "WEBP";
         if (!blob || blob.type !== "image/webp") {
@@ -3754,7 +3802,7 @@ const firebaseConfig = {
           }
         }
         if (!blob) break;
-        const svg = embedSvg(s.w, s.h, await blobToDataURL(blob));
+        const svg = embedSvg(c.w, c.h, await blobToDataURL(blob));
         const cur = { svg, bytes: svgBytes(svg), enc: { fmt, q: fmt === "PNG" ? null : q, w: tw, h: th } };
         if (!best || cur.bytes < best.bytes) best = cur;
         if (cur.bytes <= IMAGE_MAX_BYTES) break;
@@ -3788,10 +3836,10 @@ const firebaseConfig = {
     function openImageDrawer() {
       const s = imgSend;
       if (!s?.result || editor) return;
-      s.drawing = true; // 送信画面を閉じても送信をやめない
+      s.inSub = true; // 送信画面を閉じても送信をやめない
       openDrawEditor({
         kind: "image", strokes: s.strokes, title: "画像に描く",
-        image: { src: s.url, w: s.w, h: s.h, vw: s.vw, vh: s.vh },
+        image: { src: s.url, vw: s.vw, vh: s.vh, crop: { ...cropOf(s), fw: s.w, fh: s.h } },
         onClose: (ed) => { if (!ed.returning) cancelImageSender(s); },
       });
     }
@@ -3803,6 +3851,197 @@ const firebaseConfig = {
       const changed = apply && ed.strokes !== s.strokes;
       if (changed) s.strokes = ed.strokes;
       ed.returning = true;
+      renderImageSender();
+      if (changed) convertImage();
+    }
+
+    // ---- トリミング（圧縮のあと「トリミング」で開く。元の画像は残すので、あとから範囲を広げ直せる） ----
+    // cropper: { s, rect（選んでいる範囲。画像の w×h の座標）, ratio（CROP_RATIOS のキー）, returning }
+    let cropper = null;
+    const CROP_RATIOS = { free: ["自由", null], "1:1": ["1:1", 1], "4:3": ["4:3", 4 / 3], "3:4": ["3:4", 3 / 4], "16:9": ["16:9", 16 / 9], "9:16": ["9:16", 9 / 16] };
+    const CROP_HANDLES = { nw: [0, 0], n: [50, 0], ne: [100, 0], e: [100, 50], se: [100, 100], s: [50, 100], sw: [0, 100], w: [0, 50] }; // 枠の上での位置（%）
+    const clampNum = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+    const cropMin = (s) => Math.min(s.w, s.h, Math.max(4, Math.round(Math.max(s.w, s.h) * 0.03))); // 選べる範囲の最小の幅・高さ
+
+    function openImageCropper() {
+      const s = imgSend;
+      if (!s?.result || editor || cropper) return;
+      const cr = { s, rect: { ...cropOf(s) }, ratio: "free", returning: false };
+      cropper = cr;
+      s.inSub = true; // 送信画面を閉じても送信をやめない
+      const full = { x: 0, y: 0, w: s.w, h: s.h }, fk = STICKER_SIZE / Math.max(s.w, s.h); // ペンの書き込みは画像全体の座標に移して重ねる
+      openModal(`
+        ${modalHead("トリミング", "枠や四隅をドラッグして、送る範囲を選びます", 'data-action="crop-back"')}
+        <div class="px-6 pb-6 space-y-4">
+          <div id="crop-area" class="relative mx-auto bg-[#fff] ring-1 ring-slate-200 overflow-hidden touch-none select-none cursor-crosshair" style="aspect-ratio:${s.w}/${s.h};width:min(100%, calc(55vh * ${+(s.w / s.h).toFixed(4)}))">
+            <img src="${s.url}" alt="" class="absolute inset-0 w-full h-full pointer-events-none" draggable="false" />
+            <svg id="crop-strokes" viewBox="0 0 ${full.w * fk} ${full.h * fk}" class="absolute inset-0 w-full h-full pointer-events-none" fill="none" stroke-linecap="round" stroke-linejoin="round"></svg>
+            <div id="crop-rect" class="absolute cursor-move outline outline-2 outline-white" style="box-shadow:0 0 0 9999px rgb(0 0 0 / .5)">
+              <div class="absolute inset-0 pointer-events-none" style="background:linear-gradient(to right,transparent 33.2%,rgb(255 255 255 / .5) 33.3% 33.5%,transparent 33.6% 66.5%,rgb(255 255 255 / .5) 66.6% 66.8%,transparent 66.9%),linear-gradient(to bottom,transparent 33.2%,rgb(255 255 255 / .5) 33.3% 33.5%,transparent 33.6% 66.5%,rgb(255 255 255 / .5) 66.6% 66.8%,transparent 66.9%)"></div>
+              ${Object.entries(CROP_HANDLES).map(([h, [x, y]]) => `
+                <span data-h="${h}" class="absolute w-7 h-7 -ml-3.5 -mt-3.5 grid place-items-center" style="left:${x}%;top:${y}%;cursor:${h.length === 2 ? (h === "nw" || h === "se" ? "nwse" : "nesw") : (h === "n" || h === "s" ? "ns" : "ew")}-resize">
+                  <span class="w-3.5 h-3.5 rounded-sm bg-white ring-1 ring-slate-500/60 shadow pointer-events-none"></span>
+                </span>`).join("")}
+            </div>
+          </div>
+          <div>
+            <div class="label">縦横比</div>
+            <div class="flex flex-wrap gap-1.5">
+              ${Object.entries(CROP_RATIOS).map(([k, [label]]) => `
+                <button type="button" data-action="crop-ratio" data-ratio="${k}" class="crop-ratio btn-chip py-2 ring-1" aria-pressed="false">${label}</button>`).join("")}
+              <button type="button" data-action="crop-reset" class="btn-chip py-2 ring-1 bg-white text-slate-600 ring-slate-200 hover:bg-slate-50">${icon("undo", "w-4 h-4")}元に戻す</button>
+            </div>
+            <p id="crop-size" class="text-xs text-slate-500 mt-2 tabular-nums"></p>
+          </div>
+          <div class="flex gap-3">
+            <button type="button" data-action="crop-back" class="btn-secondary flex-1">キャンセル</button>
+            <button type="button" data-action="crop-apply" class="btn-primary flex-1">完了</button>
+          </div>
+        </div>`, () => { if (cropper === cr) cropper = null; if (!cr.returning) cancelImageSender(s); }, { locked: true });
+      $("#crop-strokes").replaceChildren(...moveStrokes(s.strokes, cropOf(s), full).map(strokePath));
+      bindCropper(cr);
+      renderCropper();
+    }
+
+    function renderCropper() {
+      const cr = cropper, el = $("#crop-rect");
+      if (!cr || !el) return;
+      const { s, rect: r } = cr;
+      Object.assign(el.style, { left: `${r.x / s.w * 100}%`, top: `${r.y / s.h * 100}%`, width: `${r.w / s.w * 100}%`, height: `${r.h / s.h * 100}%` });
+      const on = "bg-indigo-50 text-indigo-600 ring-indigo-300";
+      const off = "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50";
+      document.querySelectorAll("#modal-host .crop-ratio").forEach((b) => {
+        const active = b.dataset.ratio === cr.ratio;
+        b.setAttribute("aria-pressed", active);
+        b.className = `crop-ratio btn-chip py-2 ring-1 ${active ? on : off}`;
+      });
+      $("#crop-size").textContent = `${Math.round(r.w)}×${Math.round(r.h)}px（元の画像 ${s.w}×${s.h}px）`;
+    }
+
+    // 縦横比を選ぶ：今の範囲の中心のまま、画像に収まる一番大きい範囲にする
+    function setCropRatio(key) {
+      const cr = cropper;
+      if (!cr || !CROP_RATIOS[key]) return;
+      cr.ratio = key;
+      const R = CROP_RATIOS[key][1];
+      if (R) {
+        const { s, rect: c } = cr;
+        const w = Math.min(s.w, s.h * R), h = w / R;
+        cr.rect = { x: clampNum(c.x + c.w / 2 - w / 2, 0, s.w - w), y: clampNum(c.y + c.h / 2 - h / 2, 0, s.h - h), w, h };
+      }
+      renderCropper();
+    }
+
+    function resetCrop() {
+      const cr = cropper;
+      if (!cr) return;
+      cr.ratio = "free";
+      cr.rect = { x: 0, y: 0, w: cr.s.w, h: cr.s.h };
+      renderCropper();
+    }
+
+    // 角（ax, ay）を固定して、向き（dx, dy は ±1）の側に広げる。縦横比が決まっていれば、それに合わせる
+    function cropFromCorner(cr, ax, ay, dx, dy, [px, py]) {
+      const { s } = cr, R = CROP_RATIOS[cr.ratio][1], m = cropMin(s);
+      const availW = dx > 0 ? s.w - ax : ax, availH = dy > 0 ? s.h - ay : ay;
+      let w = (px - ax) * dx, h = (py - ay) * dy;
+      if (R) { w = Math.min(Math.max(w, h * R, m, m * R), availW, availH * R); h = w / R; }
+      else { w = Math.min(Math.max(w, m), availW); h = Math.min(Math.max(h, m), availH); }
+      return { x: dx > 0 ? ax : ax - w, y: dy > 0 ? ay : ay - h, w, h };
+    }
+
+    // 辺をドラッグ：反対の辺を固定して動かす。縦横比が決まっていれば、もう一方の長さを中心から合わせる
+    function cropFromEdge(cr, h, p) {
+      const { s, rect: c } = cr, R = CROP_RATIOS[cr.ratio][1], m = cropMin(s);
+      const horiz = h === "e" || h === "w", dir = h === "e" || h === "s" ? 1 : -1;
+      // 横の辺なら x を、縦の辺なら y を主に考える（縦の場合は座標を入れ替えて同じ計算をする）
+      const [pos, len, full, cpos, clen, cfull, pt] = horiz ? [c.x, c.w, s.w, c.y, c.h, s.h, p[0]] : [c.y, c.h, s.h, c.x, c.w, s.w, p[1]];
+      const ratio = R ? (horiz ? R : 1 / R) : null; // 主の長さ / もう一方の長さ
+      const anchor = dir > 0 ? pos : pos + len;
+      const avail = dir > 0 ? full - anchor : anchor;
+      let a = Math.max((pt - anchor) * dir, m), b = clen, bpos = cpos;
+      if (ratio) {
+        const mid = cpos + clen / 2;
+        a = Math.min(Math.max(a, m * ratio), avail, 2 * Math.min(mid, cfull - mid) * ratio);
+        b = a / ratio;
+        bpos = mid - b / 2;
+      } else a = Math.min(a, avail);
+      const apos = dir > 0 ? anchor : anchor - a;
+      return horiz ? { x: apos, y: bpos, w: a, h: b } : { x: bpos, y: apos, w: b, h: a };
+    }
+
+    function bindCropper(cr) {
+      const area = $("#crop-area");
+      const { s } = cr;
+      let drag = null; // { id, mode（"resize" / "move" / "new"）, h, p0, r0 }
+      const toPt = (e) => {
+        const b = area.getBoundingClientRect();
+        return [clampNum((e.clientX - b.left) / b.width * s.w, 0, s.w), clampNum((e.clientY - b.top) / b.height * s.h, 0, s.h)];
+      };
+      area.addEventListener("pointerdown", (e) => {
+        if (cropper !== cr || drag || (e.pointerType === "mouse" && e.button !== 0)) return;
+        e.preventDefault();
+        area.setPointerCapture(e.pointerId);
+        const h = e.target.closest("[data-h]")?.dataset.h;
+        const mode = h ? "resize" : e.target.closest("#crop-rect") ? "move" : "new"; // 枠の外をドラッグすると新しく選び直す
+        drag = { id: e.pointerId, mode, h, p0: toPt(e), r0: { ...cr.rect }, moved: false };
+      });
+      area.addEventListener("pointermove", (e) => {
+        if (cropper !== cr || drag?.id !== e.pointerId) return;
+        const p = toPt(e), r0 = drag.r0;
+        if (drag.mode === "move") {
+          cr.rect = { ...r0, x: clampNum(r0.x + p[0] - drag.p0[0], 0, s.w - r0.w), y: clampNum(r0.y + p[1] - drag.p0[1], 0, s.h - r0.h) };
+        } else if (drag.mode === "resize" && drag.h.length === 2) {
+          const dx = drag.h.includes("e") ? 1 : -1, dy = drag.h.includes("s") ? 1 : -1;
+          cr.rect = cropFromCorner(cr, dx > 0 ? r0.x : r0.x + r0.w, dy > 0 ? r0.y : r0.y + r0.h, dx, dy, p);
+        } else if (drag.mode === "resize") {
+          cr.rect = cropFromEdge({ ...cr, rect: r0 }, drag.h, p);
+        } else {
+          // 少し動かしてから選び直す（クリックだけでは今の範囲を消さない）
+          const [ax, ay] = drag.p0;
+          if (!drag.moved && Math.hypot((p[0] - ax) / s.w, (p[1] - ay) / s.h) < 0.02) return;
+          drag.moved = true;
+          cr.rect = cropFromCorner(cr, ax, ay, p[0] >= ax ? 1 : -1, p[1] >= ay ? 1 : -1, p);
+        }
+        renderCropper();
+      });
+      const end = (e) => {
+        if (drag?.id !== e.pointerId) return;
+        if (!(cr.rect.w >= 1 && cr.rect.h >= 1)) { cr.rect = drag.r0; renderCropper(); } // 画像の端から選んで幅が無くなったとき
+        drag = null;
+      };
+      area.addEventListener("pointerup", end);
+      area.addEventListener("pointercancel", end);
+    }
+
+    // ペンの書き込みを、範囲 from の座標から範囲 to の座標に移す（範囲の外に出た書き込みも残し、範囲を広げ直したら戻るように）
+    function moveStrokes(strokes, from, to) {
+      const k1 = STICKER_SIZE / Math.max(from.w, from.h), k2 = STICKER_SIZE / Math.max(to.w, to.h);
+      const r = (v) => Math.round(v * 1000) / 1000;
+      return strokes.map((st) => ({
+        ...st,
+        width: r(st.width * k2 / k1), // 画像に対する太さを変えない
+        points: st.points.map(([x, y]) => [r((x / k1 + from.x - to.x) * k2), r((y / k1 + from.y - to.y) * k2)]),
+      }));
+    }
+
+    // トリミングの画面から送信画面に戻る（apply なら範囲を反映して圧縮し直す）
+    function closeImageCropper(apply) {
+      const cr = cropper, s = imgSend;
+      if (!cr || cr.s !== s) return;
+      cr.returning = true;
+      let changed = false;
+      if (apply) {
+        const x = clampNum(Math.round(cr.rect.x), 0, s.w - 1), y = clampNum(Math.round(cr.rect.y), 0, s.h - 1);
+        const w = clampNum(Math.round(cr.rect.w), 1, s.w - x), h = clampNum(Math.round(cr.rect.h), 1, s.h - y);
+        const next = x === 0 && y === 0 && w === s.w && h === s.h ? null : { x, y, w, h };
+        const prev = cropOf(s);
+        changed = JSON.stringify(next) !== JSON.stringify(s.crop);
+        if (changed) {
+          setImageCrop(s, next);
+          if (s.strokes.length) s.strokes = moveStrokes(s.strokes, prev, cropOf(s));
+        }
+      }
       renderImageSender();
       if (changed) convertImage();
     }
@@ -4521,7 +4760,8 @@ const firebaseConfig = {
     }
 
     // スタンプ・アイコン・送信する画像への書き込み共通のエディタ。ユーザーのアイコンは丸く、グループのアイコンは角を丸めて表示するので、枠もその形にする。
-    // 画像（kind "image"）は image: { src, w, h, vw, vh } を背景に置き、座標の範囲を vw×vh にする（閉じたら onClose(editor)）
+    // 画像（kind "image"）は image: { src, vw, vh, crop: { x, y, w, h（表示する範囲）, fw, fh（画像全体の大きさ） } } を背景に置き、
+    // 座標の範囲を vw×vh にする（閉じたら onClose(editor)）
     function openDrawEditor({ kind, id = null, svg, strokes = parseStickerSvg(svg), name = "", size, title, image = null, onClose = null }) {
       const isIcon = kind === "icon" || kind === "groupIcon";
       const isImage = kind === "image";
@@ -4535,14 +4775,15 @@ const firebaseConfig = {
       const ed = editor;
       const toolBtn = (tool, iconName, label) => `
         <button type="button" data-action="se-tool" data-tool="${tool}" class="se-tool btn-chip py-2 ring-1" aria-pressed="false">${icon(iconName, "w-4 h-4")}${label}</button>`;
+      const ic = image?.crop, pct = (v) => `${+(v * 100).toFixed(4)}%`;
       const canvasSvg = (cls) => `<svg id="se-canvas" viewBox="0 0 ${vw} ${vh}" class="${cls} block w-full h-full touch-none cursor-crosshair" fill="none" stroke-linecap="round" stroke-linejoin="round"></svg>`;
       openModal(`
         ${modalHead(title, hint, isImage ? 'data-action="se-image-back"' : "data-close")}
         <form id="form-${kind}" class="px-6 pb-6 space-y-4">
           <div id="se-draft" hidden></div>
           ${isImage ? `
-          <div class="relative mx-auto rounded-xl bg-[#fff] ring-1 ring-slate-200 overflow-hidden" style="aspect-ratio:${image.w}/${image.h};width:min(100%, calc(55vh * ${+(image.w / image.h).toFixed(4)}))">
-            <img src="${image.src}" alt="" class="absolute inset-0 w-full h-full select-none pointer-events-none" draggable="false" />
+          <div class="relative mx-auto rounded-xl bg-[#fff] ring-1 ring-slate-200 overflow-hidden" style="aspect-ratio:${ic.w}/${ic.h};width:min(100%, calc(55vh * ${+(ic.w / ic.h).toFixed(4)}))">
+            <img src="${image.src}" alt="" class="absolute max-w-none select-none pointer-events-none" style="left:${pct(-ic.x / ic.w)};top:${pct(-ic.y / ic.h)};width:${pct(ic.fw / ic.w)};height:${pct(ic.fh / ic.h)}" draggable="false" />
             ${canvasSvg("absolute inset-0")}
           </div>` : `
           <div class="mx-auto w-full max-w-[320px] aspect-square ${frame} ring-1 ring-slate-200 overflow-hidden">
@@ -5362,6 +5603,7 @@ const firebaseConfig = {
       },
       "unsend": (el) => unsendMessage(el.dataset.id),
       "reply": (el) => startReply(el.dataset.id),
+      "copy-msg": (el) => copyMessage(el.dataset.id),
       "cancel-reply": () => cancelReply(),
       "edit-msg": (el) => startEdit(el.dataset.id),
       "cancel-edit": () => cancelEdit(),
@@ -5411,6 +5653,11 @@ const firebaseConfig = {
       "is-send": () => sendImage(),
       "is-draw": () => openImageDrawer(),
       "se-image-back": () => closeImageDrawer(false),
+      "is-crop": () => openImageCropper(),
+      "crop-back": () => closeImageCropper(false),
+      "crop-apply": () => closeImageCropper(true),
+      "crop-ratio": (el) => setCropRatio(el.dataset.ratio),
+      "crop-reset": () => resetCrop(),
       "view-image": (el) => openImageViewer(el.dataset.id),
       "download-image": (el) => downloadImage(el.dataset.id),
       "se-tool": (el) => { if (editor) { editor.tool = el.dataset.tool; renderEditorTools(); } },
@@ -5460,6 +5707,7 @@ const firebaseConfig = {
     const TEXT_FIELD = "textarea, input:not([type=checkbox], [type=radio], [type=file], [type=button], [type=submit], [type=range], [type=color], [type=hidden])";
 
     function bindEvents() {
+      let lastLinkClick = null; // { key（メッセージ ID と URL）, at } メッセージ内のリンクの 1 回目のクリック
       document.addEventListener("click", (e) => {
         const closer = e.target.closest("[data-close]");
         if (closer) { if (!(modalLocked && closer.parentElement.id === "modal-root")) closeModal(); return; } // ロック中は背景のクリックでは閉じない
@@ -5475,7 +5723,20 @@ const firebaseConfig = {
         if (msgSearch?.showResults && !e.target.closest("#msg-search-bar")) { msgSearch.showResults = false; renderMsgSearchResults(); }
         // スタンプの「︙」メニューは、どこをクリックしても閉じる（項目は閉じてから実行。「︙」ボタンは開閉を切り替える）
         if (stickerMenuId !== null && !e.target.closest('[data-action="sticker-menu"]')) closeStickerMenu();
-        if (e.target.closest("a[href]")) return; // メッセージ内のリンクは通常どおり開く
+        // メッセージ内のリンクはダブルクリック（スマホはダブルタップ）で開く。1 回目のクリックはそのまま吹き出しのクリックとして扱う（メニューを出す）。
+        // 1 回目で吹き出しが描き直されるので、同じメッセージの同じ URL かどうかで 2 回目を判定する
+        const link = e.target.closest("a.msg-link");
+        if (link && e.detail > 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+          e.preventDefault();
+          const key = `${link.closest("[data-msg-id]")?.dataset.msgId}|${link.getAttribute("href")}`;
+          if (lastLinkClick?.key === key && e.timeStamp - lastLinkClick.at < 500) {
+            lastLinkClick = null;
+            window.open(link.href, "_blank", "noopener,noreferrer");
+            if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); } // 1 回目で出したメニューは閉じる
+            return;
+          }
+          lastLinkClick = { key, at: e.timeStamp };
+        } else if (e.target.closest("a[href]")) return; // それ以外のリンク・キーボードでの操作・Ctrl+クリックなどは通常どおり開く
         const el = e.target.closest("[data-action]");
         if (!el) return;
         const fn = actions[el.dataset.action];
@@ -5505,6 +5766,13 @@ const firebaseConfig = {
         if (e.key === "Escape" && !e.isComposing && e.target.matches?.(TEXT_FIELD) && !e.target.value) { e.preventDefault(); e.target.blur(); return; }
         // チャットを開いていて文字の入力欄にフォーカスしていなければ、Esc でチャットを抜ける（PC は「Chatter へようこそ」、スマホは一覧に戻る）
         if (e.key === "Escape" && !e.defaultPrevented && state.activeRoomId && !e.target.closest?.("input, textarea, select, [contenteditable]")) { exitRoom(); return; }
+        // チャットを開いていて文字の入力欄にフォーカスしていなければ、/ でメッセージの入力欄にフォーカスする（/ は入力しない）
+        if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing && $("#modal-root").hidden && state.activeRoomId
+            && !e.target.closest?.("input, textarea, select, [contenteditable]")) {
+          const input = $("#msg-input");
+          if (input.offsetParent && !input.disabled) { e.preventDefault(); input.focus(); } // 送信できないトークでは入力欄が隠れている
+          return;
+        }
         if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('[role="button"]')) { e.preventDefault(); e.target.click(); }
       });
 
@@ -5661,7 +5929,6 @@ const firebaseConfig = {
 
       // 入力欄
       const input = $("#msg-input");
-      input.placeholder = isPC() ? "メッセージを入力（Enterで送信 / Shift+Enter・Ctrl+Enterで改行）" : "メッセージを入力";
       input.addEventListener("input", () => {
         autoGrow();
         updateSendBtn();
@@ -5733,8 +6000,8 @@ const firebaseConfig = {
       // タブの表示状態
       document.addEventListener("visibilitychange", () => {
         updateTyping(); // タブを隠したら「入力中」を消す
-        if (document.visibilityState !== "visible" || !state.me) return;
-        touchPresence();
+        touchPresence(); // 隠したらオフライン、表示したらオンライン
+        if (document.visibilityState !== "visible" || !state.me) { if (state.me) presenceChannel?.postMessage({ hidden: state.me.id }); return; }
         if (state.activeRoomId && state.messagesLoaded && isMember(currentRoom())) markRead(state.activeRoomId);
         renderSidebar();
       });
