@@ -924,13 +924,14 @@ const firebaseConfig = {
       modalLocked = false;
       const cb = modalCloseCb; modalCloseCb = null; cb?.();
     }
-    const modalHead = (title, sub = "") => `
+    // closeAttr：× ボタンの属性（閉じる代わりに別の操作をさせるとき）
+    const modalHead = (title, sub = "", closeAttr = "data-close") => `
       <div class="flex items-start gap-3 px-6 pt-5 sm:pt-6 pb-4">
         <div class="flex-1 min-w-0">
           <h2 class="text-lg font-bold text-slate-900">${title}</h2>
           ${sub ? `<p class="text-sm text-slate-500 mt-0.5 leading-relaxed">${sub}</p>` : ""}
         </div>
-        <button type="button" data-close class="icon-btn -mr-2 -mt-1" aria-label="閉じる">${icon("x")}</button>
+        <button type="button" ${closeAttr} class="icon-btn -mr-2 -mt-1" aria-label="閉じる">${icon("x")}</button>
       </div>`;
 
     function confirmDialog({ title, message, ok = "OK", danger = false }) {
@@ -3528,7 +3529,7 @@ const firebaseConfig = {
     const RASTER_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     const IMAGE_EXT_TYPES = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml" };
 
-    let imgSend = null; // 開いている送信画面 { file, type, url, img, w, h, dims, roomId, result, gen }
+    let imgSend = null; // 開いている送信画面 { file, type, url, img, w, h, dims, roomId, result, gen, strokes（ペンの書き込み）, vw, vh（書き込みの座標の範囲）, drawing }
 
     async function openImageSender(file) {
       const room = currentRoom();
@@ -3551,7 +3552,9 @@ const firebaseConfig = {
       const k = Math.min(1, IMAGE_MAX_PX / Math.max(w, h));
       w = Math.max(1, Math.round(w * k));
       h = Math.max(1, Math.round(h * k));
-      const s = { file, type, url, img, w, h, dims, roomId: room.id, result: null, gen: 0 };
+      // ペンの書き込みの座標：長辺を STICKER_SIZE にする（ペンの太さがスタンプのエディタと同じ見た目になるように）
+      const vk = STICKER_SIZE / Math.max(w, h);
+      const s = { file, type, url, img, w, h, dims, roomId: room.id, result: null, gen: 0, strokes: [], vw: w * vk, vh: h * vk, drawing: false };
       if (imgSend) cancelImageSender(imgSend);
       imgSend = s;
       renderImageSender();
@@ -3597,6 +3600,7 @@ const firebaseConfig = {
 
     function renderImageSender() {
       const s = imgSend;
+      s.drawing = false;
       const label = { "image/jpeg": "JPG", "image/png": "PNG", "image/webp": "WEBP", "image/gif": "GIF", "image/svg+xml": "SVG" }[s.type] || "画像";
       openModal(`
         ${modalHead("画像を送信", `${label} · ${s.dims.w}×${s.dims.h} · ${fmtBytes(s.file.size)}`)}
@@ -3607,13 +3611,14 @@ const firebaseConfig = {
               <div class="flex flex-col items-center gap-2 px-4 text-center">${spinner("w-7 h-7 border-[3px]")}<span id="is-busy-text" class="text-xs font-semibold">変換中…</span></div>
             </div>
           </div>
-          <p class="text-xs text-slate-500 leading-relaxed">画像は SVG の中に埋め込んで送信します（50KB を超えるときは圧縮します）。</p>
+          <p class="text-xs text-slate-500 leading-relaxed">画像は SVG の中に埋め込んで送信します（50KB を超えるときは圧縮します）。圧縮のあと「描く」で画像にペンで書き込めます。</p>
           <p id="is-status" class="text-xs leading-relaxed rounded-xl px-3 py-2" hidden></p>
-          <div class="flex gap-3">
-            <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
-            <button type="button" id="is-send" data-action="is-send" class="btn-primary flex-1" disabled>${icon("send", "w-5 h-5")}送信</button>
+          <div class="flex gap-2 sm:gap-3">
+            <button type="button" data-close class="btn-secondary flex-1 px-2">キャンセル</button>
+            <button type="button" id="is-draw" data-action="is-draw" class="btn-secondary flex-1 px-2" disabled>${icon("pencil", "w-5 h-5")}描く</button>
+            <button type="button" id="is-send" data-action="is-send" class="btn-primary flex-1 px-2" disabled>${icon("send", "w-5 h-5")}送信</button>
           </div>
-        </div>`, () => cancelImageSender(s));
+        </div>`, () => { if (!s.drawing) cancelImageSender(s); }); // 「描く」でエディタに切り替えるときは閉じない
       renderImageStatus();
     }
 
@@ -3625,6 +3630,7 @@ const firebaseConfig = {
       const r = s.result;
       $("#is-busy").hidden = !!r;
       $("#is-send").disabled = !r?.ok;
+      $("#is-draw").disabled = !r || (!r.ok && !s.strokes.length); // 圧縮が終わってから描ける（書き込んで収まらなくなったときも直せるように）
       $("#is-preview").src = r?.ok ? imageSrc(r.image) : s.url;
       el.hidden = !r;
       if (!r) return;
@@ -3634,7 +3640,7 @@ const firebaseConfig = {
         text = r.error || `50KB 以内に収まりませんでした（最小 ${fmtBytes(r.bytes)}）。画像を小さくしてからお試しください。`;
       } else {
         cls = "bg-emerald-50 text-emerald-700";
-        text = `<b>✓ SVG ${fmtBytes(r.bytes)}</b>（50KB 以内）${r.enc ? `<br>${imageEncodeMessage(r.enc)}` : ""}`;
+        text = `<b>✓ SVG ${fmtBytes(r.bytes)}</b>（50KB 以内${s.strokes.length ? "・ペンの書き込みあり" : ""}）${r.enc ? `<br>${imageEncodeMessage(r.enc)}` : ""}`;
       }
       el.className = `text-xs leading-relaxed rounded-xl px-3 py-2 ${cls}`;
       el.innerHTML = text;
@@ -3719,7 +3725,8 @@ const firebaseConfig = {
     // 埋め込み方式：50KB を超えたら WEBP（非対応なら JPEG・PNG）に再圧縮し、品質 → サイズ の順に下げる
     async function embedFit(s, gen) {
       let first = null;
-      if (RASTER_TYPES.includes(s.type) && s.file.size <= IMAGE_MAX_BYTES) {
+      const drawn = s.strokes.length > 0; // ペンで書き込んだら、元のファイルはそのまま使えない
+      if (!drawn && RASTER_TYPES.includes(s.type) && s.file.size <= IMAGE_MAX_BYTES) {
         const svg = embedSvg(s.w, s.h, await blobToDataURL(s.file.slice(0, s.file.size, s.type))); // 拡張子で判定した形式を data URL に付ける
         first = { svg, bytes: svgBytes(svg) };
         if (first.bytes <= IMAGE_MAX_BYTES) return first;
@@ -3736,6 +3743,7 @@ const firebaseConfig = {
         const ctx = cv.getContext("2d");
         ctx.imageSmoothingQuality = "high";
         ctx.drawImage(s.img, 0, 0, tw, th);
+        if (drawn) drawStrokes(ctx, s.strokes, tw / s.vw, th / s.vh);
         let blob = await canvasBlob(cv, "image/webp", q), fmt = "WEBP";
         if (!blob || blob.type !== "image/webp") {
           if (alpha) { blob = await canvasBlob(cv, "image/png"); fmt = "PNG"; }
@@ -3756,6 +3764,47 @@ const firebaseConfig = {
       checkImageGen(s, gen);
       if (!best) throw new Error("encode");
       return best;
+    }
+
+    // ペンの書き込み（エディタの座標）を、kx・ky 倍してキャンバスに描く
+    function drawStrokes(ctx, strokes, kx, ky) {
+      ctx.save();
+      ctx.scale(kx, ky);
+      ctx.lineCap = ctx.lineJoin = "round";
+      for (const st of strokes) {
+        const [p0, ...rest] = st.points;
+        ctx.strokeStyle = ctx.fillStyle = st.color;
+        ctx.lineWidth = st.width;
+        ctx.beginPath();
+        if (!rest.length) { ctx.arc(p0[0], p0[1], st.width / 2, 0, Math.PI * 2); ctx.fill(); continue; } // 点
+        ctx.moveTo(p0[0], p0[1]);
+        for (const [x, y] of rest) ctx.lineTo(x, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // ---- 画像にペンで書き込む（圧縮のあと「描く」で開く。書き込みは送信用の画像に合わせて描き、圧縮し直す） ----
+    function openImageDrawer() {
+      const s = imgSend;
+      if (!s?.result || editor) return;
+      s.drawing = true; // 送信画面を閉じても送信をやめない
+      openDrawEditor({
+        kind: "image", strokes: s.strokes, title: "画像に描く",
+        image: { src: s.url, w: s.w, h: s.h, vw: s.vw, vh: s.vh },
+        onClose: (ed) => { if (!ed.returning) cancelImageSender(s); },
+      });
+    }
+
+    // エディタから送信画面に戻る（apply なら書き込みを反映して圧縮し直す）
+    function closeImageDrawer(apply) {
+      const s = imgSend, ed = editor;
+      if (!s || ed?.kind !== "image") return;
+      const changed = apply && ed.strokes !== s.strokes;
+      if (changed) s.strokes = ed.strokes;
+      ed.returning = true;
+      renderImageSender();
+      if (changed) convertImage();
     }
 
     // ============================================================
@@ -4471,24 +4520,34 @@ const firebaseConfig = {
       openDrawEditor({ kind: "icon", svg: PATH_SVG_RE.test(cur || "") ? cur : null, title: "アイコンを描く" });
     }
 
-    // スタンプ・アイコン共通のエディタ。ユーザーのアイコンは丸く、グループのアイコンは角を丸めて表示するので、枠もその形にする
-    function openDrawEditor({ kind, id = null, svg, strokes = parseStickerSvg(svg), name = "", size, title }) {
+    // スタンプ・アイコン・送信する画像への書き込み共通のエディタ。ユーザーのアイコンは丸く、グループのアイコンは角を丸めて表示するので、枠もその形にする。
+    // 画像（kind "image"）は image: { src, w, h, vw, vh } を背景に置き、座標の範囲を vw×vh にする（閉じたら onClose(editor)）
+    function openDrawEditor({ kind, id = null, svg, strokes = parseStickerSvg(svg), name = "", size, title, image = null, onClose = null }) {
       const isIcon = kind === "icon" || kind === "groupIcon";
+      const isImage = kind === "image";
       const frame = kind === "icon" ? "rounded-full bg-[#fff]" : kind === "groupIcon" ? "rounded-[25%] bg-[#fff]" : "rounded-2xl chat-bg";
       const hint = kind === "icon" ? "枠の中に指やマウスで描きます（丸い枠の外は表示されません）"
         : kind === "groupIcon" ? "枠の中に指やマウスで描きます（枠の角の外は表示されません）"
+        : isImage ? "画像の上に指やマウスでメモなどを書き込めます"
         : "枠の中に指やマウスで描きます";
-      editor = { kind, id, strokes, history: [], tool: "pen", color: STICKER_COLORS[0], width: STICKER_WIDTHS[1], size: stickerSizeOf(size), maxSvg: isIcon ? ICON_MAX_SVG : STICKER_MAX_SVG };
+      const vw = image?.vw ?? STICKER_SIZE, vh = image?.vh ?? STICKER_SIZE;
+      editor = { kind, id, strokes, history: [], tool: "pen", color: STICKER_COLORS[0], width: STICKER_WIDTHS[1], size: stickerSizeOf(size), maxSvg: isIcon ? ICON_MAX_SVG : STICKER_MAX_SVG, vw, vh };
       const ed = editor;
       const toolBtn = (tool, iconName, label) => `
         <button type="button" data-action="se-tool" data-tool="${tool}" class="se-tool btn-chip py-2 ring-1" aria-pressed="false">${icon(iconName, "w-4 h-4")}${label}</button>`;
+      const canvasSvg = (cls) => `<svg id="se-canvas" viewBox="0 0 ${vw} ${vh}" class="${cls} block w-full h-full touch-none cursor-crosshair" fill="none" stroke-linecap="round" stroke-linejoin="round"></svg>`;
       openModal(`
-        ${modalHead(title, hint)}
+        ${modalHead(title, hint, isImage ? 'data-action="se-image-back"' : "data-close")}
         <form id="form-${kind}" class="px-6 pb-6 space-y-4">
           <div id="se-draft" hidden></div>
+          ${isImage ? `
+          <div class="relative mx-auto rounded-xl bg-[#fff] ring-1 ring-slate-200 overflow-hidden" style="aspect-ratio:${image.w}/${image.h};width:min(100%, calc(55vh * ${+(image.w / image.h).toFixed(4)}))">
+            <img src="${image.src}" alt="" class="absolute inset-0 w-full h-full select-none pointer-events-none" draggable="false" />
+            ${canvasSvg("absolute inset-0")}
+          </div>` : `
           <div class="mx-auto w-full max-w-[320px] aspect-square ${frame} ring-1 ring-slate-200 overflow-hidden">
-            <svg id="se-canvas" viewBox="0 0 ${STICKER_SIZE} ${STICKER_SIZE}" class="block w-full h-full touch-none cursor-crosshair" fill="none" stroke-linecap="round" stroke-linejoin="round"></svg>
-          </div>
+            ${canvasSvg("")}
+          </div>`}
           <div class="flex flex-wrap items-center gap-2">
             ${toolBtn("pen", "pencil", "ペン")}
             ${toolBtn("eraser", "eraser", "消しゴム")}
@@ -4525,13 +4584,14 @@ const firebaseConfig = {
               <span id="se-width-value" class="w-8 text-right text-sm font-semibold tabular-nums text-slate-600"></span>
             </div>
           </div>
+          ${isImage ? "" : `
           <div>
             ${isIcon ? "" : `
             <label class="label" for="se-name">スタンプ名</label>
             <input id="se-name" name="name" class="input" maxlength="${STICKER_MAX_NAME}" value="${esc(name)}" placeholder="例: ありがとう" autocomplete="off" />`}
             <p id="se-size" class="text-xs text-slate-400 mt-1.5"></p>
-          </div>
-          ${isIcon ? "" : `
+          </div>`}
+          ${isIcon || isImage ? "" : `
           <div>
             <div class="label">表示サイズ（チャットでの大きさ）</div>
             <div class="flex gap-1.5" role="radiogroup" aria-label="表示サイズ">
@@ -4541,10 +4601,13 @@ const firebaseConfig = {
           </div>`}
           <p class="form-error" hidden></p>
           <div class="flex gap-3">
+            ${isImage ? `
+            <button type="button" data-action="se-image-back" class="btn-secondary flex-1">キャンセル</button>
+            <button type="submit" class="btn-primary flex-1">完了</button>` : `
             <button type="button" data-action="se-save-draft" class="btn-secondary flex-1">下書き保存</button>
-            <button type="submit" class="btn-primary flex-1">保存</button>
+            <button type="submit" class="btn-primary flex-1">保存</button>`}
           </div>
-        </form>`, () => { if (editor === ed) editor = null; }, { locked: true }); // 描いた絵を誤って失わないよう × でしか閉じない
+        </form>`, () => { if (editor === ed) editor = null; onClose?.(ed); }, { locked: true }); // 描いた絵を誤って失わないよう × でしか閉じない
       bindCanvas($("#se-canvas"));
       renderEditorTools();
       renderCanvas();
@@ -4650,6 +4713,7 @@ const firebaseConfig = {
       const canvas = $("#se-canvas");
       if (!editor || !canvas) return;
       canvas.replaceChildren(...editor.strokes.map(strokePath));
+      if (!$("#se-size")) return; // 画像への書き込みは容量を出さない（送信時に圧縮する）
       const size = editor.strokes.length ? buildStickerSvg(editor.strokes).length : 0;
       const el = $("#se-size");
       el.textContent = `容量 ${(size / KB).toFixed(1)} KB / ${editor.maxSvg / KB} KB`;
@@ -4751,7 +4815,8 @@ const firebaseConfig = {
       let drawing = null; // { pointerId, stroke, path }
       const toPoint = (e) => {
         const r = canvas.getBoundingClientRect();
-        return [clampCoord((e.clientX - r.left) / r.width * STICKER_SIZE), clampCoord((e.clientY - r.top) / r.height * STICKER_SIZE)];
+        const { vw, vh } = editor;
+        return [Math.min(vw, Math.max(0, (e.clientX - r.left) / r.width * vw)), Math.min(vh, Math.max(0, (e.clientY - r.top) / r.height * vh))];
       };
       canvas.addEventListener("pointerdown", (e) => {
         if (!editor || drawing || (e.pointerType === "mouse" && e.button !== 0)) return;
@@ -5344,6 +5409,8 @@ const firebaseConfig = {
       "more-public-stickers": () => loadMorePublicStickers(),
       // 画像
       "is-send": () => sendImage(),
+      "is-draw": () => openImageDrawer(),
+      "se-image-back": () => closeImageDrawer(false),
       "view-image": (el) => openImageViewer(el.dataset.id),
       "download-image": (el) => downloadImage(el.dataset.id),
       "se-tool": (el) => { if (editor) { editor.tool = el.dataset.tool; renderEditorTools(); } },
@@ -5376,6 +5443,7 @@ const firebaseConfig = {
       "form-sticker": (fd) => saveSticker(fd.get("name")),
       "form-icon": () => saveDrawnIcon(),
       "form-groupIcon": () => saveDrawnGroupIcon(),
+      "form-image": () => closeImageDrawer(true),
       "form-admin-unlock": (fd) => unlockAdmin(fd.get("password")),
       "form-admin-password": (fd) => changeAdminPassword(fd.get("current"), fd.get("password"), fd.get("password2")),
     };
