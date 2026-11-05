@@ -537,6 +537,9 @@ const firebaseConfig = {
     </div>
   </section>
 
+  <!-- アカウントの制限中の画面（ログアウトの確認はこの上のモーダルに出す） -->
+  <div id="restrict-root" class="fixed inset-0 z-[45] bg-slate-50 flex items-center justify-center p-6 overflow-y-auto" hidden></div>
+
   <!-- モーダル & トースト -->
   <div id="modal-root" class="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4" hidden>
     <div class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm fade-in" data-close></div>
@@ -826,7 +829,9 @@ const firebaseConfig = {
     // 管理者が「オンラインを隠す」をオンにしている間は、その管理者のオンライン状態と入力中を出さない
     const presenceHidden = (id) => id === ADMIN_ID && adminSettings.hideOnline;
     // タブを表示している間だけオンライン（online が無いのは、これを書かない以前の版を使っている場合）
-    const isOnline = (u) => !!u && !u.deleted && !presenceHidden(u.id) && u.online !== false && Date.now() - ms(u.lastSeen) < ONLINE_MS;
+    // 管理者にアカウントを制限されている（restrictedUntil：制限が解除される時刻）
+    const isRestricted = (u) => ms(u?.restrictedUntil) > Date.now();
+    const isOnline = (u) => !!u && !u.deleted && !presenceHidden(u.id) && !isRestricted(u) && u.online !== false && Date.now() - ms(u.lastSeen) < ONLINE_MS;
 
     // エラーメッセージを日本語に
     function errMsg(e) {
@@ -1118,7 +1123,7 @@ const firebaseConfig = {
 
     async function enterApp(user) {
       state.uid = auth.currentUser.uid;
-      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null };
+      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null };
       document.querySelectorAll('#screen-login input[type="password"]').forEach((el) => { el.value = ""; });
       readMap = store.json(`chatter:read:${user.id}`, {});
       readSentMap = store.json(`chatter:readsent:${user.id}`, {});
@@ -1127,6 +1132,7 @@ const firebaseConfig = {
       $("#app").dataset.view = "list";
       showScreen("app");
       renderSidebar();
+      applyRestriction();
       handleJoinHash();
     }
 
@@ -1162,6 +1168,7 @@ const firebaseConfig = {
       });
       adminKey = null;
       signOut(auth).catch((e) => console.warn(e));
+      applyRestriction();
       closeModal();
       closeStickerBox();
       closeStickerMenu();
@@ -1407,7 +1414,7 @@ const firebaseConfig = {
 
     // ルーム一覧の更新で、最後のメッセージが新しくなったトークを通知する
     function notifyNewMessages(prevLast) {
-      if (!notifyEnabled()) return;
+      if (!notifyEnabled() || isRestricted(state.me)) return; // 制限中はトークの内容を知らせない
       const muted = mutedRooms();
       for (const room of state.rooms) {
         const lm = room.lastMessage;
@@ -1502,6 +1509,7 @@ const firebaseConfig = {
       if (e.code === "permission-denied") {
         await new Promise((r) => setTimeout(r, 2000)); // 別のタブでのログアウトがこのタブに伝わるのを待つ
         if (state.me !== me || !auth.currentUser) return;
+        if (isRestricted(me)) return; // 制限が始まって読めなくなった（制限中の画面に切り替わる）
         const snap = await getDoc(doc(db, "users", me.id)).catch(() => null);
         if (state.me !== me) return;
         if (snap?.data()?.deleted) { resetSession(); toast("このアカウントは削除されました", "error"); return; }
@@ -1523,10 +1531,12 @@ const firebaseConfig = {
             toast("このアカウントは削除されました", "error");
             return;
           }
-          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; }
+          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; }
           state.usersLoaded = true;
+          applyRestriction();
           renderSidebar();
           renderChatHeader();
+          renderRestrictList();
           if (iconChanged && state.activeRoomId && state.messagesLoaded) renderMessages(); // 吹き出しの横のアイコンを更新
         },
         onListenError,
@@ -1774,7 +1784,7 @@ const firebaseConfig = {
               ${withPresence(avatar(u.id, u.name, "w-11 h-11 text-sm"), online)}
               <div class="min-w-0 flex-1">
                 <div class="font-semibold truncate text-slate-800">${esc(u.name)}</div>
-                <div class="text-xs truncate text-slate-400">@${esc(u.id)} ・ ${online ? `<span class="text-emerald-600">オンライン</span>` : esc(relTime(u.lastSeen))}</div>
+                <div class="text-xs truncate text-slate-400">@${esc(u.id)} ・ ${isRestricted(u) ? RESTRICTED_LABEL : online ? `<span class="text-emerald-600">オンライン</span>` : esc(relTime(u.lastSeen))}</div>
               </div>
               <span class="w-9 h-9 rounded-full grid place-items-center text-slate-300 group-hover:text-indigo-500 group-hover:bg-indigo-50 transition">${icon("chat", "w-5 h-5")}</span>
             </button>`;
@@ -1918,6 +1928,8 @@ const firebaseConfig = {
         const u = state.users.get(pid);
         subtitle = u?.deleted
           ? "退会済み"
+          : isRestricted(u)
+          ? RESTRICTED_LABEL
           : partnerIsTyping()
           ? `<span class="text-indigo-600 font-medium animate-pulse">入力中...</span>`
           : isOnline(u)
@@ -2414,6 +2426,7 @@ const firebaseConfig = {
     // ルームを開く / 閉じる
     // ============================================================
     function openRoom(roomId, fallback = null) {
+      if (isRestricted(state.me)) return;
       if (state.activeRoomId !== roomId) {
         state.unsub.messages?.();
         state.activeRoomId = roomId;
@@ -3352,7 +3365,7 @@ const firebaseConfig = {
     }
 
     function handleJoinHash() {
-      if (!/join=/.test(location.hash)) return;
+      if (!/join=/.test(location.hash) || isRestricted(state.me)) return; // 制限中はリンクを残し、解除されたら参加する
       const hash = location.hash;
       history.replaceState(null, "", location.pathname + location.search);
       Promise.resolve()
@@ -5282,11 +5295,13 @@ const firebaseConfig = {
     }
     // 管理者の書き込み：admin/secret に今のパスワードのハッシュ（proof）を書いて、ルールでパスワードを確かめる。
     // 設定の変更は同じトランザクションで書く（トランザクションはこの端末のキャッシュに残らないので、ハッシュが端末に保存されない）
-    async function adminWrite(proof, { hash = proof, settings = null } = {}) {
+    // restrict：アカウントの制限 { id, until }（until が null なら解除）
+    async function adminWrite(proof, { hash = proof, settings = null, restrict = null } = {}) {
       try {
         await runTransaction(db, async (tx) => {
           tx.set(doc(db, "admin", "secret"), { hash, proof, at: serverTimestamp() });
           if (settings) tx.set(doc(db, "admin", "settings"), { ...settings, updatedAt: serverTimestamp() }, { merge: true });
+          if (restrict) tx.update(doc(db, "users", restrict.id), { restrictedUntil: restrict.until ?? deleteField() });
         });
       } catch (e) {
         if (e.code === "permission-denied") throw new Error(ADMIN_PASSWORD_ERROR);
@@ -5336,7 +5351,8 @@ const firebaseConfig = {
           ${adminSwitch("signupOpen", "停止すると、ログイン画面の「新規登録」から新しいアカウントを作れなくなります。登録済みのユーザーは、これまでどおりログインできます。")}
           ${adminSwitch("readReceipts", "オンにすると、あなたが送ったメッセージの横に、相手が読むと「既読」（グループは読んだ人数。タップでだれが読んだか）が表示されます。この表示は管理者にだけ見えます。オフの間も既読は記録されるので、オンに戻すとすぐに表示されます。")}
           ${adminSwitch("hideOnline", "オンにしている間は、あなたのオンライン状態（緑の点・「オンライン」）と DM の「入力中...」が、全員から見えなくなります。最終アクティブの時刻も更新されません。")}
-          <button type="button" data-action="admin-password" class="btn-secondary w-full !mt-5">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
+          <button type="button" data-action="admin-restrict" class="btn-secondary w-full !mt-5">${icon("alert", "w-5 h-5")}アカウントの制限</button>
+          <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
           <button type="button" data-close class="btn-primary w-full">閉じる</button>
         </div>`);
       renderAdminSettings();
@@ -5428,6 +5444,160 @@ const firebaseConfig = {
       adminKey = hash;
       openAdminMenu();
       toast("管理者パスワードを変更しました");
+    }
+
+    // ---- アカウントの制限 ----
+    // users/{id}.restrictedUntil（解除される時刻）を管理者だけが書く。時刻を過ぎるか、管理者が項目を消すと解除。
+    // 制限中はトークを開くことも送信もできない（firestore.rules の canAct でも拒否する）
+    const RESTRICT_MAX_HOURS = 8760;
+    const RESTRICTED_LABEL = `<span class="text-rose-600 font-medium">制限中</span>`;
+    function remainText(until) {
+      const s = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+      return `${h ? `${h}時間` : ""}${h || m ? `${m}分` : ""}${s % 60}秒`;
+    }
+    const remainSpan = (until) => `<span data-until="${until}">${remainText(until)}</span>`;
+
+    // 自分の制限の状態に画面を合わせる
+    function applyRestriction() {
+      const root = $("#restrict-root");
+      const on = !!state.me && !isAdmin() && isRestricted(state.me);
+      const was = !root.hidden;
+      const until = on ? ms(state.me.restrictedUntil) : 0;
+      $("#app").inert = on;
+      if (on && !was) {
+        closeModal();
+        closeStickerBox();
+        closeStickerMenu();
+        if (state.activeRoomId) exitRoom();
+      }
+      if (on && root.dataset.end !== String(until)) {
+        root.dataset.end = until;
+        const end = new Date(until);
+        root.innerHTML = `
+          <div class="w-full max-w-sm text-center">
+            <div class="mx-auto w-16 h-16 rounded-full bg-rose-50 text-rose-600 grid place-items-center">${icon("alert", "w-8 h-8")}</div>
+            <h1 class="mt-4 text-xl font-bold text-slate-900">アカウントが制限されています</h1>
+            <p class="mt-2 text-sm text-slate-500 leading-relaxed">管理者によって制限されています。解除されるまで、チャットを開くことも、メッセージを送ることもできません。</p>
+            <div class="mt-6 rounded-2xl bg-white ring-1 ring-slate-200 p-5">
+              <div class="text-xs font-semibold text-slate-500">制限解除まで</div>
+              <div class="mt-1 text-2xl font-bold text-rose-600 tabular-nums">${remainSpan(until)}</div>
+              <div class="mt-1 text-xs text-slate-400">解除予定 ${end.getFullYear()}/${end.getMonth() + 1}/${end.getDate()} ${hhmm(end)}</div>
+            </div>
+            <button type="button" data-action="logout" class="btn-danger-ghost w-full mt-4">${icon("logout", "w-5 h-5")}ログアウト</button>
+          </div>`;
+      }
+      root.hidden = !on;
+      if (!on && was) {
+        root.innerHTML = "";
+        delete root.dataset.end;
+        if (state.me) { toast("アカウントの制限が解除されました"); handleJoinHash(); }
+      }
+    }
+
+    // 残り時間の表示を毎秒更新し、だれかの制限時間が過ぎたら表示を合わせる
+    let lastRestrictTick = Date.now();
+    setInterval(() => {
+      const prev = lastRestrictTick, now = lastRestrictTick = Date.now();
+      if (!state.me) return;
+      document.querySelectorAll("[data-until]").forEach((el) => { el.textContent = remainText(+el.dataset.until); });
+      const ended = (u) => { const t = ms(u?.restrictedUntil); return t > prev && t <= now; };
+      if (ended(state.me) || [...state.users.values()].some(ended)) {
+        applyRestriction();
+        renderSidebar();
+        renderChatHeader();
+        renderRestrictList();
+      }
+    }, 1000);
+
+    // 管理者メニュー：ユーザーの一覧（制限中のユーザーが先頭）
+    function openAdminRestrict() {
+      if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
+      openAdminModal(`
+        ${modalHead("アカウントの制限", "制限するユーザーを選んでください。制限中のユーザーを選ぶと、解除や時間の変更ができます。")}
+        <div class="px-6">
+          <div class="relative">
+            <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">${icon("search", "w-4 h-4")}</span>
+            <input id="ar-search" type="search" class="input pl-10 py-2.5 bg-slate-50 border-transparent" placeholder="ユーザーを検索" autocomplete="off" />
+          </div>
+        </div>
+        <div id="ar-list" class="mt-2 px-3 max-h-80 overflow-y-auto scroll-thin"></div>
+        <div class="px-6 pt-3 pb-6">
+          <button type="button" data-action="admin-menu" class="btn-secondary w-full">戻る</button>
+        </div>`);
+      renderRestrictList();
+    }
+    function renderRestrictList() {
+      const list = $("#ar-list");
+      if (!list) return;
+      const q = $("#ar-search").value.trim().toLowerCase();
+      const users = [...state.users.values()]
+        .filter((u) => u.id !== ADMIN_ID && !u.deleted && (!q || `${u.name} ${u.id}`.toLowerCase().includes(q)))
+        .sort((a, b) => (isRestricted(b) - isRestricted(a)) || String(a.name).localeCompare(String(b.name), "ja"));
+      list.innerHTML = users.map((u) => `
+        <button type="button" data-action="admin-restrict-user" data-id="${esc(u.id)}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:bg-slate-50">
+          ${withPresence(avatar(u.id, u.name, "w-10 h-10 text-sm"), isOnline(u))}
+          <div class="min-w-0 flex-1">
+            <div class="font-medium text-slate-800 truncate">${esc(u.name)}</div>
+            <div class="text-xs text-slate-400 truncate">@${esc(u.id)}${isRestricted(u) ? ` ・ ${RESTRICTED_LABEL} あと${remainSpan(ms(u.restrictedUntil))}` : ""}</div>
+          </div>
+        </button>`).join("") || `<p class="text-sm text-slate-400 text-center py-6">${q ? "該当するユーザーはいません" : "他のユーザーはまだいません"}</p>`;
+    }
+
+    // 管理者メニュー：選んだユーザーの制限時間の指定・解除
+    function openRestrictUser(id) {
+      const u = state.users.get(id);
+      if (!isAdmin() || !adminKey || !u || u.deleted || id === ADMIN_ID) return;
+      const on = isRestricted(u);
+      openAdminModal(`
+        ${modalHead("アカウントの制限", `${esc(u.name)}（@${esc(id)}）`)}
+        <form id="form-admin-restrict" class="px-6 pb-6 space-y-4">
+          <input type="hidden" name="user" value="${esc(id)}" />
+          ${on ? `
+          <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
+            <div class="text-sm font-semibold text-rose-600">制限中</div>
+            <div class="text-xs text-slate-500 mt-0.5">解除まであと${remainSpan(ms(u.restrictedUntil))}</div>
+            <button type="button" data-action="admin-unrestrict" data-id="${esc(id)}" class="btn-primary w-full mt-3">制限を解除</button>
+          </div>` : ""}
+          <div>
+            <span class="label">${on ? "今から制限する時間に変更" : "制限する時間"}</span>
+            <div class="flex items-center gap-2">
+              <input name="hours" type="number" min="0" max="${RESTRICT_MAX_HOURS}" step="1" inputmode="numeric" class="input" value="${on ? "" : 1}" placeholder="0" aria-label="時間" autofocus />
+              <span class="shrink-0 text-sm text-slate-600">時間</span>
+              <input name="minutes" type="number" min="0" max="59" step="1" inputmode="numeric" class="input" value="" placeholder="0" aria-label="分" />
+              <span class="shrink-0 text-sm text-slate-600">分</span>
+            </div>
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-action="admin-restrict" class="btn-secondary flex-1">戻る</button>
+            <button type="submit" class="btn-primary flex-1">確定</button>
+          </div>
+        </form>`);
+    }
+
+    async function restrictUser(id, hours, minutes) {
+      if (!isAdmin() || !adminKey) return;
+      const h = Number(hours || 0), m = Number(minutes || 0);
+      if (!Number.isInteger(h) || !Number.isInteger(m) || h < 0 || h > RESTRICT_MAX_HOURS || m < 0 || m > 59) {
+        throw new Error(`時間は 0〜${RESTRICT_MAX_HOURS}、分は 0〜59 の整数で入力してください。`);
+      }
+      if (!h && !m) throw new Error("制限する時間を 1 分以上で指定してください。");
+      await adminWrite(adminKey, { restrict: { id, until: new Date(Date.now() + (h * 60 + m) * 60000) } });
+      openAdminRestrict();
+      toast(`${userName(id)} さんを制限しました`);
+    }
+
+    async function unrestrictUser(el) {
+      if (!isAdmin() || !adminKey || el.disabled) return;
+      el.disabled = true;
+      try {
+        await adminWrite(adminKey, { restrict: { id: el.dataset.id, until: null } });
+      } finally {
+        if (el.isConnected) el.disabled = false;
+      }
+      openAdminRestrict();
+      toast(`${userName(el.dataset.id)} さんの制限を解除しました`);
     }
 
     // グループ：自分（管理者）のメッセージを読んだ人・まだ読んでいない人の一覧
@@ -5542,7 +5712,7 @@ const firebaseConfig = {
             <div class="flex justify-center">${withPresence(avatar(pid, roomTitle(room), "w-20 h-20 text-3xl"), isOnline(u))}</div>
             <div class="mt-3 font-bold text-lg text-slate-900">${esc(roomTitle(room))}</div>
             <div class="text-sm text-slate-500">@${esc(pid)}</div>
-            <div class="text-xs mt-1 ${isOnline(u) ? "text-emerald-600" : "text-slate-400"}">${u?.deleted ? "退会済み" : isOnline(u) ? "オンライン" : u ? `最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}</div>
+            <div class="text-xs mt-1 ${isOnline(u) ? "text-emerald-600" : "text-slate-400"}">${u?.deleted ? "退会済み" : isRestricted(u) ? RESTRICTED_LABEL : isOnline(u) ? "オンライン" : u ? `最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}</div>
             <button type="button" data-action="copy" data-copy="${esc(pid)}" data-label="ユーザーIDをコピーしました" class="btn-secondary w-full mt-6">${icon("copy", "w-5 h-5")}ユーザーIDをコピー</button>
             ${canDeleteRoom(room) ? `<button type="button" data-action="delete-room" class="btn-danger-ghost w-full mt-3">${icon("trash", "w-5 h-5")}トークを削除</button>` : ""}
           </div>`);
@@ -5602,7 +5772,7 @@ const firebaseConfig = {
                   ${withPresence(avatar(id, u?.name, "w-9 h-9 text-sm"), isOnline(u))}
                   <div class="min-w-0 flex-1">
                     <div class="text-sm font-medium text-slate-800 truncate">${esc(u?.name || id)}${id === state.me.id ? ` <span class="text-slate-400 font-normal">(あなた)</span>` : ""}</div>
-                    <div class="text-xs text-slate-400 truncate">@${esc(id)}</div>
+                    <div class="text-xs text-slate-400 truncate">@${esc(id)}${isRestricted(u) ? ` ・ ${RESTRICTED_LABEL}` : ""}</div>
                   </div>
                   ${id === room.createdBy ? `<span class="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full shrink-0">作成者</span>` : ""}
                 </div>`).join("")}
@@ -5680,6 +5850,9 @@ const firebaseConfig = {
       "admin-menu": () => openAdminMenu(),
       "admin-toggle": (el) => toggleAdminSetting(el.dataset.key),
       "admin-password": () => openAdminPassword(),
+      "admin-restrict": () => openAdminRestrict(),
+      "admin-restrict-user": (el) => openRestrictUser(el.dataset.id),
+      "admin-unrestrict": (el) => unrestrictUser(el),
       "readers": (el) => {
         if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
         openReaders(el.dataset.id);
@@ -5744,6 +5917,7 @@ const firebaseConfig = {
       "form-image": () => closeImageDrawer(true),
       "form-admin-unlock": (fd) => unlockAdmin(fd.get("password")),
       "form-admin-password": (fd) => changeAdminPassword(fd.get("current"), fd.get("password"), fd.get("password2")),
+      "form-admin-restrict": (fd) => restrictUser(fd.get("user"), fd.get("hours"), fd.get("minutes")),
     };
 
     function setLoginTab(tab) {
@@ -5896,6 +6070,7 @@ const firebaseConfig = {
       window.addEventListener("resize", () => closeStickerMenu());
 
       // グループ作成モーダル：メンバー検索・選択数
+      document.addEventListener("input", (e) => { if (e.target.id === "ar-search") renderRestrictList(); });
       document.addEventListener("input", (e) => {
         if (e.target.id !== "cg-search") return;
         const q = e.target.value.trim().toLowerCase();
