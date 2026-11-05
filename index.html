@@ -691,9 +691,10 @@ const firebaseConfig = {
     const isMobile = () => matchMedia("(max-width: 767.98px)").matches;
     // スマホ・タブレットの OS（iPadOS は Mac と同じ UA なのでタッチ点数で見分ける）
     const isMobileOS = () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-    // マウス・タッチパッドがある PC（タッチパネル付きの PC でも true。スマホ・タブレットは false）
-    // ※ Android は S ペン対応機などでマウスがなくても any-pointer: fine になるので、OS でも判定する
-    const isPC = () => !isMobileOS() && matchMedia("(any-pointer: fine)").matches;
+    // PC（Windows / Mac / Linux）かどうかは OS で判定する。
+    // 以前は any-pointer: fine（マウス・タッチパッドの有無）も見ていたが、Surface などでキーボードだけ接続し
+    // タッチパネルしか「粗い入力」として認識されない場合に PC 扱いされず、Enter が改行になっていたため外した
+    const isPC = () => !isMobileOS();
 
     const store = {
       get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -6000,8 +6001,15 @@ const firebaseConfig = {
       input.addEventListener("keyup", (e) => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) updateMentionBox(); });
       input.addEventListener("blur", () => { if (mention) { mention = null; renderMentionBox(); } });
       $("#mention-box").addEventListener("mousedown", (e) => e.preventDefault()); // 候補を選ぶときに入力欄のフォーカスを外さない
+      // 変換確定の Enter を判定するため、変換終了時刻を記録する（Safari は変換終了後に keyCode 229 の keydown を出す）
+      let lastCompositionEnd = 0;
+      input.addEventListener("compositionend", () => { lastCompositionEnd = performance.now(); });
       input.addEventListener("keydown", (e) => {
-        if (e.isComposing || e.keyCode === 229) return; // 日本語入力の変換中（変換確定の Enter では送信しない）
+        // 日本語入力の変換中・変換確定直後の Enter では送信しない。
+        // keyCode 229 を無条件に無視すると、IME が通過させた通常の Enter で改行が入ってしまうため、変換終了直後に限定する
+        if (e.isComposing || (e.keyCode === 229 && performance.now() - lastCompositionEnd < 100)) return;
+        // Chrome + Microsoft IME は IME が処理した Enter の key を "Process" にすることがあるため、物理キー（code）でも判定する
+        const isEnter = e.key === "Enter" || (e.key === "Process" && (e.code === "Enter" || e.code === "NumpadEnter"));
         // メンション候補：↑↓で選択、Enter / Tab で入力、Esc で閉じる
         if (mention) {
           const n = mention.items.length;
@@ -6011,13 +6019,13 @@ const firebaseConfig = {
             renderMentionBox();
             return;
           }
-          if ((e.key === "Enter" && !e.shiftKey && !e.ctrlKey) || e.key === "Tab") { e.preventDefault(); pickMention(mention.index); return; }
+          if ((isEnter && !e.shiftKey && !e.ctrlKey) || e.key === "Tab") { e.preventDefault(); pickMention(mention.index); return; }
           if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); mention = null; renderMentionBox(); return; }
         }
         if (e.key === "Escape" && stickerBoxOpen) { e.preventDefault(); e.stopPropagation(); closeStickerBox(); return; }
         if (e.key === "Escape" && state.editing && !state.selectedMsgId) { e.preventDefault(); e.stopPropagation(); cancelEdit(); return; }
         if (e.key === "Escape" && state.replyTo && !state.selectedMsgId) { e.preventDefault(); e.stopPropagation(); cancelReply(); return; }
-        if (e.key !== "Enter" || e.shiftKey) return; // Shift+Enter = 改行（テキストエリアの既定の動作）
+        if (!isEnter || e.shiftKey) return; // Shift+Enter = 改行（テキストエリアの既定の動作）
         if (e.ctrlKey) {
           // Ctrl+Enter = 改行（既定では何も入らないので、カーソル位置に改行を入れる）
           e.preventDefault();
