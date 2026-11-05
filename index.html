@@ -509,6 +509,8 @@ const firebaseConfig = {
           <form id="composer" class="relative border-t border-slate-100 bg-white px-3 sm:px-4 pt-3 safe-bottom shrink-0">
             <!-- グループで「@」を入力したときのメンション候補 -->
             <div id="mention-box" class="absolute z-20 left-3 right-3 sm:left-4 sm:right-4 bottom-full mb-2 max-w-5xl mx-auto" hidden></div>
+            <!-- 入力した内容に名前が部分一致する、自分のスタンプの候補 -->
+            <div id="sticker-suggest-box" class="absolute z-20 left-3 right-3 sm:left-4 sm:right-4 bottom-full mb-2 max-w-5xl mx-auto" hidden></div>
             <!-- スタンプボタンで開く、自分のスタンプ一覧 -->
             <div id="sticker-box" class="absolute z-20 left-3 right-3 sm:left-4 sm:right-4 bottom-full mb-2 max-w-5xl mx-auto" hidden></div>
             <!-- 返信先のメッセージ -->
@@ -1171,6 +1173,7 @@ const firebaseConfig = {
       applyRestriction();
       closeModal();
       closeStickerBox();
+      closeStickerSuggest();
       closeStickerMenu();
       $("#search").value = "";
       $("#chat-room").hidden = true;
@@ -1329,6 +1332,10 @@ const firebaseConfig = {
             settingRow("ダークモード", "画面を暗い配色にします（このブラウザに保存されます）",
               `<button type="button" id="theme-toggle" data-action="toggle-theme" class="switch" role="switch" aria-checked="false" aria-label="ダークモード"><span class="switch-knob"></span></button>`),
             accentControl(),
+          ])}
+          ${settingSection("チャット", [
+            settingRow("スタンプの候補", "入力欄にスタンプの名前を入れると、名前が部分一致する自分のスタンプを候補に表示します（このブラウザに保存されます）",
+              `<button type="button" id="sticker-suggest-toggle" data-action="toggle-sticker-suggest" class="switch" role="switch" aria-checked="${stickerSuggestEnabled()}" aria-label="スタンプの候補"><span class="switch-knob"></span></button>`),
           ])}
         </div>`);
       renderThemeToggle();
@@ -1569,6 +1576,7 @@ const firebaseConfig = {
           state.stickersLoaded = true;
           if (state.tab === "stickers") renderSidebar();
           if (stickerBoxOpen) renderStickerBox();
+          updateStickerSuggest();
           if (state.selectedMsgId) renderMessages(); // 「保存済み」の表示を切り替える
         },
         onListenError,
@@ -2442,6 +2450,7 @@ const firebaseConfig = {
         renderReplyBar();
         renderMentionBox();
         closeStickerBox();
+        closeStickerSuggest();
         $("#chat-empty").hidden = true;
         $("#chat-room").hidden = false;
         $("#new-msg-btn").hidden = true;
@@ -2640,6 +2649,7 @@ const firebaseConfig = {
       renderReplyBar();
       renderMentionBox();
       closeStickerBox();
+      closeStickerSuggest();
       $("#chat-room").hidden = true;
       $("#chat-empty").hidden = false;
       $("#app").dataset.view = "list";
@@ -3068,6 +3078,7 @@ const firebaseConfig = {
         }
       }
       renderMentionBox();
+      updateStickerSuggest(); // メンションの候補が出ているときは出さない
     }
 
     function renderMentionBox() {
@@ -4139,6 +4150,7 @@ const firebaseConfig = {
       stickerBoxOpen = true;
       mention = null;
       renderMentionBox();
+      closeStickerSuggest();
       renderStickerBox();
     }
 
@@ -4175,6 +4187,82 @@ const firebaseConfig = {
           </div>
           <div class="max-h-64 overflow-y-auto scroll-thin">${items}</div>
         </div>`;
+    }
+
+    // ---- 入力欄の内容に名前が部分一致するスタンプの候補 ----
+    // 入力欄の内容全体をスタンプ名と比べるので、文章の途中の語には反応しない。オン/オフはこのブラウザの localStorage に保存（既定はオン）
+    const STICKER_SUGGEST_KEY = "chatter:stickerSuggest";
+    const STICKER_SUGGEST_MAX = 8;
+    const stickerSuggestEnabled = () => store.get(STICKER_SUGGEST_KEY) !== "off";
+    let stickerSuggest = null;          // { q, items, index }。index は↑↓で選んだ候補（-1 は未選択で、Enter はふつうに文字を送信する）
+    let stickerSuggestDismissed = null; // Esc で閉じたときの入力内容（内容が変わるまで出さない）
+
+    function toggleStickerSuggest() {
+      const on = !stickerSuggestEnabled();
+      store.set(STICKER_SUGGEST_KEY, on ? "on" : "off");
+      $("#sticker-suggest-toggle")?.setAttribute("aria-checked", on);
+    }
+
+    function updateStickerSuggest() {
+      const input = $("#msg-input");
+      const room = currentRoom();
+      const q = input.value.trim().toLowerCase();
+      const prev = stickerSuggest;
+      if (q !== stickerSuggestDismissed) stickerSuggestDismissed = null;
+      stickerSuggest = null;
+      if (q && stickerSuggestDismissed === null && stickerSuggestEnabled() && !mention && !stickerBoxOpen && !state.editing
+          && document.activeElement === input && room && canSend(room)) {
+        const nameOf = (s) => String(s.name).toLowerCase();
+        const items = state.stickers
+          .filter((s) => nameOf(s).includes(q))
+          .sort((a, b) => nameOf(b).startsWith(q) - nameOf(a).startsWith(q)) // 前方一致を先に
+          .slice(0, STICKER_SUGGEST_MAX);
+        if (items.length) stickerSuggest = { q, items, index: prev?.q === q ? Math.min(prev.index, items.length - 1) : -1 };
+      }
+      renderStickerSuggest();
+    }
+
+    function closeStickerSuggest() {
+      stickerSuggest = null;
+      renderStickerSuggest();
+    }
+
+    function renderStickerSuggest() {
+      const box = $("#sticker-suggest-box");
+      const wasHidden = box.hidden;
+      box.hidden = !stickerSuggest;
+      if (!stickerSuggest) { box.innerHTML = ""; return; }
+      box.innerHTML = `
+        <div class="${wasHidden ? "pop-in" : ""} bg-white rounded-2xl shadow-lg ring-1 ring-slate-200 p-1.5">
+          <div class="px-2 pt-0.5 pb-1 text-xs font-semibold text-slate-500">スタンプの候補（選ぶとすぐに送信）</div>
+          <div class="max-h-56 overflow-y-auto scroll-thin" role="listbox" aria-label="スタンプの候補">
+            ${stickerSuggest.items.map((s, i) => `
+              <button type="button" data-action="pick-sticker-suggest" data-id="${esc(s.id)}" role="option" aria-selected="${i === stickerSuggest.index}" aria-label="${esc(s.name)}を送信"
+                class="w-full flex items-center gap-3 px-2 py-1.5 rounded-xl text-left transition ${i === stickerSuggest.index ? "bg-indigo-50" : "hover:bg-slate-50"}">
+                <div class="w-11 h-11 shrink-0 rounded-lg chat-bg ring-1 ring-slate-200/70 p-0.5">${stickerImg(s.svg, s.name, "w-full h-full")}</div>
+                <div class="min-w-0 flex-1 text-sm font-medium text-slate-800 truncate">${esc(s.name)}</div>
+              </button>`).join("")}
+          </div>
+        </div>`;
+      box.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    }
+
+    // 候補を選ぶと、入力した名前を消してスタンプを送信する（送信できなければ入力を戻す）
+    async function pickStickerSuggest(stickerId) {
+      const input = $("#msg-input");
+      const roomId = state.activeRoomId;
+      const text = input.value;
+      input.value = "";
+      input.dispatchEvent(new Event("input")); // 下書き・高さ・送信ボタン・候補を更新
+      try {
+        await sendSticker(stickerId);
+      } catch (e) {
+        if (!input.value && state.activeRoomId === roomId) {
+          input.value = text;
+          input.dispatchEvent(new Event("input"));
+        }
+        throw e;
+      }
     }
 
     // ---- 自分のスタンプの保存・削除 ----
@@ -5808,6 +5896,7 @@ const firebaseConfig = {
       "toggle-notify": () => toggleNotify(),
       "settings": () => openSettings(),
       "toggle-theme": () => toggleTheme(),
+      "toggle-sticker-suggest": () => toggleStickerSuggest(),
       "accent-preset": (el) => setAccent(el.dataset.color),
       "reset-accent": () => setAccent(ACCENT_DEFAULT),
       "change-password": () => openChangePassword(),
@@ -5860,6 +5949,7 @@ const firebaseConfig = {
       // スタンプ
       "toggle-sticker-box": () => toggleStickerBox(),
       "send-sticker": (el) => sendSticker(el.dataset.id),
+      "pick-sticker-suggest": (el) => pickStickerSuggest(el.dataset.id),
       "save-sticker": (el) => saveReceivedSticker(el.dataset.id),
       "new-sticker": () => openStickerEditor(),
       "edit-sticker": (el) => openStickerEditor(el.dataset.id),
@@ -6166,6 +6256,7 @@ const firebaseConfig = {
       });
       // DM の「入力中」：入力欄・ウィンドウのフォーカス、タブの表示状態が変わったら記録し、フォーカス中は定期的に更新する
       input.addEventListener("focus", () => updateTyping());
+      input.addEventListener("focus", updateStickerSuggest); // 入力が残っていれば候補を出し直す
       input.addEventListener("blur", () => updateTyping(false));
       window.addEventListener("focus", () => updateTyping());
       window.addEventListener("blur", () => updateTyping(false));
@@ -6175,7 +6266,9 @@ const firebaseConfig = {
       input.addEventListener("click", updateMentionBox);
       input.addEventListener("keyup", (e) => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) updateMentionBox(); });
       input.addEventListener("blur", () => { if (mention) { mention = null; renderMentionBox(); } });
+      input.addEventListener("blur", () => { if (stickerSuggest) closeStickerSuggest(); });
       $("#mention-box").addEventListener("mousedown", (e) => e.preventDefault()); // 候補を選ぶときに入力欄のフォーカスを外さない
+      $("#sticker-suggest-box").addEventListener("mousedown", (e) => e.preventDefault());
       // 変換確定の Enter を判定するため、変換終了時刻を記録する（Safari は変換終了後に keyCode 229 の keydown を出す）
       let lastCompositionEnd = 0;
       input.addEventListener("compositionend", () => { lastCompositionEnd = performance.now(); });
@@ -6196,6 +6289,22 @@ const firebaseConfig = {
           }
           if ((isEnter && !e.shiftKey && !e.ctrlKey) || e.key === "Tab") { e.preventDefault(); pickMention(mention.index); return; }
           if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); mention = null; renderMentionBox(); return; }
+        }
+        // スタンプの候補：↑↓で選択、選んでいれば Enter で送信（選んでいなければ Enter はふつうに文字を送信）、Esc で閉じる
+        if (stickerSuggest) {
+          const { items, index } = stickerSuggest;
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            stickerSuggest.index = e.key === "ArrowDown" ? (index + 1) % items.length : (index <= 0 ? items.length : index) - 1;
+            renderStickerSuggest();
+            return;
+          }
+          if (isEnter && !e.shiftKey && !e.ctrlKey && index >= 0) {
+            e.preventDefault();
+            pickStickerSuggest(items[index].id).catch((err) => { console.error(err); toast(errMsg(err), "error"); });
+            return;
+          }
+          if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); stickerSuggestDismissed = stickerSuggest.q; closeStickerSuggest(); return; }
         }
         if (e.key === "Escape" && stickerBoxOpen) { e.preventDefault(); e.stopPropagation(); closeStickerBox(); return; }
         if (e.key === "Escape" && state.editing && !state.selectedMsgId) { e.preventDefault(); e.stopPropagation(); cancelEdit(); return; }
