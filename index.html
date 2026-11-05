@@ -742,6 +742,7 @@ const firebaseConfig = {
     ICONS.sun = "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z";
     ICONS.pin = "M15 4.5l-4 4-4 1.5-1.5 1.5 7 7 1.5-1.5 1.5-4 4-4M9 15l-4.5 4.5M14.5 4l5.5 5.5"; // 画びょう
     ICONS["bell-off"] =ICONS.bell + "M3 3l18 18"; // 斜線入りのベル
+    ICONS.forward = "M13 5l7 7-7 7M5 12h15"; // 転送（右向きの矢印）
     ICONS.dots = "M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"; // ケバブメニュー（︙）
     ICONS.globe = "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z";
     ICONS.refresh = "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15";
@@ -2210,7 +2211,7 @@ const firebaseConfig = {
             </div>
             ${selected ? `
             <div class="flex justify-end gap-2 mt-1.5 fade-in" data-msg-id="${esc(m.id)}">
-              ${image ? viewImageChip(m) : ""}
+              ${image ? viewImageChip(m) + forwardImageChip(m) : ""}
               ${canReply ? `<button type="button" data-action="reply" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("reply", "w-3.5 h-3.5")}返信</button>` : ""}
               ${canCopyMessage(m) ? `<button type="button" data-action="copy-msg" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("copy", "w-3.5 h-3.5")}コピー</button>` : ""}
               ${canEditMessage(m, room) ? `<button type="button" data-action="edit-msg" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("pencil", "w-3.5 h-3.5")}編集</button>` : ""}
@@ -2236,7 +2237,7 @@ const firebaseConfig = {
                   </div>
                 </div>
                 ${selected && sticker ? saveStickerChip(m) : ""}
-                ${selected && image ? `<div class="flex mt-1.5 fade-in">${viewImageChip(m)}</div>` : ""}
+                ${selected && image ? `<div class="flex flex-wrap gap-2 mt-1.5 fade-in">${viewImageChip(m)}${forwardImageChip(m)}</div>` : ""}
               </div>
             </div>`;
         }
@@ -3554,6 +3555,53 @@ const firebaseConfig = {
       document.body.appendChild(a);
       a.click();
       a.remove();
+    }
+
+    // ---- 画像の転送（表示できる SVG の画像だけ。転送先は今のトーク以外で送信できるトーク） ----
+    // 転送は元の画像（SVG・大きさ・本文）をそのままコピーして、転送先のトークに新しいメッセージとして送る
+    const isForwardableImage = (m) => m?.type === "image" && isSvgImage(m.image) && !!imageSrc(m.image) && Number(m.w) >= 1 && Number(m.h) >= 1;
+    const forwardImageChip = (m) => isForwardableImage(m)
+      ? `<button type="button" data-action="forward-image" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("forward", "w-3.5 h-3.5")}転送</button>`
+      : "";
+
+    function openForwardImage(msgId) {
+      const m = state.messages.find((x) => x.id === msgId);
+      if (!isForwardableImage(m)) return;
+      if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
+      const targets = state.rooms.filter((r) => r.id !== state.activeRoomId && canSend(r));
+      const list = targets.length
+        ? targets.map((r) => `
+            <button type="button" data-action="forward-image-to" data-id="${esc(msgId)}" data-room="${esc(r.id)}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left hover:bg-indigo-50 transition">
+              ${roomAvatar(r, "w-9 h-9 text-sm")}
+              <span class="min-w-0 flex-1 truncate font-semibold text-slate-800">${esc(roomTitle(r))}</span>
+              <span class="shrink-0 text-xs text-slate-400">${r.type === "dm" ? "個人" : "グループ"}</span>
+            </button>`).join("")
+        : `<p class="text-sm text-slate-500 text-center py-8">転送できるトークがありません</p>`;
+      openModal(`
+        ${modalHead("画像を転送", "転送先のトークを選んでください")}
+        <div class="px-4 pb-6 space-y-1 max-h-[60vh] overflow-y-auto scroll-thin">${list}</div>`);
+    }
+
+    async function forwardImage(msgId, roomId) {
+      const m = state.messages.find((x) => x.id === msgId);
+      const room = state.rooms.find((r) => r.id === roomId);
+      if (!isForwardableImage(m) || !room || room.id === state.activeRoomId || !canSend(room)) {
+        toast("この画像は転送できません", "error");
+        return;
+      }
+      closeModal();
+      const message = {
+        type: "image", text: IMAGE_TEXT, image: m.image, w: Number(m.w), h: Number(m.h),
+        senderId: state.me.id, senderName: state.me.name, senderUid: state.uid, createdAt: serverTimestamp(),
+      };
+      const lastMessage = { type: "image", text: IMAGE_TEXT, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() };
+      try {
+        await postMessage(room, message, lastMessage);
+        toast(`「${roomTitle(room)}」に転送しました`);
+      } catch (e) {
+        console.error(e);
+        toast(errMsg(e), "error");
+      }
     }
 
     // ---- 送信画面（画像を選ぶ・貼り付ける・ドロップすると開く） ----
@@ -5660,6 +5708,8 @@ const firebaseConfig = {
       "crop-reset": () => resetCrop(),
       "view-image": (el) => openImageViewer(el.dataset.id),
       "download-image": (el) => downloadImage(el.dataset.id),
+      "forward-image": (el) => openForwardImage(el.dataset.id),
+      "forward-image-to": (el) => forwardImage(el.dataset.id, el.dataset.room),
       "se-tool": (el) => { if (editor) { editor.tool = el.dataset.tool; renderEditorTools(); } },
       "se-color": (el) => setEditorColor(el.dataset.color),
       "se-width": (el) => {
