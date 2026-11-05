@@ -201,8 +201,8 @@
     @keyframes float { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(40px, 30px) scale(1.08); } }
     .blob { position: absolute; border-radius: 9999px; filter: blur(70px); animation: float 18s ease-in-out infinite; }
 
-    /* メッセージ内のリンクはダブルタップで開くので、ダブルタップでの拡大をさせない */
-    .msg-link { touch-action: manipulation; }
+    /* メッセージ内のリンクはダブルタップで開くので、ダブルタップでの拡大をさせない（1 回目で出たメニューの分だけ表示がずれて、2 回目がリンクの外に当たることがあるので一覧全体） */
+    #messages { touch-action: manipulation; }
 
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
@@ -5707,8 +5707,19 @@ const firebaseConfig = {
     const TEXT_FIELD = "textarea, input:not([type=checkbox], [type=radio], [type=file], [type=button], [type=submit], [type=range], [type=color], [type=hidden])";
 
     function bindEvents() {
-      let lastLinkClick = null; // { key（メッセージ ID と URL）, at } メッセージ内のリンクの 1 回目のクリック
+      let lastLinkClick = null; // { href, x, y, at } メッセージ内のリンクの 1 回目のクリック
       document.addEventListener("click", (e) => {
+        // メッセージ内のリンクはダブルクリック（スマホはダブルタップ）で開く。1 回目で出たメニューの分だけ表示がずれて、2 回目がリンクに
+        // 当たらないことがあるので、2 回目は画面上の位置で判定する（その位置に来たメニューのボタンなどは押さない）
+        const firstLinkClick = lastLinkClick;
+        lastLinkClick = null;
+        if (firstLinkClick && e.detail > 0 && e.timeStamp - firstLinkClick.at < 500 && Math.hypot(e.clientX - firstLinkClick.x, e.clientY - firstLinkClick.y) < 24) {
+          e.preventDefault();
+          window.open(firstLinkClick.href, "_blank", "noopener,noreferrer");
+          getSelection().removeAllRanges(); // ダブルクリックで選択された文字
+          if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); } // 1 回目で出したメニューは閉じる
+          return;
+        }
         const closer = e.target.closest("[data-close]");
         if (closer) { if (!(modalLocked && closer.parentElement.id === "modal-root")) closeModal(); return; } // ロック中は背景のクリックでは閉じない
         const loginTab = e.target.closest("[data-login-tab]");
@@ -5723,19 +5734,11 @@ const firebaseConfig = {
         if (msgSearch?.showResults && !e.target.closest("#msg-search-bar")) { msgSearch.showResults = false; renderMsgSearchResults(); }
         // スタンプの「︙」メニューは、どこをクリックしても閉じる（項目は閉じてから実行。「︙」ボタンは開閉を切り替える）
         if (stickerMenuId !== null && !e.target.closest('[data-action="sticker-menu"]')) closeStickerMenu();
-        // メッセージ内のリンクはダブルクリック（スマホはダブルタップ）で開く。1 回目のクリックはそのまま吹き出しのクリックとして扱う（メニューを出す）。
-        // 1 回目で吹き出しが描き直されるので、同じメッセージの同じ URL かどうかで 2 回目を判定する
+        // メッセージ内のリンクの 1 回目のクリックは、そのまま吹き出しのクリックとして扱う（すぐにメニューを出す）
         const link = e.target.closest("a.msg-link");
         if (link && e.detail > 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
           e.preventDefault();
-          const key = `${link.closest("[data-msg-id]")?.dataset.msgId}|${link.getAttribute("href")}`;
-          if (lastLinkClick?.key === key && e.timeStamp - lastLinkClick.at < 500) {
-            lastLinkClick = null;
-            window.open(link.href, "_blank", "noopener,noreferrer");
-            if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); } // 1 回目で出したメニューは閉じる
-            return;
-          }
-          lastLinkClick = { key, at: e.timeStamp };
+          lastLinkClick = { href: link.href, x: e.clientX, y: e.clientY, at: e.timeStamp };
         } else if (e.target.closest("a[href]")) return; // それ以外のリンク・キーボードでの操作・Ctrl+クリックなどは通常どおり開く
         const el = e.target.closest("[data-action]");
         if (!el) return;
