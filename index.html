@@ -201,7 +201,7 @@
     @keyframes float { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(40px, 30px) scale(1.08); } }
     .blob { position: absolute; border-radius: 9999px; filter: blur(70px); animation: float 18s ease-in-out infinite; }
 
-    /* メッセージ内のリンクはダブルタップで開くので、ダブルタップでの拡大をさせない（1 回目で出たメニューの分だけ表示がずれて、2 回目がリンクの外に当たることがあるので一覧全体） */
+    /* メッセージ内のリンクはダブルタップで開くので、ダブルタップでの拡大をさせない（2 回目がリンクの少し外に当たることもあるので一覧全体） */
     #messages { touch-action: manipulation; }
 
     @media (prefers-reduced-motion: reduce) {
@@ -583,7 +583,8 @@ const firebaseConfig = {
     const ID_RE = /^[a-z0-9_-]{3,20}$/;
     const MESSAGE_LIMIT = 100;              // 1ルームで最初に読み込む最新メッセージ数（上へスクロールすると、この件数ずつ古いメッセージを読み込む）
     const SEARCH_PAGE = 500;                // メッセージの検索で一度に読み込む数（「さらに古いメッセージを検索」で増やす）
-    const MAX_TEXT = 10000;                 // 1メッセージの最大文字数
+    const MAX_TEXT_SHORT = 1000;            // 1メッセージの最大文字数（管理者の「長文の送信」がオフのとき。firestore.rules と合わせる）
+    const MAX_TEXT_LONG = 10000;            // 1メッセージの最大文字数（「長文の送信」がオンのとき）
     const EDIT_WINDOW = 10 * 60 * 1000;     // 送信後にテキストのメッセージを編集できる時間（firestore.rules と合わせる）
     const ONLINE_MS = 6 * 60 * 1000;        // タブを表示していて、この時間内に最終アクティブ時刻の更新があれば「オンライン」
     const PRESENCE_INTERVAL = 5 * 60 * 1000; // 最終アクティブ時刻の更新間隔
@@ -612,6 +613,11 @@ const firebaseConfig = {
     // SVG の形式：<svg …> の中に <path …/> と、読み込んだ文字・画像を画像にした <image …/> が並ぶ（firestore.rules の isValidSvg と合わせる）
     const STICKER_IMAGE_HREF_RE = /^data:image\/(png|webp|jpeg);base64,[A-Za-z0-9+/]+=*$/;
     const STICKER_SVG_RE = /^<svg [^<>]*>(<path [^<>]*\/>|<image x="-?[0-9.]+" y="-?[0-9.]+" width="[0-9.]+" height="[0-9.]+" href="data:image\/(png|webp|jpeg);base64,[A-Za-z0-9+/]+=*"\/>)*<\/svg>$/;
+    // アニメーションのスタンプは動きを残すため、上の形式に変換せずに無害化した SVG をそのまま持つ（改行を含まない。firestore.rules の isValidSvg と合わせる）
+    const STICKER_ANIM_RE = /^<svg[ >].*(<animate|<set[ >]|keyframes|animation).*<\/svg>$/;
+    const STICKER_ANIM_NG_RE = /<script|javascript:/i;
+    const isAnimatedSticker = (v) => typeof v === "string" && !STICKER_SVG_RE.test(v) && STICKER_ANIM_RE.test(v) && !STICKER_ANIM_NG_RE.test(v);
+    const isStickerSvg = (v) => typeof v === "string" && v.length <= STICKER_MAX_SVG && (STICKER_SVG_RE.test(v) || isAnimatedSticker(v));
     // アイコンの SVG は <path> だけ（firestore.rules の isValidIcon と合わせる）
     const PATH_SVG_RE = /^<svg [^<>]*>(<path [^<>]*\/>)*<\/svg>$/;
     const STICKER_COLORS = [
@@ -2218,27 +2224,27 @@ const firebaseConfig = {
         const body = sticker ? stickerBody(m) : image ? imageBody(m) : replyQuote(m, mine) + formatText(m, mine);
         const bubbleCls = sticker || image ? "max-w-[78%] rounded-2xl" : `bubble ${mine ? "bubble-mine" : "bubble-other"}`;
         if (mine) {
-          // 自分のメッセージはクリック（タップ）で「返信」「送信取消」ボタンを表示
+          // 自分のメッセージはクリック（タップ）で「返信」「送信取消」ボタンを吹き出しの上に重ねて表示（表示がずれるとリンクをダブルクリックできない）
           const selected = state.selectedMsgId === m.id;
           const selectable = m.pending ? "" : `data-action="select-msg" data-id="${esc(m.id)}" title="${canReply ? "クリックで返信・送信取消" : "クリックで送信取消"}"`;
           html += `
-            <div class="flex justify-end items-end gap-1.5 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""}" data-msg-id="${esc(m.id)}">
-              <div class="flex flex-col items-end gap-0.5 shrink-0">
-                ${reactionChip(m, isGroup)}
-                ${readLabel(m, room)}
-                <span class="msg-time">${m.pending ? (m.editedAt ? "保存中…" : "送信中…") : `${m.editedAt ? "編集済み " : ""}${hhmm(d)}`}</span>
-              </div>
-              <div class="${bubbleCls} ${m.pending ? "" : "cursor-pointer"} ${selected || state.editing?.id === m.id ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
-            </div>
-            ${selected ? `
-            <div class="flex justify-end gap-2 mt-1.5 fade-in" data-msg-id="${esc(m.id)}">
+            <div class="relative flex justify-end items-end gap-1.5 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""} ${selected ? "z-10" : ""}" data-msg-id="${esc(m.id)}">
+              ${selected ? `
+              <div class="reaction-picker ${pickerShownFor === m.id ? "" : "pop-in"} absolute bottom-full right-0 mb-2 w-max max-w-full flex flex-wrap justify-end gap-2">
               ${image ? viewImageChip(m) + forwardImageChip(m) : ""}
               ${canReply ? `<button type="button" data-action="reply" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("reply", "w-3.5 h-3.5")}返信</button>` : ""}
               ${canCopyMessage(m) ? `<button type="button" data-action="copy-msg" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("copy", "w-3.5 h-3.5")}コピー</button>` : ""}
               ${canEditMessage(m, room) ? `<button type="button" data-action="edit-msg" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("pencil", "w-3.5 h-3.5")}編集</button>` : ""}
               ${pinChip(m, room)}
               <button type="button" data-action="unsend" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-rose-600 ring-1 ring-rose-200 shadow-sm hover:bg-rose-50">${icon("trash", "w-3.5 h-3.5")}送信取消</button>
-            </div>` : ""}`;
+              </div>` : ""}
+              <div class="flex flex-col items-end gap-0.5 shrink-0">
+                ${reactionChip(m, isGroup)}
+                ${readLabel(m, room)}
+                <span class="msg-time">${m.pending ? (m.editedAt ? "保存中…" : "送信中…") : `${m.editedAt ? "編集済み " : ""}${hhmm(d)}`}</span>
+              </div>
+              <div class="${bubbleCls} ${m.pending ? "" : "cursor-pointer"} ${selected || state.editing?.id === m.id ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
+            </div>`;
         } else {
           const name = userName(m.senderId, m.senderName);
           // 他の人のメッセージはクリック（タップ）で吹き出しの上にリアクションの絵文字と返信ボタンを表示（グループはメンバーのみ）
@@ -2962,7 +2968,7 @@ const firebaseConfig = {
       const input = $("#msg-input");
       const text = input.value.trim();
       if (!ed || !room || room.id !== ed.roomId || !text) return;
-      if (text.length > MAX_TEXT) return toast(`メッセージは${MAX_TEXT}文字以内で入力してください`, "error");
+      if (text.length > maxText()) return toast(`メッセージは${maxText()}文字以内で入力してください`, "error");
       const m = state.messages.find((x) => x.id === ed.id);
       if (!m) { cancelEdit(); toast("このメッセージは送信取消されています", "error"); return; }
       if (text === m.text) { cancelEdit(); return; }
@@ -3393,7 +3399,7 @@ const firebaseConfig = {
       const text = input.value.trim();
       const room = currentRoom();
       if (!text || !isMember(room)) return;
-      if (text.length > MAX_TEXT) return toast(`メッセージは${MAX_TEXT}文字以内で入力してください`, "error");
+      if (text.length > maxText()) return toast(`メッセージは${maxText()}文字以内で入力してください`, "error");
 
       const replyTo = state.replyTo;
       input.value = "";
@@ -3460,7 +3466,7 @@ const firebaseConfig = {
       const s = state.stickers.find((x) => x.id === stickerId);
       closeStickerBox();
       if (!s || !room || !canSend(room)) return;
-      if (!STICKER_SVG_RE.test(s.svg) || s.svg.length > STICKER_MAX_SVG) throw new Error("このスタンプは送信できません。編集して保存し直してください。");
+      if (!isStickerSvg(s.svg)) throw new Error("このスタンプは送信できません。編集して保存し直してください。");
       const replyTo = state.replyTo;
       state.replyTo = null;
       renderReplyBar();
@@ -3633,7 +3639,7 @@ const firebaseConfig = {
     const RASTER_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     const IMAGE_EXT_TYPES = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml" };
 
-    // 開いている送信画面 { file, type, url, img, w, h, dims, roomId, result, gen, crop（トリミングの範囲。w×h の座標。null は全体）,
+    // 開いている送信画面 { file, type, url, img, w, h, dims, anim（動きを残した SVG。無ければ null）, roomId, result, gen, crop（トリミングの範囲。w×h の座標。null は全体）,
     //   strokes（ペンの書き込み。トリミングした範囲の座標）, vw, vh（書き込みの座標の範囲）, inSub（描く・トリミングの画面に切り替え中） }
     let imgSend = null;
 
@@ -3655,7 +3661,9 @@ const firebaseConfig = {
       if (file.size > 30e6) throw new Error("画像が大きすぎます（30MB まで）。");
       closeStickerBox();
       // SVG は大きさを書き込んだものを描く（読み込めなければ元のファイルで試す）
-      const sized = type === "image/svg+xml" ? await sizedSvg(file).catch(() => null) : null;
+      const anim = type === "image/svg+xml" ? cleanAnimatedSvg(await file.text()) : null; // アニメーションがあれば、動きを残した SVG
+      // 動かない画像にするときも無害化したものを描く（<foreignObject> などが残っていると、描いたキャンバスを読み取れない）
+      const sized = type === "image/svg+xml" ? await sizedSvg(anim ? new Blob([anim]) : file).catch(() => null) : null;
       let url, img = null;
       for (const src of sized ? [sized.blob, file] : [file]) {
         url = URL.createObjectURL(src);
@@ -3668,7 +3676,7 @@ const firebaseConfig = {
       const k = Math.min(1, IMAGE_MAX_PX / Math.max(w, h));
       w = Math.max(1, Math.round(w * k));
       h = Math.max(1, Math.round(h * k));
-      const s = { file, type, url, img, w, h, dims, roomId: room.id, result: null, gen: 0, strokes: [], inSub: false };
+      const s = { file, type, url, img, w, h, dims, anim, roomId: room.id, result: null, gen: 0, strokes: [], inSub: false };
       setImageCrop(s, null);
       if (imgSend) cancelImageSender(imgSend);
       imgSend = s;
@@ -3759,7 +3767,8 @@ const firebaseConfig = {
         text = r.error || `50KB 以内に収まりませんでした（最小 ${fmtBytes(r.bytes)}）。画像を小さくしてからお試しください。`;
       } else {
         cls = "bg-emerald-50 text-emerald-700";
-        text = `<b>✓ SVG ${fmtBytes(r.bytes)}</b>（50KB 以内${s.crop ? `・${s.crop.w}×${s.crop.h} にトリミング` : ""}${s.strokes.length ? "・ペンの書き込みあり" : ""}）${r.enc ? `<br>${imageEncodeMessage(r.enc)}` : ""}`;
+        text = `<b>✓ SVG ${fmtBytes(r.bytes)}</b>（50KB 以内${r.animated ? "・アニメーションあり" : ""}${s.crop ? `・${s.crop.w}×${s.crop.h} にトリミング` : ""}${s.strokes.length ? "・ペンの書き込みあり" : ""}）${r.enc ? `<br>${imageEncodeMessage(r.enc)}` : ""}`;
+        if (s.anim && !r.animated) text += `<br>${s.crop || s.strokes.length ? "トリミング・書き込みをしたので、" : "アニメーションのまま送れるのは 50KB 以下の SVG だけなので、"}動かない画像で送ります`;
       }
       el.className = `text-xs leading-relaxed rounded-xl px-3 py-2 ${cls}`;
       el.innerHTML = text;
@@ -3781,7 +3790,8 @@ const firebaseConfig = {
       renderImageStatus();
       let r;
       try {
-        r = await embedFit(s, gen);
+        const anim = s.anim && !s.crop && !s.strokes.length ? s.anim : null; // トリミング・書き込みをすると、画像にするので動かなくなる
+        r = anim && svgBytes(anim) <= IMAGE_MAX_BYTES ? { image: anim, bytes: svgBytes(anim), animated: true } : await embedFit(s, gen);
       } catch (e) {
         if (e?.cancelled || imgSend !== s || gen !== s.gen) return;
         console.error(e);
@@ -4142,6 +4152,28 @@ const firebaseConfig = {
     // 保存済みかどうかは、自分の保管庫に同じ SVG のスタンプがあるかで判定する
     const isStickerSaved = (svg) => state.stickers.some((s) => s.svg === svg);
 
+    // スタンプはダブルクリック（スマホはダブルタップ）で送信する。スマホでは dblclick が届かないことがあるので、同じスタンプの 2 回のクリックの間隔で判定する。
+    // キーボードの操作（detail が 0）は 1 回で送信する
+    const STICKER_TAP_MS = 500;
+    const stickerSendHint = () => (isPC() ? "ダブルクリックで送信" : "ダブルタップで送信");
+    let stickerTap = null; // 1 回目のクリック { id, at }
+    let stickerPicked = null; // 一覧で選択の表示にしているスタンプ（一覧を描き直しても残す）
+    function isStickerDoubleTap(id, e) {
+      if (!e.detail) return true;
+      const prev = stickerTap;
+      stickerTap = { id, at: e.timeStamp };
+      if (prev?.id !== id || e.timeStamp - prev.at >= STICKER_TAP_MS) return false;
+      stickerTap = null;
+      return true;
+    }
+
+    // 一覧のスタンプのクリック：1 回目は選択の表示だけ、2 回目で送信
+    function tapSticker(el, e) {
+      if (isStickerDoubleTap(el.dataset.id, e)) return sendSticker(el.dataset.id);
+      stickerPicked = el.dataset.id;
+      document.querySelectorAll('#sticker-box [data-action="send-sticker"]').forEach((b) => b.setAttribute("aria-pressed", b === el));
+    }
+
     // ---- チャットの入力欄の横のスタンプ一覧 ----
     let stickerBoxOpen = false;
     function toggleStickerBox() {
@@ -4157,6 +4189,7 @@ const firebaseConfig = {
     function closeStickerBox() {
       if (!stickerBoxOpen) return;
       stickerBoxOpen = false;
+      stickerPicked = null;
       renderStickerBox();
     }
 
@@ -4175,14 +4208,14 @@ const firebaseConfig = {
              </div>`
           : `<div class="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
                ${state.stickers.map((s) => `
-                 <button type="button" data-action="send-sticker" data-id="${esc(s.id)}" class="aspect-square rounded-xl p-1 transition hover:bg-indigo-50 active:scale-95" aria-label="${esc(s.name)}を送信">
+                 <button type="button" data-action="send-sticker" data-id="${esc(s.id)}" class="aspect-square rounded-xl p-1 transition touch-manipulation hover:bg-indigo-50 active:scale-95 aria-pressed:bg-indigo-100 aria-pressed:ring-2 aria-pressed:ring-inset aria-pressed:ring-indigo-400" aria-pressed="${s.id === stickerPicked}" aria-label="${esc(s.name)}を送信">
                    ${stickerImg(s.svg, s.name, "w-full h-full")}
                  </button>`).join("")}
              </div>`;
       box.innerHTML = `
         <div class="${wasHidden ? "pop-in" : ""} bg-white rounded-2xl shadow-lg ring-1 ring-slate-200 p-2" role="dialog" aria-label="スタンプ">
           <div class="flex items-center justify-between px-1.5 pb-1.5">
-            <span class="text-xs font-semibold text-slate-500">スタンプ（選ぶとすぐに送信）</span>
+            <span class="text-xs font-semibold text-slate-500">スタンプ（${stickerSendHint()}）</span>
             ${state.stickers.length ? `<button type="button" data-action="new-sticker" class="text-xs text-indigo-600 font-semibold hover:underline inline-flex items-center gap-1">${icon("plus", "w-3.5 h-3.5")}新規作成</button>` : ""}
           </div>
           <div class="max-h-64 overflow-y-auto scroll-thin">${items}</div>
@@ -4234,17 +4267,25 @@ const firebaseConfig = {
       if (!stickerSuggest) { box.innerHTML = ""; return; }
       box.innerHTML = `
         <div class="${wasHidden ? "pop-in" : ""} bg-white rounded-2xl shadow-lg ring-1 ring-slate-200 p-1.5">
-          <div class="px-2 pt-0.5 pb-1 text-xs font-semibold text-slate-500">スタンプの候補（選ぶとすぐに送信）</div>
+          <div class="px-2 pt-0.5 pb-1 text-xs font-semibold text-slate-500">スタンプの候補（${stickerSendHint()}）</div>
           <div class="max-h-56 overflow-y-auto scroll-thin" role="listbox" aria-label="スタンプの候補">
             ${stickerSuggest.items.map((s, i) => `
               <button type="button" data-action="pick-sticker-suggest" data-id="${esc(s.id)}" role="option" aria-selected="${i === stickerSuggest.index}" aria-label="${esc(s.name)}を送信"
-                class="w-full flex items-center gap-3 px-2 py-1.5 rounded-xl text-left transition ${i === stickerSuggest.index ? "bg-indigo-50" : "hover:bg-slate-50"}">
+                class="w-full flex items-center gap-3 px-2 py-1.5 rounded-xl text-left transition touch-manipulation ${i === stickerSuggest.index ? "bg-indigo-50" : "hover:bg-slate-50"}">
                 <div class="w-11 h-11 shrink-0 rounded-lg chat-bg ring-1 ring-slate-200/70 p-0.5">${stickerImg(s.svg, s.name, "w-full h-full")}</div>
                 <div class="min-w-0 flex-1 text-sm font-medium text-slate-800 truncate">${esc(s.name)}</div>
               </button>`).join("")}
           </div>
         </div>`;
       box.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    }
+
+    // 候補のクリック：1 回目は選択（そのまま Enter でも送信できる）、2 回目で送信
+    function tapStickerSuggest(el, e) {
+      if (isStickerDoubleTap(el.dataset.id, e)) return pickStickerSuggest(el.dataset.id);
+      if (!stickerSuggest) return;
+      stickerSuggest.index = stickerSuggest.items.findIndex((s) => s.id === el.dataset.id);
+      renderStickerSuggest();
     }
 
     // 候補を選ぶと、入力した名前を消してスタンプを送信する（送信できなければ入力を戻す）
@@ -4275,24 +4316,79 @@ const firebaseConfig = {
       if ([...name].length > STICKER_MAX_NAME) throw new Error(`スタンプ名は${STICKER_MAX_NAME}文字以内で入力してください。`);
       const svg = buildStickerSvg(ed.strokes);
       if (svg.length > STICKER_MAX_SVG) throw new Error("スタンプのデータが大きすぎます。線の数を減らしてください。");
-      const size = stickerSizeOf(ed.size);
-      if (ed.id) {
-        const ref = doc(db, "users", state.me.id, "stickers", ed.id);
-        if (state.stickers.find((x) => x.id === ed.id)?.public) {
-          // 公開中のスタンプは、みんなのスタンプのコピーも同じ書き込みで更新する
-          const batch = writeBatch(db);
-          batch.update(ref, { name, svg, size, updatedAt: serverTimestamp() });
-          batch.update(doc(db, "publicStickers", publicStickerId(ed.id)), { name, svg, size, ownerName: state.me.name, updatedAt: serverTimestamp() });
-          await batch.commit();
-        } else {
-          await updateDoc(ref, { name, svg, size, updatedAt: serverTimestamp() });
-        }
-      } else {
-        await setDoc(doc(collection(db, "users", state.me.id, "stickers")), { name, svg, size, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-      }
+      await writeSticker(ed.id, name, svg, stickerSizeOf(ed.size));
       store.remove(draftKey(ed));
       closeModal();
       toast(ed.id ? "スタンプを保存しました" : "スタンプを作成しました");
+    }
+
+    // 自分のスタンプを保存する（id が無ければ新規）
+    async function writeSticker(id, name, svg, size) {
+      if (!id) {
+        await setDoc(doc(collection(db, "users", state.me.id, "stickers")), { name, svg, size, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+        return;
+      }
+      const ref = doc(db, "users", state.me.id, "stickers", id);
+      if (state.stickers.find((x) => x.id === id)?.public) {
+        // 公開中のスタンプは、みんなのスタンプのコピーも同じ書き込みで更新する
+        const batch = writeBatch(db);
+        batch.update(ref, { name, svg, size, updatedAt: serverTimestamp() });
+        batch.update(doc(db, "publicStickers", publicStickerId(id)), { name, svg, size, ownerName: state.me.name, updatedAt: serverTimestamp() });
+        await batch.commit();
+      } else {
+        await updateDoc(ref, { name, svg, size, updatedAt: serverTimestamp() });
+      }
+    }
+
+    // ---- アニメーションのスタンプ ----
+    // 動きを残すため図形に変換せず、エディタでは描き足せない。名前と表示サイズだけを、この画面で決める・変える
+    let animSticker = null; // { id（新規は null）, svg, size }
+    function openAnimStickerForm({ id = null, svg, name = "", size }) {
+      closeStickerBox();
+      const form = { id, svg, size: stickerSizeOf(size) };
+      animSticker = form;
+      openModal(`
+        ${modalHead(id ? "アニメーションのスタンプを編集" : "アニメーションのスタンプを作成", "動きをそのまま残します。絵の描き足しはできません")}
+        <form id="form-anim-sticker" class="px-6 pb-6 space-y-4">
+          <div class="mx-auto w-40 h-40 rounded-2xl chat-bg ring-1 ring-slate-200 p-2">${stickerImg(svg, name, "w-full h-full")}</div>
+          <div>
+            <label class="label" for="as-name">スタンプ名</label>
+            <input id="as-name" name="name" class="input" maxlength="${STICKER_MAX_NAME}" value="${esc(name)}" placeholder="例: ありがとう" autocomplete="off" />
+            <p class="text-xs text-slate-400 mt-1.5">SVG ${fmtBytes(svgBytes(svg))}</p>
+          </div>
+          <div>
+            <div class="label">表示サイズ（チャットでの大きさ）</div>
+            <div class="flex gap-1.5" role="radiogroup" aria-label="表示サイズ">
+              ${Object.entries(STICKER_DISPLAY_SIZES).map(([k, { label }]) => `
+                <button type="button" data-action="as-display-size" data-size="${k}" class="as-display-size btn-chip flex-1 py-2 ring-1" role="radio" aria-checked="false">${label}</button>`).join("")}
+            </div>
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
+            <button type="submit" class="btn-primary flex-1">保存</button>
+          </div>
+        </form>`, () => { if (animSticker === form) animSticker = null; });
+      renderAnimStickerSize();
+    }
+
+    function renderAnimStickerSize() {
+      document.querySelectorAll("#modal-host .as-display-size").forEach((b) => {
+        const active = b.dataset.size === animSticker?.size;
+        b.setAttribute("aria-checked", active);
+        b.className = `as-display-size btn-chip flex-1 py-2 ring-1 ${active ? "bg-indigo-50 text-indigo-600 ring-indigo-300" : "bg-white text-slate-600 ring-slate-200 hover:bg-slate-50"}`;
+      });
+    }
+
+    async function saveAnimSticker(nameRaw) {
+      const form = animSticker;
+      if (!form) return;
+      const name = String(nameRaw ?? "").trim();
+      if (!name) throw new Error("スタンプ名を入力してください。");
+      if ([...name].length > STICKER_MAX_NAME) throw new Error(`スタンプ名は${STICKER_MAX_NAME}文字以内で入力してください。`);
+      await writeSticker(form.id, name, form.svg, form.size);
+      closeModal();
+      toast(form.id ? "スタンプを保存しました" : "スタンプを作成しました");
     }
 
     async function deleteSticker(id) {
@@ -4328,7 +4424,7 @@ const firebaseConfig = {
         toast(`「${s.name}」を非公開にしました`);
         return;
       }
-      if (!STICKER_SVG_RE.test(s.svg) || s.svg.length > STICKER_MAX_SVG) throw new Error("このスタンプは公開できません。編集して保存し直してください。");
+      if (!isStickerSvg(s.svg)) throw new Error("このスタンプは公開できません。編集して保存し直してください。");
       const ok = await confirmDialog({
         title: "スタンプを公開しますか？",
         message: `「<b class="text-slate-800">${esc(s.name)}</b>」を「みんなのスタンプ」に公開します。ログインしているユーザーはだれでも見て、自分のスタンプに保存できます。<br>あとから非公開にしても、ほかの人がすでに保存したスタンプは残ります。`,
@@ -4403,7 +4499,7 @@ const firebaseConfig = {
     async function copyToMyStickers(nameRaw, svg, size) {
       if (!state.stickersLoaded) throw new Error("スタンプを読み込み中です。少し待ってからお試しください。");
       if (isStickerSaved(svg) || savingStickers.has(svg)) return;
-      if (typeof svg !== "string" || !STICKER_SVG_RE.test(svg) || svg.length > STICKER_MAX_SVG) throw new Error("このスタンプは保存できません。");
+      if (!isStickerSvg(svg)) throw new Error("このスタンプは保存できません。");
       const name = [...String(nameRaw || "").trim()].slice(0, STICKER_MAX_NAME).join("") || "スタンプ";
       savingStickers.add(svg);
       try {
@@ -4433,7 +4529,8 @@ const firebaseConfig = {
     function exportSticker(id) {
       const s = state.stickers.find((x) => x.id === id);
       if (!s) return;
-      const url = URL.createObjectURL(new Blob([s.svg], { type: "image/svg+xml" }));
+      const svg = (isAnimatedSticker(s.svg) && cleanAnimatedSvg(s.svg)) || s.svg; // 書き出したファイルはブラウザで直接開けるので、保存したスタンプも無害化し直す
+      const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
       saveFile(url, `${String(s.name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim() || "sticker"}.svg`);
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     }
@@ -4442,11 +4539,15 @@ const firebaseConfig = {
     async function importStickerFile(file) {
       if (!/\.svg$/i.test(file.name) && file.type !== "image/svg+xml") throw new Error("SVG ファイル（.svg）を選んでください。");
       if (file.size > 5 * 1024 * 1024) throw new Error("ファイルが大きすぎます（5MB まで）。");
-      const { strokes, skipped, tooLarge } = await svgToStrokes(await file.text());
-      closeStickerBox();
+      const text = await file.text();
       const name = [...file.name.replace(/\.svg$/i, "").trim()].slice(0, STICKER_MAX_NAME).join("");
+      const anim = cleanAnimatedSvg(text);
+      if (anim && anim.length <= STICKER_MAX_SVG) { openAnimStickerForm({ svg: anim, name }); return; }
+      const { strokes, skipped, tooLarge } = await svgToStrokes(text);
+      closeStickerBox();
       openDrawEditor({ kind: "sticker", strokes, name, title: "SVG から作成" });
-      if (tooLarge) toast(`容量の上限に収まらない文字・画像が${tooLarge}か所あり、読み込めませんでした`);
+      if (anim) toast(`アニメーションのまま保存できるのは ${STICKER_MAX_SVG / KB}KB までです。動かないスタンプとして読み込みました`);
+      else if (tooLarge) toast(`容量の上限に収まらない文字・画像が${tooLarge}か所あり、読み込めませんでした`);
       else if (skipped) toast(`外部ファイルの画像など${skipped}個の要素は読み込めませんでした`);
     }
 
@@ -4461,8 +4562,9 @@ const firebaseConfig = {
         try {
           if (!/\.svg$/i.test(file.name) && file.type !== "image/svg+xml") throw new Error("SVG ファイルではありません。");
           if (file.size > 5 * 1024 * 1024) throw new Error("ファイルが大きすぎます（5MB まで）。");
-          const { strokes } = await svgToStrokes(await file.text());
-          const svg = buildStickerSvg(strokes);
+          const text = await file.text();
+          const anim = cleanAnimatedSvg(text);
+          const svg = anim && anim.length <= STICKER_MAX_SVG ? anim : buildStickerSvg((await svgToStrokes(text)).strokes);
           if (svg.length > STICKER_MAX_SVG) throw new Error("スタンプのデータが大きすぎます。");
           const name = [...file.name.replace(/\.svg$/i, "").trim()].slice(0, STICKER_MAX_NAME).join("") || "スタンプ";
           await setDoc(doc(collection(db, "users", state.me.id, "stickers")), { name, svg, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
@@ -4585,6 +4687,65 @@ const firebaseConfig = {
     // サイズに収まらないときは、画像の解像度・画質と、図形の座標の桁数を減らしてやり直す
     const XLINK_NS = "http://www.w3.org/1999/xlink";
     const RASTER_RUN_ATTR = "data-chatter-run"; // 画像にする文字・画像の要素に付ける、何番目のまとまりか
+    // CSS の外部の読み込みを取り除く（url(#…) の内部参照は残す）
+    const noExternalUrl = (s) => s.replace(/@import[^;]*;?/gi, "").replace(/url\((?!\s*['"]?\s*#)[^)]*\)/gi, "none");
+    // イベント属性・外部への参照を取り除く（href は内部参照と <image> の data URL だけ残す）
+    function scrubSvgRefs(src) {
+      for (const el of [src, ...src.querySelectorAll("*")]) {
+        for (const a of [...el.attributes]) {
+          const n = a.name.toLowerCase();
+          const ref = a.value.trim();
+          if (n.startsWith("on") || (/(^|:)href$/.test(n) && !ref.startsWith("#") && !(el.localName === "image" && /^data:image\//i.test(ref)))) el.removeAttributeNode(a);
+          else if (n === "style") a.value = noExternalUrl(a.value);
+        }
+        if (el.localName === "style") el.textContent = noExternalUrl(el.textContent);
+      }
+    }
+
+    // ---- アニメーションの SVG ----
+    // SMIL（<animate> など）と CSS（@keyframes・animation）の動きは <img> の中でも再生されるので、図形に変換せず SVG のまま持つ。
+    // スクリプトで動かす SVG は <img> の中では動かないので、ここでは対象にしない
+    const SVG_SMIL_TAGS = "animate, animateMotion, animateTransform, set";
+    const SVG_CSS_ANIM_RE = /@(-webkit-)?keyframes\b|(^|[\s;{])(-webkit-)?animation(-name)?\s*:/i;
+    const hasSvgAnimation = (root) => !!root.querySelector(SVG_SMIL_TAGS)
+      || [...root.querySelectorAll("style")].some((el) => SVG_CSS_ANIM_RE.test(el.textContent))
+      || [...root.querySelectorAll("[style]")].some((el) => SVG_CSS_ANIM_RE.test(el.getAttribute("style")));
+
+    // アニメーションのある SVG を、動きを残したまま無害化して、改行のない文字列にする（アニメーションが無い・読み取れないときは null）。
+    // 取り除くのは、スクリプト・HTML・外部への参照・イベント属性と、表示に使わない注釈・編集ソフトの情報
+    const XML_NS = "http://www.w3.org/XML/1998/namespace", XMLNS_NS = "http://www.w3.org/2000/xmlns/";
+    const oneLine = (s) => s.replace(/\s*[\r\n\u2028\u2029]+\s*/g, " ");
+    function cleanAnimatedSvg(text) {
+      const xml = new DOMParser().parseFromString(text, "image/svg+xml");
+      const src = xml.documentElement;
+      if (src.namespaceURI !== SVG_NS || src.localName !== "svg" || xml.querySelector("parsererror") || !hasSvgAnimation(src)) return null;
+      for (const el of src.querySelectorAll("*")) if (el.namespaceURI !== SVG_NS) el.remove();
+      for (const el of src.querySelectorAll("script, foreignObject, feImage, iframe, video, audio, canvas, metadata, title, desc")) el.remove();
+      // 動きで href やイベント属性を書き換えることはできないようにする
+      for (const el of src.querySelectorAll(SVG_SMIL_TAGS)) if (/^\s*on|href\s*$/i.test(el.getAttribute("attributeName") || "")) el.remove();
+      scrubSvgRefs(src);
+      for (const el of src.querySelectorAll("image")) if (!/^data:image\//i.test((el.getAttribute("href") || el.getAttributeNS(XLINK_NS, "href") || "").trim())) el.remove();
+      for (const el of [src, ...src.querySelectorAll("*")]) {
+        for (const a of [...el.attributes]) {
+          const keep = a.namespaceURI === XMLNS_NS ? a.name === "xmlns" || a.localName === "xlink" : !a.namespaceURI || a.namespaceURI === XLINK_NS || a.namespaceURI === XML_NS;
+          if (keep) a.value = noExternalUrl(oneLine(a.value));
+          else el.removeAttributeNode(a);
+        }
+      }
+      const walker = xml.createTreeWalker(src, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_CDATA_SECTION | NodeFilter.SHOW_COMMENT | NodeFilter.SHOW_PROCESSING_INSTRUCTION);
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      for (const n of nodes) {
+        const isText = n.nodeType === Node.TEXT_NODE || n.nodeType === Node.CDATA_SECTION_NODE;
+        if (!isText || (!n.data.trim() && !n.parentElement.closest("text"))) n.remove();
+        else n.data = oneLine(n.data);
+      }
+      // 表示する大きさに合わせて拡大・縮小できるように、viewBox が無ければ width・height から足す
+      const w = parseFloat(src.getAttribute("width")), h = parseFloat(src.getAttribute("height"));
+      if (!src.getAttribute("viewBox") && w > 0 && h > 0 && !/%/.test(src.getAttribute("width") + src.getAttribute("height"))) src.setAttribute("viewBox", `0 0 ${w} ${h}`);
+      const svg = new XMLSerializer().serializeToString(src).trim();
+      return isAnimatedSticker(svg) ? svg : null;
+    }
     async function svgToStrokes(text) {
       const src = new DOMParser().parseFromString(text, "image/svg+xml").documentElement;
       if (src.namespaceURI !== SVG_NS || src.localName !== "svg") throw new Error("SVG ファイルとして読み込めませんでした。");
@@ -4602,16 +4763,7 @@ const firebaseConfig = {
         if (["foreignObject", "image", "iframe", "video", "canvas"].includes(el.localName)) skipped++;
         el.remove();
       }
-      const noExternalUrl = (s) => s.replace(/@import[^;]*;?/gi, "").replace(/url\((?!\s*['"]?\s*#)[^)]*\)/gi, "none");
-      for (const el of [src, ...src.querySelectorAll("*")]) {
-        for (const a of [...el.attributes]) {
-          const n = a.name.toLowerCase();
-          const ref = a.value.trim();
-          if (n.startsWith("on") || (/(^|:)href$/.test(n) && !ref.startsWith("#") && !(el.localName === "image" && /^data:image\//i.test(ref)))) el.removeAttributeNode(a);
-          else if (n === "style") a.value = noExternalUrl(a.value);
-        }
-        if (el.localName === "style") el.textContent = noExternalUrl(el.textContent);
-      }
+      scrubSvgRefs(src);
       // <use> は参照先の複製に置き換える（描画後の <use> の中身は読み取れないため）
       for (let n = 0; n < 1000; n++) {
         const use = src.querySelector("use");
@@ -4899,6 +5051,7 @@ const firebaseConfig = {
     function openStickerEditor(id = null) {
       const s = id ? state.stickers.find((x) => x.id === id) : null;
       if (id && !s) return;
+      if (isAnimatedSticker(s?.svg)) { openAnimStickerForm(s); return; }
       closeStickerBox();
       openDrawEditor({ kind: "sticker", id: s?.id || null, svg: s?.svg, name: s?.name, size: s?.size, title: s ? "スタンプを編集" : "スタンプを作成" });
     }
@@ -5337,7 +5490,9 @@ const firebaseConfig = {
     // 管理者の設定（admin/settings。ログイン前でも読める）。項目を増やすときは firestore.rules の admin/settings も合わせる
     // signupOpen：新規ユーザーの募集 / readReceipts：既読の表示（どちらも文書に無ければオン）
     // hideOnline：管理者のオンライン状態と入力中を全員から隠す（文書に無ければオフ）
-    let adminSettings = { signupOpen: true, readReceipts: true, hideOnline: false };
+    // longText：長文の送信。全ユーザーの1メッセージの最大文字数を切り替える（文書に無ければオン）
+    let adminSettings = { signupOpen: true, readReceipts: true, hideOnline: false, longText: true };
+    const maxText = () => (adminSettings.longText ? MAX_TEXT_LONG : MAX_TEXT_SHORT);
     // 管理者メニューのパスワードのハッシュ。メニューを開いている間だけ持ち、閉じたら消す
     let adminKey = null;
     const ADMIN_PASSWORD_ERROR = "管理者パスワードが正しくありません。";
@@ -5347,7 +5502,7 @@ const firebaseConfig = {
         doc(db, "admin", "settings"),
         (snap) => {
           const d = snap.data();
-          applySettings({ signupOpen: d?.signupOpen !== false, readReceipts: d?.readReceipts !== false, hideOnline: d?.hideOnline === true });
+          applySettings({ signupOpen: d?.signupOpen !== false, readReceipts: d?.readReceipts !== false, hideOnline: d?.hideOnline === true, longText: d?.longText !== false });
         },
         (e) => console.warn(e), // 読めないときは既定の設定（募集中・既読を表示）のまま
       );
@@ -5356,6 +5511,7 @@ const firebaseConfig = {
       const readChanged = next.readReceipts !== adminSettings.readReceipts;
       const hideChanged = next.hideOnline !== adminSettings.hideOnline;
       adminSettings = next;
+      $("#msg-input").maxLength = maxText();
       renderSignupState();
       renderAdminSettings();
       if (readChanged && isAdmin() && state.activeRoomId && state.messagesLoaded) renderMessages();
@@ -5439,6 +5595,7 @@ const firebaseConfig = {
           ${adminSwitch("signupOpen", "停止すると、ログイン画面の「新規登録」から新しいアカウントを作れなくなります。登録済みのユーザーは、これまでどおりログインできます。")}
           ${adminSwitch("readReceipts", "オンにすると、あなたが送ったメッセージの横に、相手が読むと「既読」（グループは読んだ人数。タップでだれが読んだか）が表示されます。この表示は管理者にだけ見えます。オフの間も既読は記録されるので、オンに戻すとすぐに表示されます。")}
           ${adminSwitch("hideOnline", "オンにしている間は、あなたのオンライン状態（緑の点・「オンライン」）と DM の「入力中...」が、全員から見えなくなります。最終アクティブの時刻も更新されません。")}
+          ${adminSwitch("longText", `全ユーザーの、1回に送信できる文字数を切り替えます。オンで最大${MAX_TEXT_LONG}文字、オフで最大${MAX_TEXT_SHORT}文字です（メッセージの編集も同じです）。送信済みのメッセージはそのまま残ります。`)}
           <button type="button" data-action="admin-restrict" class="btn-secondary w-full !mt-5">${icon("alert", "w-5 h-5")}アカウントの制限</button>
           <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
           <button type="button" data-close class="btn-primary w-full">閉じる</button>
@@ -5451,6 +5608,7 @@ const firebaseConfig = {
       signupOpen: { label: "新規ユーザーの募集", on: "受付中", off: "停止中", toastOn: "新規ユーザーの募集を再開しました", toastOff: "新規ユーザーの募集を停止しました" },
       readReceipts: { label: "既読の表示", on: "表示する", off: "表示しない", toastOn: "既読を表示するようにしました", toastOff: "既読を表示しないようにしました" },
       hideOnline: { label: "オンラインを隠す", on: "隠している", off: "隠していない", toastOn: "オンライン状態と入力中を隠しました", toastOff: "オンライン状態と入力中を表示するようにしました" },
+      longText: { label: "長文の送信", on: `オン（最大${MAX_TEXT_LONG}文字）`, off: `オフ（最大${MAX_TEXT_SHORT}文字）`, toastOn: `1回に送信できる文字数を最大${MAX_TEXT_LONG}文字にしました`, toastOff: `1回に送信できる文字数を最大${MAX_TEXT_SHORT}文字にしました` },
     };
     const adminSwitch = (key, note) => `
       <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
@@ -5907,7 +6065,7 @@ const firebaseConfig = {
       "select-msg": (el) => {
         if (!getSelection().isCollapsed) return; // 文字を選択（コピー）しようとしているときは開かない
         state.selectedMsgId = state.selectedMsgId === el.dataset.id ? null : el.dataset.id;
-        renderMessages();
+        renderMessages(false, true); // スクロールさせない（リンクのダブルクリックの間に表示がずれないように）
       },
       "unsend": (el) => unsendMessage(el.dataset.id),
       "reply": (el) => startReply(el.dataset.id),
@@ -5948,8 +6106,8 @@ const firebaseConfig = {
       },
       // スタンプ
       "toggle-sticker-box": () => toggleStickerBox(),
-      "send-sticker": (el) => sendSticker(el.dataset.id),
-      "pick-sticker-suggest": (el) => pickStickerSuggest(el.dataset.id),
+      "send-sticker": (el, e) => tapSticker(el, e),
+      "pick-sticker-suggest": (el, e) => tapStickerSuggest(el, e),
       "save-sticker": (el) => saveReceivedSticker(el.dataset.id),
       "new-sticker": () => openStickerEditor(),
       "edit-sticker": (el) => openStickerEditor(el.dataset.id),
@@ -5983,6 +6141,7 @@ const firebaseConfig = {
         renderEditorTools();
       },
       "se-display-size": (el) => { if (editor) { editor.size = stickerSizeOf(el.dataset.size); renderEditorTools(); } },
+      "as-display-size": (el) => { if (animSticker) { animSticker.size = stickerSizeOf(el.dataset.size); renderAnimStickerSize(); } },
       "se-save-draft": () => saveDraft(),
       "se-open-draft": () => openDraft(),
       "se-discard-draft": () => discardDraft(),
@@ -6002,6 +6161,7 @@ const firebaseConfig = {
       "form-invite": (fd) => inviteMembers(fd.getAll("members")),
       "form-delete-account": (fd) => deleteAccount(fd.get("password")),
       "form-sticker": (fd) => saveSticker(fd.get("name")),
+      "form-anim-sticker": (fd) => saveAnimSticker(fd.get("name")),
       "form-icon": () => saveDrawnIcon(),
       "form-groupIcon": () => saveDrawnGroupIcon(),
       "form-image": () => closeImageDrawer(true),
@@ -6024,15 +6184,15 @@ const firebaseConfig = {
     function bindEvents() {
       let lastLinkClick = null; // { href, x, y, at } メッセージ内のリンクの 1 回目のクリック
       document.addEventListener("click", (e) => {
-        // メッセージ内のリンクはダブルクリック（スマホはダブルタップ）で開く。1 回目で出たメニューの分だけ表示がずれて、2 回目がリンクに
-        // 当たらないことがあるので、2 回目は画面上の位置で判定する（その位置に来たメニューのボタンなどは押さない）
+        // メッセージ内のリンクはダブルクリック（スマホはダブルタップ）で開く。1 回目の描き直しで要素が変わるので、2 回目は画面上の位置で
+        // 判定する（その位置に来たメニューのボタンなどは押さない）
         const firstLinkClick = lastLinkClick;
         lastLinkClick = null;
         if (firstLinkClick && e.detail > 0 && e.timeStamp - firstLinkClick.at < 500 && Math.hypot(e.clientX - firstLinkClick.x, e.clientY - firstLinkClick.y) < 24) {
           e.preventDefault();
           window.open(firstLinkClick.href, "_blank", "noopener,noreferrer");
           getSelection().removeAllRanges(); // ダブルクリックで選択された文字
-          if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); } // 1 回目で出したメニューは閉じる
+          if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(false, true); } // 1 回目で出したメニューは閉じる
           return;
         }
         const closer = e.target.closest("[data-close]");
@@ -6040,7 +6200,7 @@ const firebaseConfig = {
         const loginTab = e.target.closest("[data-login-tab]");
         if (loginTab) { setLoginTab(loginTab.dataset.loginTab); return; }
         // 送信取消メニュー・リアクションの絵文字は、そのメッセージ以外をクリックしたら閉じる
-        if (state.selectedMsgId && e.target.closest("[data-msg-id]")?.dataset.msgId !== state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
+        if (state.selectedMsgId && e.target.closest("[data-msg-id]")?.dataset.msgId !== state.selectedMsgId) { state.selectedMsgId = null; renderMessages(false, true); }
         // スタンプ一覧は、一覧とスタンプボタン以外をクリックしたら閉じる
         if (stickerBoxOpen && !e.target.closest("#sticker-box, #sticker-btn")) closeStickerBox();
         // ピン留めの一覧は、ピン留めの表示以外をクリックしたら閉じる
