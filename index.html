@@ -574,8 +574,11 @@ const firebaseConfig = {
     import {
       initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
       doc, collection, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, orderBy, limit, limitToLast, startAfter,
-      getCountFromServer, onSnapshot, serverTimestamp, writeBatch, runTransaction, arrayUnion, arrayRemove, deleteField,
+      getCountFromServer, onSnapshot, serverTimestamp, writeBatch, runTransaction, arrayUnion, arrayRemove, deleteField, increment,
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import {
+      getStorage, ref as storageRef, uploadBytes, getDownloadURL,
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 
     // ============================================================
     // 定数・状態
@@ -649,8 +652,15 @@ const firebaseConfig = {
     // ピン留め（rooms/{id}.pins に新しい順で保存。トークのメンバー全員に表示。上限は firestore.rules と合わせる）
     const PIN_LIMIT = 10;
     const PINNABLE_TYPES = ["text", "sticker", "image"];
+    // オープンチャット（rooms/{id}.type == "open"）：ユーザー名とユーザーIDを隠して参加する。
+    // 参加者はトークごとの匿名の alias（「o」+ 英数字23文字。ユーザーIDは20文字までなので重ならない）とニックネームで表す（firestore.rules と合わせる）
+    const OPEN_ALIAS_RE = /^o[A-Za-z0-9]{23}$/;
+    const OPEN_MAX_MEMBERS = 1000;
+    const OPEN_MAX_NAME = 50;
+    const OPEN_MAX_DESC = 200;
+    const OPEN_MAX_NICK = 30;
 
-    let auth, db;
+    let auth, db, storage;
     const state = {
       uid: null,
       me: null,               // { id, name, icon }
@@ -689,7 +699,7 @@ const firebaseConfig = {
       reads: new Map(),       // 開いているトークの既読（管理者のみ）：userId -> 最後にトークを見た時刻（ms）
       readsLoaded: false,
       partnerTyping: null,    // 開いている DM の相手の入力中 { on, at（書いた時刻 ms）, seen（受け取った時刻 ms） }
-      unsub: { users: null, rooms: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null },
+      unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null },
     };
     let readMap = {};
     let readSentMap = {};     // 既読を記録した、管理者の最新メッセージの時刻（roomId -> ms）
@@ -1163,6 +1173,7 @@ const firebaseConfig = {
       typingRoomId = null;
       clearTimeout(typingExpireTimer);
       Object.values(state.unsub).forEach((u) => u?.());
+      resetOpenChats();
       shownNotifications.forEach((n) => n.close());
       shownNotifications.clear();
       Object.assign(state, {
@@ -1172,7 +1183,7 @@ const firebaseConfig = {
         stickers: [], stickersLoaded: false, reads: new Map(), readsLoaded: false,
         stickerView: "mine", publicStickers: [], publicStickersLoaded: false, publicStickersError: false,
         publicLimit: PUBLIC_STICKER_PAGE, publicHasMore: false, publicSearch: "", partnerTyping: null,
-        unsub: { users: null, rooms: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null },
+        unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null },
       });
       adminKey = null;
       signOut(auth).catch((e) => console.warn(e));
@@ -1366,9 +1377,38 @@ const firebaseConfig = {
     }
 
     // スマホの Chrome などはページから直接通知を出せず例外になる（Service Worker が必要）
-    function showNotification(title, options) {
+    // 直接出せなければ Service Worker（sw.js）経由で出す。戻り値は { close, onclick } を持つハンドル（出せなければ null）
+    let swReg = null;
+    async function getSwReg() {
+      if (swReg) return swReg;
+      if (!("serviceWorker" in navigator)) return null;
+      try {
+        await navigator.serviceWorker.register("sw.js");
+        swReg = await navigator.serviceWorker.ready;
+        navigator.serviceWorker.addEventListener("message", (ev) => {
+          if (ev.data?.type !== "chatter:open-room") return;
+          window.swNotifyClick?.(ev.data.roomId);
+        });
+      } catch (e) {
+        console.warn(e);
+      }
+      return swReg;
+    }
+
+    async function showNotification(title, options, roomId) {
       try {
         return new Notification(title, options);
+      } catch (e) {
+        console.warn(e);
+      }
+      const reg = await getSwReg();
+      if (!reg) return null;
+      try {
+        await reg.showNotification(title, { ...options, data: { roomId } });
+        return {
+          close: async () => (await reg.getNotifications({ tag: options.tag })).forEach((n) => n.close()),
+          set onclick(fn) { window.swNotifyClick = (id) => { if (id === roomId) fn(); }; },
+        };
       } catch (e) {
         console.warn(e);
         return null;
@@ -1390,8 +1430,8 @@ const firebaseConfig = {
         throw new Error("通知が許可されませんでした。");
       }
       // 試しに1件出して、このブラウザで通知を表示できるか確かめる
-      if (!showNotification("Chatter", { body: "通知をオンにしました。このページを開いている間、新着メッセージをお知らせします。", tag: "chatter:test" })) {
-        throw new Error("このブラウザでは通知を表示できません。パソコンのブラウザでお試しください。");
+      if (!(await showNotification("Chatter", { body: "通知をオンにしました。このページを開いている間、新着メッセージをお知らせします。", tag: "chatter:test" }))) {
+        throw new Error("このブラウザでは通知を表示できません。iPhone の場合は、共有メニューから「ホーム画面に追加」したアプリで開いてお試しください。");
       }
       store.set(NOTIFY_KEY, "on");
       renderNotifyToggle();
@@ -1404,7 +1444,7 @@ const firebaseConfig = {
 
     function toggleRoomNotify() {
       const room = currentRoom();
-      if (!room || room.type !== "group" || !isMember(room)) return;
+      if (!room || room.type === "dm" || !isMember(room)) return;
       const muted = mutedRooms();
       const on = muted.has(room.id); // 切り替え後にオンになるか
       if (on) muted.delete(room.id); else muted.add(room.id);
@@ -1416,14 +1456,15 @@ const firebaseConfig = {
       }
       renderSidebar();
       renderChatHeader();
-      toast(on ? "このグループの通知をオンにしました" : "このグループの通知をオフにしました");
+      const what = isOpen(room) ? "このオープンチャット" : "このグループ";
+      toast(on ? `${what}の通知をオンにしました` : `${what}の通知をオフにしました`);
     }
 
     // 自分がメンションされているか（@表示名 または @All）
     const mentionsMe = (m) => !!m && m.senderId !== state.me.id && (!!m.mentionAll || !!m.mentions?.includes(state.me.id));
 
     const NOTIFY_TYPES = ["text", "sticker", "image"]; // スタンプ・画像の本文は「[スタンプ]」「[画像]」
-    const notifiable = (m) => !!m && NOTIFY_TYPES.includes(m.type) && m.senderId !== state.me.id;
+    const notifiable = (m, room) => !!m && NOTIFY_TYPES.includes(m.type) && m.senderId !== selfId(room);
 
     // ルーム一覧の更新で、最後のメッセージが新しくなったトークを通知する
     function notifyNewMessages(prevLast) {
@@ -1434,10 +1475,10 @@ const firebaseConfig = {
         const at = ms(lm?.createdAt);
         const prev = prevLast.get(room.id) || 0;
         // 自分の送信は通知しない（最後がシステムメッセージでも、その前に新着があるかもしれないので確かめる）
-        if (!lm || lm.senderId === state.me.id || at <= prev) continue;
+        if (!lm || lm.senderId === selfId(room) || at <= prev) continue;
         // 開いて見ているトーク（ブラウザが画面に出ていても、別のアプリを使っているときは通知する）
         if (room.id === state.activeRoomId && document.visibilityState === "visible" && document.hasFocus()) continue;
-        if (room.type === "group" && muted.has(room.id)) continue; // 通知をオフにしたグループ
+        if (room.type !== "dm" && muted.has(room.id)) continue; // 通知をオフにしたグループ・オープンチャット
         notifyMessage(room, lm, at, prev).catch((e) => console.warn(e));
       }
     }
@@ -1465,12 +1506,14 @@ const firebaseConfig = {
         const recent = store.json("chatter:notified", []);
         if (recent.includes(key)) return;
         store.set("chatter:notified", JSON.stringify([key, ...recent].slice(0, 50)));
-        const msgs = (await newMessagesSince(room, lm, at, prev)).filter(notifiable);
+        const msgs = (await newMessagesSince(room, lm, at, prev)).filter((m) => notifiable(m, room));
         if (state.me !== me || !notifyEnabled()) return;
         const group = room.type === "group";
+        const multi = room.type !== "dm"; // グループ・オープンチャットは送信者の名前を付ける
         const mentions = group ? msgs.filter(mentionsMe) : [];
         const others = msgs.filter((m) => !mentions.includes(m));
-        const open = (n, tagKey) => {
+        const open = async (np, tagKey) => {
+          const n = await np;
           if (!n) return;
           shownNotifications.set(tagKey, n);
           n.onclick = () => {
@@ -1486,17 +1529,17 @@ const firebaseConfig = {
           const sender = userName(m.senderId, m.senderName);
           const title = m.mentions?.includes(state.me.id) ? `${sender} さんからのメンション（${roomTitle(room)}）`
             : `${sender} さんから全員へのメンション（${roomTitle(room)}）`;
-          open(showNotification(title, { body: m.text.slice(0, 100), tag: `chatter:${room.id}:mention`, renotify: true }), `${room.id}:mention`);
+          open(showNotification(title, { body: m.text.slice(0, 100), tag: `chatter:${room.id}:mention`, renotify: true }, room.id), `${room.id}:mention`);
         }
         const o = others.at(-1);
         if (o) {
           const sender = userName(o.senderId, o.senderName);
           const text = o.text.slice(0, 100);
           open(showNotification(others.length > 1 ? `${roomTitle(room)}（新着 ${others.length} 件）` : roomTitle(room), {
-            body: group ? `${sender}: ${text}` : text,
+            body: multi ? `${sender}: ${text}` : text,
             tag: `chatter:${room.id}`, // 同じトークの通知は最新の1件に置き換える
             renotify: true,
-          }), room.id);
+          }, room.id), room.id);
         }
       };
       if (navigator.locks) await navigator.locks.request("chatter:notify", show);
@@ -1560,17 +1603,30 @@ const firebaseConfig = {
         query(collection(db, "rooms"), where("members", "array-contains", state.me.id)),
         { includeMetadataChanges: true }, // キャッシュからサーバーへの切り替わりを知るため
         (snap) => {
-          const before = new Set(state.rooms.map((r) => r.id));
-          const prevLast = new Map(state.rooms.map((r) => [r.id, ms(r.lastMessage?.createdAt)]));
           const wasSynced = state.roomsSynced;
           if (!snap.metadata.fromCache) state.roomsSynced = true;
-          state.rooms = snap.docs.map(withId).sort((a, b) => ms(b.updatedAt) - ms(a.updatedAt));
+          baseRooms = snap.docs.map(withId);
           state.roomsLoaded = true;
-          checkActiveRoomGone(before);
-          if (wasSynced) notifyNewMessages(prevLast);
-          renderSidebar();
-          renderChatHeader();
-          if (state.selectedMsgId && state.messagesLoaded) renderMessages(); // 「ピン留め」「ピン留めを解除」を切り替える
+          roomsChanged(wasSynced);
+        },
+        onListenError,
+      );
+      // 参加中のオープンチャット（本人だけが読める）。それぞれのルームは1件ずつ購読する
+      const me = state.me;
+      state.unsub.openChats = onSnapshot(
+        collection(db, "users", me.id, "openChats"),
+        (snap) => {
+          if (state.me !== me) return;
+          openChats.members = new Map(snap.docs.map((d) => [d.id, d.data()]));
+          for (const id of openChats.members.keys()) subscribeOpenRoom(id);
+          for (const [id, unsub] of openChats.unsubs) {
+            if (openChats.members.has(id)) continue;
+            unsub();
+            openChats.unsubs.delete(id);
+            openChats.rooms.delete(id);
+            openChats.synced.delete(id);
+          }
+          roomsChanged(false);
         },
         onListenError,
       );
@@ -1587,6 +1643,57 @@ const firebaseConfig = {
         },
         onListenError,
       );
+    }
+
+    // トーク一覧 = メンバーになっている DM・グループ（baseRooms）+ 参加中のオープンチャット（openChats）
+    let baseRooms = [];
+    const openChats = { members: new Map(), rooms: new Map(), unsubs: new Map(), synced: new Set() };
+    function resetOpenChats() {
+      openChats.unsubs.forEach((u) => u());
+      openChats.members = new Map();
+      openChats.rooms = new Map();
+      openChats.unsubs = new Map();
+      openChats.synced = new Set();
+      baseRooms = [];
+    }
+    // skip：新着を通知しないオープンチャット（端末のキャッシュから読んだだけのもの）
+    function roomsChanged(notify, skip = []) {
+      const before = new Set(state.rooms.map((r) => r.id));
+      const prevLast = new Map(state.rooms.map((r) => [r.id, ms(r.lastMessage?.createdAt)]));
+      const open = [...openChats.members]
+        .filter(([id]) => openChats.rooms.has(id))
+        .map(([id, mem]) => ({ ...openChats.rooms.get(id), myAlias: mem.alias, myNick: mem.nick }));
+      state.rooms = [...baseRooms, ...open].sort((a, b) => ms(b.updatedAt) - ms(a.updatedAt));
+      // 新しく一覧に加わったオープンチャット（ログイン直後の読み込み・参加した直後）の過去のメッセージは通知しない
+      for (const r of open) if (!before.has(r.id) || skip.includes(r.id)) prevLast.set(r.id, Infinity);
+      checkActiveRoomGone(before);
+      if (notify) notifyNewMessages(prevLast);
+      renderSidebar();
+      renderChatHeader();
+      if (state.selectedMsgId && state.messagesLoaded) renderMessages(); // 「ピン留め」「ピン留めを解除」を切り替える
+    }
+    function subscribeOpenRoom(id) {
+      if (openChats.unsubs.has(id)) return;
+      const me = state.me;
+      openChats.unsubs.set(id, onSnapshot(
+        doc(db, "rooms", id),
+        (snap) => {
+          if (state.me !== me || !openChats.unsubs.has(id)) return;
+          if (!snap.exists() || snap.data().type !== "open") {
+            if (snap.metadata.fromCache) return;
+            // 作成者が削除した：自分の参加の記録も消す
+            openChats.rooms.delete(id);
+            if (openChats.members.has(id)) deleteDoc(doc(db, "users", me.id, "openChats", id)).catch((e) => console.warn(e));
+            roomsChanged(false);
+            return;
+          }
+          const skip = !openChats.synced.has(id);
+          if (!snap.metadata.fromCache) openChats.synced.add(id);
+          openChats.rooms.set(id, withId(snap));
+          roomsChanged(state.roomsSynced, skip ? [id] : []);
+        },
+        (e) => console.warn(e),
+      ));
     }
 
     // みんなのスタンプ（「みんなのスタンプ」を初めて開いたときから購読する。新しい順に publicLimit 件まで）
@@ -1632,7 +1739,15 @@ const firebaseConfig = {
     const dmRoomId = (a, b) => "dm_" + [a, b].sort().join("~");
     const partnerOf = (room) => room.members?.find((m) => m !== state.me.id) || state.me.id;
     const userName = (id, fallback) => state.users.get(id)?.name || fallback || id;
-    const isMember = (room) => !!room?.members?.includes(state.me.id);
+    // オープンチャットでは、自分を alias とニックネームで表す（ユーザーID・表示名はメッセージに書かない）
+    const isOpen = (room) => room?.type === "open";
+    const selfId = (room) => (isOpen(room) ? room.myAlias : state.me?.id);
+    const selfName = (room) => (isOpen(room) ? room.myNick : state.me?.name);
+    const isMine = (m, room = currentRoom()) => !!m && !!selfId(room) && m.senderId === selfId(room);
+    const isMember = (room) => (isOpen(room) ? !!room.myAlias : !!room?.members?.includes(state.me.id));
+    const openChatUrl = (roomId) => `${location.origin}${location.pathname}#open=${roomId}`;
+    // 同じニックネームの人を見分けるための、alias の先頭4文字
+    const aliasTag = (alias) => (OPEN_ALIAS_RE.test(alias || "") ? `#${alias.slice(1, 5)}` : "");
     const isAdmin = () => state.me?.id === ADMIN_ID;
     // メッセージを送れる（メンバーで、DM の相手が退会していない）
     const canSend = (room) => isMember(room) && !(room.type === "dm" && !!state.users.get(partnerOf(room))?.deleted);
@@ -1680,7 +1795,7 @@ const firebaseConfig = {
     }
     function isUnread(room) {
       const lm = room.lastMessage;
-      if (!lm || lm.senderId === state.me.id) return false;
+      if (!lm || lm.senderId === selfId(room)) return false;
       if (room.id === state.activeRoomId && document.visibilityState === "visible") return false;
       return ms(lm.createdAt || room.updatedAt) > (readMap[room.id] || 0);
     }
@@ -1753,10 +1868,10 @@ const firebaseConfig = {
         const lm = r.lastMessage;
         const mentioned = unread && r.type === "group" && mentionsMe(lm);
         let preview;
-        if (!lm) preview = r.type === "dm" ? "トークを始めましょう 👋" : "グループが作成されました";
+        if (!lm) preview = r.type === "dm" ? "トークを始めましょう 👋" : isOpen(r) ? "オープンチャットが作成されました" : "グループが作成されました";
         else if (lm.type === "system") preview = lm.text;
         else {
-          const who = lm.senderId === state.me.id ? "あなた" : r.type === "group" ? userName(lm.senderId, lm.senderName) : "";
+          const who = lm.senderId === selfId(r) ? "あなた" : r.type !== "dm" ? userName(lm.senderId, lm.senderName) : "";
           preview = (who ? `${who}: ` : "") + lm.text;
         }
         return `
@@ -1765,8 +1880,9 @@ const firebaseConfig = {
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5">
                 <span class="font-semibold truncate text-slate-800">${esc(roomTitle(r))}</span>
-                ${r.type === "group" ? `<span class="text-xs text-slate-400 shrink-0">(${r.members.length})</span>` : ""}
-                ${r.type === "group" && muted.has(r.id) ? `<span class="text-slate-300 shrink-0" title="通知オフ">${icon("bell-off", "w-3.5 h-3.5")}</span>` : ""}
+                ${isOpen(r) ? `<span class="shrink-0 px-1.5 py-px rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-semibold">オープン</span>` : ""}
+                ${r.type === "group" ? `<span class="text-xs text-slate-400 shrink-0">(${r.members.length})</span>` : isOpen(r) ? `<span class="text-xs text-slate-400 shrink-0">(${Number(r.memberCount) || 0})</span>` : ""}
+                ${r.type !== "dm" && muted.has(r.id) ? `<span class="text-slate-300 shrink-0" title="通知オフ">${icon("bell-off", "w-3.5 h-3.5")}</span>` : ""}
                 <span class="ml-auto pl-2 text-[11px] shrink-0 ${unread ? "text-indigo-600 font-semibold" : "text-slate-400"}">${shortTime(lm?.createdAt || r.updatedAt)}</span>
               </div>
               <div class="flex items-center gap-2 mt-0.5">
@@ -1810,21 +1926,26 @@ const firebaseConfig = {
         <div class="grid grid-cols-2 gap-2 px-2 pt-1 pb-3">
           <button type="button" data-action="create-group" class="btn-chip text-white bg-gradient-to-r from-indigo-600 to-violet-600 shadow-md shadow-indigo-500/20 hover:from-indigo-500 hover:to-violet-500">${icon("plus", "w-4 h-4")}グループ作成</button>
           <button type="button" data-action="open-join" class="btn-chip bg-slate-100 text-slate-700 hover:bg-slate-200">${icon("link", "w-4 h-4")}招待リンクで参加</button>
+          <button type="button" data-action="create-open" class="btn-chip bg-emerald-50 text-emerald-700 hover:bg-emerald-100" title="ユーザー名とユーザーIDを隠して参加できるトーク">${icon("lock", "w-4 h-4")}オープンチャット作成</button>
+          <button type="button" data-action="browse-open" class="btn-chip bg-emerald-50 text-emerald-700 hover:bg-emerald-100">${icon("globe", "w-4 h-4")}オープンチャットを探す</button>
         </div>`;
       // グループは招待制のため、参加中のグループだけを表示する
       if (!state.roomsLoaded) return toolbar + skeleton();
-      const groups = state.rooms.filter((g) => g.type === "group" && (!q || g.name?.toLowerCase().includes(q)));
+      const groups = state.rooms.filter((g) => (g.type === "group" || isOpen(g)) && (!q || g.name?.toLowerCase().includes(q)));
       if (!groups.length) {
         return toolbar + (q
           ? emptyList("search", "該当するグループはありません")
-          : emptyList("group", "参加中のグループはありません", "グループを作成するか、メンバーから<br>招待リンクを送ってもらいましょう。"));
+          : emptyList("group", "参加中のグループはありません", "グループを作成するか、メンバーから<br>招待リンクを送ってもらいましょう。<br>オープンチャットはだれでも参加できます。"));
       }
       return toolbar + groups.map((g) => `
           <button type="button" data-action="open-room" data-id="${esc(g.id)}" class="list-row ${g.id === state.activeRoomId ? "is-active" : ""}">
             ${groupAvatar(g, "w-12 h-12")}
             <div class="min-w-0 flex-1">
-              <div class="font-semibold truncate text-slate-800">${esc(g.name)}</div>
-              <div class="text-xs text-slate-400 truncate">${g.members.length}人のメンバー ・ 最終更新 ${esc(relTime(g.updatedAt))}</div>
+              <div class="flex items-center gap-1.5">
+                <span class="font-semibold truncate text-slate-800">${esc(g.name)}</span>
+                ${isOpen(g) ? `<span class="shrink-0 px-1.5 py-px rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-semibold">オープン</span>` : ""}
+              </div>
+              <div class="text-xs text-slate-400 truncate">${isOpen(g) ? `${Number(g.memberCount) || 0}人 ・ ニックネーム「${esc(g.myNick)}」` : `${g.members.length}人のメンバー`} ・ 最終更新 ${esc(relTime(g.updatedAt))}</div>
             </div>
           </button>`).join("");
     }
@@ -1949,6 +2070,8 @@ const firebaseConfig = {
           : isOnline(u)
             ? `<span class="text-emerald-600 font-medium">● オンライン</span>`
             : `@${esc(pid)}${u ? ` ・ 最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}`;
+      } else if (isOpen(room)) {
+        subtitle = `オープンチャット ・ ${Number(room.memberCount) || 0}人${isMember(room) ? ` ・ ニックネーム「${esc(room.myNick)}」` : ""}${isMember(room) && mutedRooms().has(room.id) ? " ・ 通知オフ" : ""}`;
       } else {
         subtitle = `${room.members?.length ?? 0}人のメンバー${isMember(room) && mutedRooms().has(room.id) ? " ・ 通知オフ" : ""}`;
       }
@@ -1980,7 +2103,7 @@ const firebaseConfig = {
       bar.hidden = !pins.length;
       if (!pins.length) { bar.innerHTML = ""; return; }
       const canEdit = isMember(room);
-      const who = (p) => (p.senderId === state.me.id ? "あなた" : userName(p.senderId, p.senderName));
+      const who = (p) => (p.senderId === selfId(room) ? "あなた" : userName(p.senderId, p.senderName));
       const label = (p) => esc(p.text.replace(/\s+/g, " "));
       const top = pins[0];
       bar.innerHTML = `
@@ -2039,7 +2162,7 @@ const firebaseConfig = {
         }
         if (rest.length !== pins.length) return "same";
         if (pins.length >= PIN_LIMIT) return "full";
-        const pin = { id: m.id, senderId: m.senderId, senderName: m.senderName || "", type: m.type, text: m.text.slice(0, 100), by: state.me.id, at: Date.now() };
+        const pin = { id: m.id, senderId: m.senderId, senderName: m.senderName || "", type: m.type, text: m.text.slice(0, 100), by: selfId(room), at: Date.now() };
         tx.update(roomRef, { pins: [pin, ...pins] });
         return "pinned";
       });
@@ -2149,7 +2272,7 @@ const firebaseConfig = {
       const fmt = (d) => `${d.getFullYear() === new Date().getFullYear() ? "" : d.getFullYear() + "/"}${d.getMonth() + 1}/${d.getDate()} ${hhmm(d)}`;
       const rows = hits.slice(0, SHOW).map((m) => {
         const d = toDate(m.createdAt) || new Date();
-        const name = m.senderId === state.me.id ? "あなた" : userName(m.senderId, m.senderName);
+        const name = isMine(m) ? "あなた" : userName(m.senderId, m.senderName);
         return `
           <button type="button" data-action="msg-search-result" data-id="${esc(m.id)}" class="w-full flex items-start gap-3 px-2 py-2 rounded-xl text-left transition hover:bg-slate-50">
             ${avatar(m.senderId, userName(m.senderId, m.senderName), "w-8 h-8 text-xs")}
@@ -2192,7 +2315,8 @@ const firebaseConfig = {
       const box = $("#messages");
       const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 150;
       const room = currentRoom();
-      const isGroup = room?.type === "group";
+      const isGroup = !!room && room.type !== "dm"; // グループ・オープンチャット：送信者の名前を出す
+      const me = selfId(room);
       const canReact = isMember(room);
       const canReply = !!room && canSend(room);
       const prevIds = state.renderedIds;
@@ -2202,7 +2326,7 @@ const firebaseConfig = {
       for (const m of state.messages) {
         nextIds.add(m.id);
         const isNew = !first && !quiet && !prevIds.has(m.id);
-        if (isNew) { hasNew = true; if (m.senderId === state.me.id) newFromMe = true; }
+        if (isNew) { hasNew = true; if (m.senderId === me) newFromMe = true; }
         const d = toDate(m.createdAt) || new Date();
 
         if (d.toDateString() !== lastDay) {
@@ -2216,7 +2340,7 @@ const firebaseConfig = {
           continue;
         }
 
-        const mine = m.senderId === state.me.id;
+        const mine = !!me && m.senderId === me;
         const cont = prev && prev.senderId === m.senderId && d - prev.d < 5 * 60e3; // 連続投稿はまとめる
         const sticker = m.type === "sticker";
         const image = m.type === "image";
@@ -2254,7 +2378,7 @@ const firebaseConfig = {
             <div class="flex items-start gap-2 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""} ${selected ? "relative z-10" : ""}" data-msg-id="${esc(m.id)}">
               <div class="w-8 shrink-0">${cont ? "" : avatar(m.senderId, name, "w-8 h-8 text-xs")}</div>
               <div class="min-w-0 flex-1">
-                ${!cont && isGroup ? `<div class="text-xs text-slate-500 mb-1 ml-1 truncate">${esc(name)}</div>` : ""}
+                ${!cont && isGroup ? `<div class="text-xs text-slate-500 mb-1 ml-1 truncate">${esc(name)}${isOpen(room) && aliasTag(m.senderId) ? ` <span class="text-slate-300">${aliasTag(m.senderId)}</span>` : ""}</div>` : ""}
                 <div class="relative flex items-end gap-1.5">
                   ${selected ? reactionPicker(m, canReply, room) : ""}
                   <div class="${bubbleCls} ${canReact ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
@@ -2308,7 +2432,7 @@ const firebaseConfig = {
       const emojis = [...counts]
         .sort((a, b) => b[1] - a[1] || REACTION_CODES.indexOf(a[0]) - REACTION_CODES.indexOf(b[0]))
         .slice(0, 3).map(([code]) => REACTION_EMOJI[code]).join("");
-      const mine = !!REACTION_EMOJI[m.reactions[state.me.id]];
+      const mine = !!REACTION_EMOJI[m.reactions[selfId(currentRoom())]];
       const cls = `inline-flex items-center gap-1 h-6 px-2 rounded-full text-[13px] leading-none shadow-sm ring-1 ${mine ? "bg-indigo-50 ring-indigo-200" : "bg-white ring-slate-200"}`;
       const inner = `<span>${emojis}</span>${codes.length > 1 ? `<span class="text-[11px] font-semibold text-slate-500 tabular-nums">${codes.length}</span>` : ""}`;
       return isGroup
@@ -2344,7 +2468,7 @@ const firebaseConfig = {
     }
 
     function reactionPicker(m, canReply, room) {
-      const current = m.reactions?.[state.me.id];
+      const current = m.reactions?.[selfId(room)];
       const pinned = isPinned(room, m.id);
       const canPin = isMember(room) && PINNABLE_TYPES.includes(m.type);
       return `
@@ -2398,7 +2522,7 @@ const firebaseConfig = {
     function replyQuote(m, mine) {
       const r = m.replyTo;
       if (!r) return "";
-      const name = r.senderId === state.me.id ? "あなた" : userName(r.senderId, r.senderName);
+      const name = isMine(r) ? "あなた" : userName(r.senderId, r.senderName);
       return `<span role="button" tabindex="0" data-action="jump-to" data-id="${esc(r.id)}" title="元のメッセージへ移動" class="block mb-1.5 -mx-1 px-2.5 py-1 rounded-lg border-l-[3px] text-[13px] leading-snug whitespace-nowrap cursor-pointer transition ${mine ? "bg-white/15 border-white/70 hover:bg-white/25" : "bg-slate-100 border-indigo-400 hover:bg-slate-200/70"}"><span class="block font-semibold truncate ${mine ? "text-white" : "text-indigo-600"}">${esc(name)}</span><span class="block truncate ${mine ? "text-white/80" : "text-slate-500"}">${esc(r.text.replace(/\s+/g, " "))}</span></span>`;
     }
 
@@ -2616,7 +2740,7 @@ const firebaseConfig = {
       state.unsub.reads = null;
       state.reads = new Map();
       state.readsLoaded = false;
-      if (!isAdmin()) return;
+      if (!isAdmin() || isOpen(currentRoom())) return; // オープンチャットは既読を記録しない
       state.unsub.reads = onSnapshot(
         collection(db, "rooms", roomId, "reads"),
         (snap) => {
@@ -2828,6 +2952,277 @@ const firebaseConfig = {
     }
 
     // ============================================================
+    // オープンチャット（ユーザー名・ユーザーIDを隠して参加する）
+    // ============================================================
+    // rooms/{id} = { type: "open", name, description, ownerAlias, memberCount, lastMessage, updatedAt, ... }（members は持たない）
+    // users/{自分のID}/openChats/{id} = { alias, nick, joinedAt }（本人だけが読める）。メッセージの senderId は alias、senderName はニックネーム
+    const randomToken = (n) => {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      return Array.from(crypto.getRandomValues(new Uint32Array(n)), (x) => chars[x % chars.length]).join("");
+    };
+    const newAlias = () => "o" + randomToken(23);
+    const openSystemMessage = (text, alias, nick) => ({ type: "system", text, senderId: alias, senderName: nick, createdAt: serverTimestamp() });
+    const openLastMessage = (text, alias, nick) => ({ type: "system", text: text.slice(0, 100), senderId: alias, senderName: nick, createdAt: serverTimestamp() });
+
+    function checkNick(raw) {
+      const nick = String(raw ?? "").trim();
+      if (!nick) throw new Error("ニックネームを入力してください。");
+      if (nick.length > OPEN_MAX_NICK) throw new Error(`ニックネームは${OPEN_MAX_NICK}文字以内で入力してください。`);
+      return nick;
+    }
+
+    async function createOpenChat(nameRaw, descRaw, nickRaw) {
+      const name = String(nameRaw ?? "").trim();
+      const description = String(descRaw ?? "").trim();
+      if (!name) throw new Error("オープンチャットの名前を入力してください。");
+      if (name.length > OPEN_MAX_NAME) throw new Error(`名前は${OPEN_MAX_NAME}文字以内で入力してください。`);
+      if (description.length > OPEN_MAX_DESC) throw new Error(`説明は${OPEN_MAX_DESC}文字以内で入力してください。`);
+      const nick = checkNick(nickRaw);
+      const roomRef = doc(collection(db, "rooms"));
+      const alias = newAlias();
+      const text = `${nick} さんがオープンチャット「${name}」を作成しました`;
+      const room = {
+        type: "open", name, ...(description ? { description } : {}), ownerAlias: alias, memberCount: 1,
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(), lastMessage: openLastMessage(text, alias, nick),
+      };
+      const batch = writeBatch(db);
+      batch.set(roomRef, room);
+      batch.set(doc(db, "users", state.me.id, "openChats", roomRef.id), { alias, nick, joinedAt: serverTimestamp() });
+      batch.set(doc(roomRef, "aliases", alias), { at: serverTimestamp() });
+      batch.set(doc(collection(roomRef, "messages")), openSystemMessage(text, alias, nick));
+      await batch.commit();
+      closeModal();
+      toast("オープンチャットを作成しました");
+      openRoom(roomRef.id, { id: roomRef.id, ...room, myAlias: alias, myNick: nick });
+    }
+
+    const pendingOpenJoins = new Set();
+    async function joinOpenChat(roomId, nickRaw) {
+      const nick = checkNick(nickRaw);
+      const joined = state.rooms.find((r) => r.id === roomId && isOpen(r));
+      if (joined) { closeModal(); openRoom(roomId, joined); return; }
+      if (pendingOpenJoins.has(roomId)) return; // 連打による二重参加を防ぐ
+      pendingOpenJoins.add(roomId);
+      try {
+        const ref = doc(db, "rooms", roomId);
+        const snap = await getDoc(ref);
+        const data = snap.exists() ? snap.data() : null;
+        if (data?.type !== "open") throw new Error("このオープンチャットは見つかりません。削除された可能性があります。");
+        if ((Number(data.memberCount) || 0) >= OPEN_MAX_MEMBERS) throw new Error(`このオープンチャットは満員です（最大${OPEN_MAX_MEMBERS}人）。`);
+        const mine = await getDoc(doc(db, "users", state.me.id, "openChats", roomId));
+        if (mine.exists()) { closeModal(); openRoom(roomId, { id: roomId, ...data, myAlias: mine.data().alias, myNick: mine.data().nick }); return; }
+        const alias = newAlias();
+        const text = `${nick} さんが参加しました`;
+        const batch = writeBatch(db);
+        batch.update(ref, { memberCount: increment(1), lastMessage: openLastMessage(text, alias, nick), updatedAt: serverTimestamp() });
+        batch.set(doc(db, "users", state.me.id, "openChats", roomId), { alias, nick, joinedAt: serverTimestamp() });
+        batch.set(doc(ref, "aliases", alias), { at: serverTimestamp() });
+        batch.set(doc(collection(ref, "messages")), openSystemMessage(text, alias, nick));
+        try {
+          await batch.commit();
+        } catch (e) {
+          if (e.code === "permission-denied") throw new Error("参加できませんでした。オープンチャットが削除されたか、満員になった可能性があります。");
+          throw e;
+        }
+        closeModal();
+        toast(`「${data.name}」に参加しました`);
+        openRoom(roomId, { id: roomId, ...data, memberCount: (Number(data.memberCount) || 0) + 1, myAlias: alias, myNick: nick });
+      } finally {
+        pendingOpenJoins.delete(roomId);
+      }
+    }
+
+    // 退出：お知らせを送り、参加の記録を消して人数を減らす（alias の予約は残すので、同じ alias はだれも使えない）
+    function leaveOpenChatBatch(room) {
+      const ref = doc(db, "rooms", room.id);
+      const text = `${room.myNick} さんが退出しました`;
+      const batch = writeBatch(db);
+      batch.update(ref, { memberCount: increment(-1), lastMessage: openLastMessage(text, room.myAlias, room.myNick), updatedAt: serverTimestamp() });
+      batch.set(doc(collection(ref, "messages")), openSystemMessage(text, room.myAlias, room.myNick));
+      batch.delete(doc(db, "users", state.me.id, "openChats", room.id));
+      return batch;
+    }
+
+    async function leaveOpenChat() {
+      const room = currentRoom();
+      if (!isOpen(room) || !isMember(room)) return;
+      const owner = room.ownerAlias === room.myAlias;
+      const ok = await confirmDialog({
+        title: "オープンチャットを退出しますか？",
+        message: `「${esc(room.name)}」から退出します。もう一度参加すると、別の参加者として扱われます。${owner ? "<br><b class=\"text-rose-600\">作成者が退出すると、このオープンチャットはだれも削除できなくなります。</b>" : ""}`,
+        ok: "退出する",
+        danger: true,
+      });
+      if (!ok) return;
+      state.leavingRoomId = room.id;
+      try {
+        await leaveOpenChatBatch(room).commit();
+      } catch (e) {
+        state.leavingRoomId = null;
+        throw e;
+      }
+      exitRoom();
+      toast("オープンチャットを退出しました");
+    }
+
+    // オープンチャットを探す：作成されたオープンチャットの一覧（端末で並べ替え・検索する）
+    let openBrowse = null; // { rooms, loading, error, q }
+    async function openBrowseOpenChats() {
+      openBrowse = { rooms: [], loading: true, error: false, q: "" };
+      const b = openBrowse;
+      openModal(`
+        ${modalHead("オープンチャットを探す", "参加すると、ニックネームだけが他の参加者に表示されます")}
+        <div class="px-6 pb-6">
+          <div class="relative">
+            <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">${icon("search", "w-4 h-4")}</span>
+            <input id="ob-search" type="search" class="input pl-10 py-2.5 bg-slate-50 border-transparent" placeholder="名前・説明で検索" autocomplete="off" />
+          </div>
+          <div id="ob-results" class="mt-3 -mx-2 max-h-[55vh] overflow-y-auto scroll-thin"></div>
+          <button type="button" data-action="create-open" class="btn-secondary w-full mt-4">${icon("plus", "w-5 h-5")}オープンチャットを作成</button>
+        </div>`, () => { if (openBrowse === b) openBrowse = null; });
+      renderOpenBrowse();
+      try {
+        const snap = await getDocs(query(collection(db, "rooms"), where("type", "==", "open"), limit(300)));
+        b.rooms = snap.docs.map(withId).sort((x, y) => ms(y.updatedAt) - ms(x.updatedAt));
+      } catch (e) {
+        console.error(e);
+        b.error = true;
+      }
+      b.loading = false;
+      if (openBrowse === b) renderOpenBrowse();
+    }
+
+    function renderOpenBrowse() {
+      const box = $("#ob-results");
+      const b = openBrowse;
+      if (!box || !b) return;
+      if (b.loading) { box.innerHTML = `<div class="py-10 grid place-items-center text-indigo-500">${spinner("w-7 h-7 border-[3px]")}</div>`; return; }
+      if (b.error) { box.innerHTML = emptyList("alert", "読み込めませんでした", "時間をおいて、もう一度開いてください。"); return; }
+      const q = searchNorm(b.q.trim());
+      const hits = b.rooms.filter((r) => !q || searchNorm(`${r.name} ${r.description || ""}`).includes(q));
+      if (!hits.length) {
+        box.innerHTML = q ? emptyList("search", "該当するオープンチャットはありません")
+          : emptyList("globe", "オープンチャットはまだありません", "最初のオープンチャットを作成してみましょう。");
+        return;
+      }
+      box.innerHTML = hits.map((r) => {
+        const joined = state.rooms.some((x) => x.id === r.id && isOpen(x));
+        const full = (Number(r.memberCount) || 0) >= OPEN_MAX_MEMBERS;
+        return `
+          <div class="flex items-center gap-3 px-2 py-2.5 rounded-2xl hover:bg-slate-50 transition">
+            ${groupAvatar(r, "w-11 h-11")}
+            <div class="min-w-0 flex-1">
+              <div class="font-semibold text-slate-800 truncate">${esc(r.name)}</div>
+              ${r.description ? `<div class="text-xs text-slate-500 truncate">${esc(r.description)}</div>` : ""}
+              <div class="text-[11px] text-slate-400 truncate">${Number(r.memberCount) || 0}人 ・ 最終更新 ${esc(relTime(r.updatedAt))}</div>
+            </div>
+            ${joined
+              ? `<button type="button" data-action="browse-open-room" data-id="${esc(r.id)}" class="btn-chip shrink-0 py-1.5 text-xs bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100">開く</button>`
+              : full ? `<span class="shrink-0 px-2 text-xs font-medium text-slate-400">満員</span>`
+              : `<button type="button" data-action="open-join-open" data-id="${esc(r.id)}" class="btn-chip shrink-0 py-1.5 text-xs bg-indigo-600 text-white hover:bg-indigo-500">参加</button>`}
+          </div>`;
+      }).join("");
+    }
+
+    function openCreateOpenChat() {
+      openModal(`
+        ${modalHead("オープンチャットを作成", "だれでも探して参加できるトークです")}
+        <form id="form-create-open" class="px-6 pb-6 space-y-4">
+          <div>
+            <label class="label" for="oc-name">オープンチャットの名前</label>
+            <input id="oc-name" name="name" class="input" maxlength="${OPEN_MAX_NAME}" required autofocus placeholder="例: 映画の感想を話す部屋" />
+          </div>
+          <div>
+            <label class="label" for="oc-desc">説明（任意）</label>
+            <textarea id="oc-desc" name="description" class="input resize-none" rows="2" maxlength="${OPEN_MAX_DESC}" placeholder="どんな話をするトークか"></textarea>
+          </div>
+          ${nickField()}
+          <p class="form-error" hidden></p>
+          <button type="submit" class="btn-primary w-full">${icon("plus", "w-5 h-5")}作成する</button>
+        </form>`);
+    }
+
+    const nickField = () => `
+          <div>
+            <label class="label" for="oc-nick">このトークでのニックネーム</label>
+            <input id="oc-nick" name="nick" class="input" maxlength="${OPEN_MAX_NICK}" required autocomplete="off" placeholder="例: 名無しの映画好き" />
+            <p class="text-xs text-slate-500 leading-relaxed mt-1.5">${icon("lock", "w-3.5 h-3.5 inline -mt-0.5")} あなたのユーザー名（${esc(state.me.name)}）とユーザーID（@${esc(state.me.id)}）・アイコンは、他の参加者に表示されません。本名や、ユーザー名と同じニックネームは避けましょう。</p>
+          </div>`;
+
+    async function openJoinOpenChat(roomId) {
+      const joined = state.rooms.find((r) => r.id === roomId && isOpen(r));
+      if (joined) { closeModal(); openRoom(roomId, joined); return; }
+      let room = openBrowse?.rooms.find((r) => r.id === roomId);
+      if (!room) {
+        const snap = await getDoc(doc(db, "rooms", roomId)).catch(() => null);
+        room = snap?.exists() && snap.data().type === "open" ? withId(snap) : null;
+      }
+      if (!room) throw new Error("このオープンチャットは見つかりません。削除された可能性があります。");
+      openModal(`
+        ${modalHead("オープンチャットに参加")}
+        <form id="form-join-open" class="px-6 pb-6 space-y-4">
+          <input type="hidden" name="roomId" value="${esc(room.id)}" />
+          <div class="flex items-center gap-3 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-3">
+            ${groupAvatar(room, "w-12 h-12")}
+            <div class="min-w-0">
+              <div class="font-semibold text-slate-800 truncate">${esc(room.name)}</div>
+              ${room.description ? `<div class="text-xs text-slate-500 leading-relaxed">${esc(room.description)}</div>` : ""}
+              <div class="text-[11px] text-slate-400">${Number(room.memberCount) || 0}人が参加中</div>
+            </div>
+          </div>
+          ${nickField()}
+          <p class="form-error" hidden></p>
+          <button type="submit" class="btn-primary w-full">参加する</button>
+        </form>`);
+      $("#oc-nick")?.focus();
+    }
+
+    function openOpenChatInfo(room) {
+      const member = isMember(room);
+      const notifyOn = !mutedRooms().has(room.id);
+      const owner = member && room.ownerAlias === room.myAlias;
+      openModal(`
+        ${modalHead("オープンチャット情報")}
+        <div class="px-6 pb-6">
+          <div class="flex items-center gap-4">
+            ${groupAvatar(room, "w-16 h-16")}
+            <div class="min-w-0">
+              <div class="font-bold text-lg text-slate-900 truncate">${esc(room.name)}</div>
+              <div class="text-sm text-slate-500">${Number(room.memberCount) || 0}人が参加中</div>
+            </div>
+          </div>
+          ${room.description ? `<p class="mt-3 text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">${esc(room.description)}</p>` : ""}
+
+          ${member ? `
+          <div class="mt-5 rounded-2xl bg-emerald-50 ring-1 ring-emerald-100 px-4 py-3">
+            <div class="text-xs font-semibold text-emerald-700">あなたのニックネーム</div>
+            <div class="mt-0.5 font-semibold text-slate-800 truncate">${esc(room.myNick)} <span class="text-slate-400 font-normal text-xs">${aliasTag(room.myAlias)}</span>${owner ? ` <span class="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">作成者</span>` : ""}</div>
+            <p class="text-xs text-emerald-700/80 leading-relaxed mt-1">ユーザー名・ユーザーID・アイコンは、他の参加者に表示されません。</p>
+          </div>
+
+          <div class="mt-3 flex items-center gap-3 rounded-2xl bg-slate-50 ring-1 ring-slate-100 px-4 py-3">
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-semibold text-slate-800">このオープンチャットの通知</div>
+              <div class="text-xs text-slate-400 leading-relaxed mt-0.5">${notifyEnabled() ? "オフにすると、このオープンチャットの通知は届きません" : "画面上部の通知スイッチをオンにすると、新着メッセージが通知されます"}</div>
+            </div>
+            <button type="button" id="room-notify-toggle" data-action="toggle-room-notify" class="switch" role="switch" aria-checked="${notifyOn}" aria-label="このオープンチャットの通知"><span class="switch-knob">${icon(notifyOn ? "bell" : "bell-off", "w-3.5 h-3.5")}</span></button>
+          </div>` : ""}
+
+          <div class="mt-3 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
+            <div class="text-xs font-semibold text-slate-500 mb-1.5">共有リンク</div>
+            <div class="flex gap-2">
+              <input readonly value="${esc(openChatUrl(room.id))}" class="input py-2 text-sm bg-white" onfocus="this.select()" />
+              <button type="button" data-action="copy" data-copy="${esc(openChatUrl(room.id))}" data-label="リンクをコピーしました" class="btn-chip shrink-0 bg-indigo-600 text-white hover:bg-indigo-500">${icon("copy", "w-4 h-4")}コピー</button>
+            </div>
+            <p class="text-xs text-slate-400 leading-relaxed mt-2">オープンチャットは「グループ」タブの「オープンチャットを探す」からも、だれでも参加できます</p>
+          </div>
+
+          ${member ? `<button type="button" data-action="leave-open" class="btn-danger-ghost w-full mt-5">${icon("logout", "w-5 h-5")}オープンチャットを退出</button>` : ""}
+          ${canDeleteRoom(room) ? `<button type="button" data-action="delete-room" class="w-full mt-3 py-2 text-sm font-semibold text-rose-600 hover:underline">${icon("trash", "w-4 h-4 inline -mt-0.5")} オープンチャットを削除（全員の画面から消えます）</button>` : ""}
+        </div>`);
+    }
+
+    // ============================================================
     // 削除（送信取消 / トーク削除 / アカウント削除）
     // ============================================================
 
@@ -2835,7 +3230,7 @@ const firebaseConfig = {
     async function unsendMessage(msgId) {
       const room = currentRoom();
       const m = state.messages.find((x) => x.id === msgId);
-      if (!room || !m || m.senderId !== state.me.id) return;
+      if (!room || !m || !isMine(m, room)) return;
       state.selectedMsgId = null;
       if (state.editing?.id === msgId) cancelEdit();
       const roomRef = doc(db, "rooms", room.id);
@@ -2866,9 +3261,10 @@ const firebaseConfig = {
       const m = state.messages.find((x) => x.id === msgId);
       state.selectedMsgId = null;
       renderMessages();
-      if (!room || !m || !["text", "sticker", "image"].includes(m.type) || m.senderId === state.me.id || !isMember(room) || !REACTION_EMOJI[code]) return;
-      const same = m.reactions?.[state.me.id] === code;
-      await updateDoc(doc(db, "rooms", room.id, "messages", msgId), { [`reactions.${state.me.id}`]: same ? deleteField() : code });
+      if (!room || !m || !["text", "sticker", "image"].includes(m.type) || isMine(m, room) || !isMember(room) || !REACTION_EMOJI[code]) return;
+      const key = selfId(room);
+      const same = m.reactions?.[key] === code;
+      await updateDoc(doc(db, "rooms", room.id, "messages", msgId), { [`reactions.${key}`]: same ? deleteField() : code });
     }
 
     // グループ：リアクションした人の一覧
@@ -2877,8 +3273,14 @@ const firebaseConfig = {
       const entries = Object.entries(m?.reactions || {}).filter(([, code]) => REACTION_EMOJI[code]);
       if (!entries.length) return;
       const order = (code) => REACTION_CODES.indexOf(code);
+      const room = currentRoom();
+      const me = selfId(room);
+      // オープンチャットのリアクションは alias で記録されるので、読み込んだメッセージのニックネームから名前を探す（見つからなければ「参加者」）
+      const nicks = new Map(state.messages.filter((x) => x.senderName).map((x) => [x.senderId, x.senderName]));
+      const nameOf = (id) => (isOpen(room) ? (id === me ? room.myNick : nicks.get(id) || "参加者") : userName(id));
+      const subOf = (id) => (isOpen(room) ? aliasTag(id) : `@${id}`);
       const rows = entries.sort(([idA, a], [idB, b]) =>
-        order(a) - order(b) || (idB === state.me.id) - (idA === state.me.id) || userName(idA).localeCompare(userName(idB), "ja"));
+        order(a) - order(b) || (idB === me) - (idA === me) || nameOf(idA).localeCompare(nameOf(idB), "ja"));
       const counts = REACTIONS.map(([code, emoji]) => [emoji, entries.filter(([, c]) => c === code).length]).filter(([, n]) => n);
       openModal(`
         ${modalHead("リアクション", `${entries.length}人がリアクションしました`)}
@@ -2892,10 +3294,10 @@ const firebaseConfig = {
           <div class="mt-4 -mx-2 max-h-72 overflow-y-auto scroll-thin">
             ${rows.map(([id, code]) => `
               <div class="flex items-center gap-3 px-2 py-2">
-                ${avatar(id, userName(id), "w-9 h-9 text-sm")}
+                ${avatar(id, nameOf(id), "w-9 h-9 text-sm")}
                 <div class="min-w-0 flex-1">
-                  <div class="text-sm font-medium text-slate-800 truncate">${esc(userName(id))}${id === state.me.id ? ` <span class="text-slate-400 font-normal">(あなた)</span>` : ""}</div>
-                  <div class="text-xs text-slate-400 truncate">@${esc(id)}</div>
+                  <div class="text-sm font-medium text-slate-800 truncate">${esc(nameOf(id))}${id === me ? ` <span class="text-slate-400 font-normal">(あなた)</span>` : ""}</div>
+                  <div class="text-xs text-slate-400 truncate">${esc(subOf(id))}</div>
                 </div>
                 <span class="text-2xl leading-none shrink-0">${REACTION_EMOJI[code]}</span>
               </div>`).join("")}
@@ -2925,7 +3327,7 @@ const firebaseConfig = {
 
     // ---- 編集（送信から EDIT_WINDOW 以内の自分のテキストのメッセージ） ----
     function canEditMessage(m, room) {
-      return !!m && m.type === "text" && m.senderId === state.me.id && !m.pending && !!m.createdAt
+      return !!m && m.type === "text" && isMine(m, room) && !m.pending && !!m.createdAt
         && Date.now() - ms(m.createdAt) < EDIT_WINDOW && !!room && canSend(room);
     }
 
@@ -3023,7 +3425,7 @@ const firebaseConfig = {
         <button type="button" data-action="cancel-edit" class="icon-btn w-8 h-8 shrink-0" aria-label="編集をやめる">${icon("x", "w-4 h-4")}</button>` : r ? `
         <span class="shrink-0 text-indigo-500">${icon("reply", "w-4 h-4")}</span>
         <div class="flex-1 min-w-0 border-l-[3px] border-indigo-400 pl-2.5 fade-in">
-          <div class="text-xs font-semibold text-indigo-600 truncate">${esc(r.senderId === state.me.id ? "自分" : userName(r.senderId, r.senderName))} への返信</div>
+          <div class="text-xs font-semibold text-indigo-600 truncate">${esc(isMine(r) ? "自分" : userName(r.senderId, r.senderName))} への返信</div>
           <div class="text-xs text-slate-500 truncate">${esc(r.text.replace(/\s+/g, " "))}</div>
         </div>
         <button type="button" data-action="cancel-reply" class="icon-btn w-8 h-8 shrink-0" aria-label="返信をやめる">${icon("x", "w-4 h-4")}</button>` : "";
@@ -3121,6 +3523,7 @@ const firebaseConfig = {
     function canDeleteRoom(room) {
       if (!room || !state.rooms.some((r) => r.id === room.id)) return false; // 未作成の DM・未参加のグループ
       if (room.type === "dm") return true;
+      if (isOpen(room)) return !!room.myAlias && room.ownerAlias === room.myAlias; // オープンチャットは作成者のみ
       return room.createdBy === state.me.id || !!state.users.get(room.createdBy)?.deleted;
     }
 
@@ -3128,11 +3531,12 @@ const firebaseConfig = {
       const room = currentRoom();
       if (!canDeleteRoom(room)) return;
       const isDm = room.type === "dm";
+      const open = isOpen(room);
       const ok = await confirmDialog({
-        title: isDm ? "トークを削除しますか？" : "グループを削除しますか？",
+        title: isDm ? "トークを削除しますか？" : open ? "オープンチャットを削除しますか？" : "グループを削除しますか？",
         message: isDm
           ? `<b class="text-slate-800">${esc(roomTitle(room))}</b> とのトークとすべてのメッセージを削除します。相手の画面からも消え、元に戻せません。`
-          : `グループ「<b class="text-slate-800">${esc(room.name)}</b>」とすべてのメッセージを削除します。全メンバーの画面から消え、元に戻せません。`,
+          : `${open ? "オープンチャット" : "グループ"}「<b class="text-slate-800">${esc(room.name)}</b>」とすべてのメッセージを削除します。全${open ? "参加者" : "メンバー"}の画面から消え、元に戻せません。`,
         ok: "削除する",
         danger: true,
       });
@@ -3153,6 +3557,7 @@ const firebaseConfig = {
         const batch = writeBatch(db);
         (room.members || []).forEach((id) => batch.delete(doc(roomRef, "reads", id))); // 既読の記録
         if (isDm) room.members.forEach((id) => batch.delete(doc(roomRef, "typing", id))); // 入力中の記録
+        if (open) batch.delete(doc(db, "users", state.me.id, "openChats", room.id)); // 自分の参加の記録（他の参加者の分は、それぞれの端末で消す）
         batch.delete(roomRef);
         await batch.commit();
         await deleteMessages(); // 削除中に届いたメッセージも消す
@@ -3161,7 +3566,7 @@ const firebaseConfig = {
         throw e;
       }
       exitRoom();
-      toast(isDm ? "トークを削除しました" : "グループを削除しました");
+      toast(isDm ? "トークを削除しました" : open ? "オープンチャットを削除しました" : "グループを削除しました");
     }
 
     function openDeleteAccount() {
@@ -3169,7 +3574,7 @@ const firebaseConfig = {
         ${modalHead("アカウントを削除")}
         <form id="form-delete-account" class="px-6 pb-6 space-y-4">
           <ul class="text-sm text-slate-600 leading-relaxed space-y-1.5 list-disc pl-5">
-            <li>プロフィールが削除され、参加中のグループから退出します</li>
+            <li>プロフィールが削除され、参加中のグループ・オープンチャットから退出します</li>
             <li>送信済みのメッセージは相手の画面に残り、「${DELETED_NAME}」と表示されます</li>
             <li>ユーザーID <b class="text-slate-800">@${esc(state.me.id)}</b> は今後だれも使えなくなります</li>
             <li class="text-rose-600 font-semibold">この操作は取り消せません</li>
@@ -3197,6 +3602,8 @@ const firebaseConfig = {
       const groups = state.rooms.filter((r) => r.type === "group" && r.members?.includes(me.id));
       state.accountDeleting = true;
       try {
+        // オープンチャットは1件ずつ退出する（ルールが読む文書の数の上限を超えないように）
+        for (const r of state.rooms.filter((x) => isOpen(x) && x.myAlias)) await leaveOpenChatBatch(r).commit();
         let batch = writeBatch(db);
         let count = 0;
         for (const g of groups) {
@@ -3382,7 +3789,15 @@ const firebaseConfig = {
     }
 
     function handleJoinHash() {
-      if (!/join=/.test(location.hash) || isRestricted(state.me)) return; // 制限中はリンクを残し、解除されたら参加する
+      if (isRestricted(state.me)) return; // 制限中はリンクを残し、解除されたら参加する
+      // オープンチャットのリンク「…#open=<ルームID>」：ニックネームを決めて参加する画面を開く
+      const open = location.hash.match(/(?:^#|&)open=([A-Za-z0-9]{1,64})/);
+      if (open) {
+        history.replaceState(null, "", location.pathname + location.search);
+        Promise.resolve().then(() => openJoinOpenChat(open[1])).catch((e) => toast(errMsg(e), "error"));
+        return;
+      }
+      if (!/join=/.test(location.hash)) return;
       const hash = location.hash;
       history.replaceState(null, "", location.pathname + location.search);
       Promise.resolve()
@@ -3438,6 +3853,11 @@ const firebaseConfig = {
 
     // メッセージを1件書き込み、一覧用の lastMessage を更新する（未作成の DM はルームも作成）
     async function postMessage(room, message, lastMessage) {
+      if (isOpen(room)) {
+        if (message.imageUrl) throw new Error("オープンチャットには、画像ファイルのままの画像は送れません（SVG に埋め込んで送ってください）。");
+        message = anonymize(room, message);
+        lastMessage = anonymize(room, lastMessage);
+      }
       const roomRef = doc(db, "rooms", room.id);
       const msgRef = doc(collection(roomRef, "messages"));
       const roomUpdate = { lastMessage, updatedAt: serverTimestamp() };
@@ -3458,6 +3878,14 @@ const firebaseConfig = {
           tx.set(msgRef, message);
         });
       }
+    }
+
+    // オープンチャットに書く内容：送信者を alias・ニックネームにし、ユーザーを特定できる項目（uid・メンション・自分のスタンプのID）を除く
+    function anonymize(room, data) {
+      const { senderUid, mentions, mentionAll, ...rest } = data;
+      const out = { ...rest, senderId: room.myAlias, senderName: room.myNick };
+      if ("stickerId" in out) out.stickerId = "-";
+      return out;
     }
 
     // スタンプの送信：表示用に SVG と名前をコピーして送る（原本を編集・削除しても送信済みの表示は変わらない）
@@ -3526,6 +3954,29 @@ const firebaseConfig = {
       img.src = src;
     });
 
+    // ---- 画像ファイルのまま送る（Firebase Storage にアップロードして、その URL を imageUrl に持つ） ----
+    // 上限は firestore.rules・storage.rules と合わせる。ファイル名は「ユーザーID_時刻_乱数」（自分のIDで始まるものしか上げられない）
+    const RAW_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+    const RAW_IMAGE_EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+    const RAW_IMAGE_URL_RE = /^https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/chatter-8e8fc\.firebasestorage\.app\/o\/chat-images%2F[A-Za-z0-9%._~-]+\?alt=media&token=[A-Za-z0-9-]+$/;
+    const isRawImage = (m) => m?.type === "image" && typeof m.imageUrl === "string";
+    const msgImageSrc = (m) => isRawImage(m)
+      ? (m.imageUrl.length <= 1000 && RAW_IMAGE_URL_RE.test(m.imageUrl) ? m.imageUrl : null)
+      : imageSrc(m.image);
+    const msgImageFormat = (m) => isRawImage(m) ? (RAW_IMAGE_EXT[m.imageType] || "画像").toUpperCase().replace("JPG", "JPEG") : imageFormat(m.image);
+    const msgImageBytes = (m) => isRawImage(m) ? Number(m.imageBytes) || 0 : imageBytes(m.image);
+    // メッセージに入れる画像の中身（SVG に埋め込んだ image、または Storage の imageUrl）
+    const imageContentOf = (m) => isRawImage(m)
+      ? { imageUrl: m.imageUrl, imageType: m.imageType, imageBytes: m.imageBytes }
+      : { image: m.image };
+    // 画像ファイルを Storage にアップロードして、表示用の URL を返す
+    async function uploadChatImage(room, file) {
+      const rnd = Math.random().toString(36).slice(2, 10);
+      const ref = storageRef(storage, `chat-images/${room.id}/${state.uid}_${Date.now()}_${rnd}.${RAW_IMAGE_EXT[file.type]}`);
+      await uploadBytes(ref, file, { contentType: file.type });
+      return getDownloadURL(ref);
+    }
+
     // 表示する大きさ：縦横比を保って幅 maxW・高さ maxH 以内（小さい画像は拡大しない）。読み込み前から場所を確保してスクロールがずれないようにする
     function imageStyle(m, maxW = 260, maxH = 320) {
       const w = Number(m.w) > 0 ? Number(m.w) : 240, h = Number(m.h) > 0 ? Number(m.h) : 240;
@@ -3535,7 +3986,7 @@ const firebaseConfig = {
     // 画像のメッセージ：返信先の引用（あれば）と画像
     function imageBody(m) {
       const quote = m.replyTo ? `<div class="w-32 sm:w-36 mb-1 px-2 pt-1.5 pb-0.5 rounded-xl bg-white ring-1 ring-slate-200/70 shadow-sm">${replyQuote(m, false)}</div>` : "";
-      const src = imageSrc(m.image);
+      const src = msgImageSrc(m);
       return quote + (src
         ? `<img src="${src}" alt="画像" style="${imageStyle(m)}" class="block max-w-full h-auto rounded-2xl bg-[#fff] ring-1 ring-slate-200/70 shadow-sm object-contain select-none" draggable="false" decoding="async" />`
         : `<span class="w-32 h-24 grid place-items-center rounded-2xl bg-slate-100 text-xs text-slate-400">${esc(IMAGE_TEXT)}</span>`);
@@ -3547,12 +3998,12 @@ const firebaseConfig = {
 
     function openImageViewer(msgId) {
       const m = state.messages.find((x) => x.id === msgId);
-      const src = m?.type === "image" && imageSrc(m.image);
+      const src = m?.type === "image" && msgImageSrc(m);
       if (!src) return;
       if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
-      const name = m.senderId === state.me.id ? "あなた" : userName(m.senderId, m.senderName);
+      const name = isMine(m) ? "あなた" : userName(m.senderId, m.senderName);
       openModal(`
-        ${modalHead("画像", `${esc(name)} · ${esc(imageFormat(m.image))} · ${fmtBytes(imageBytes(m.image))}`)}
+        ${modalHead("画像", `${esc(name)} · ${esc(msgImageFormat(m))} · ${fmtBytes(msgImageBytes(m))}`)}
         <div class="px-6 pb-6">
           <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-200 p-2 grid place-items-center">
             <img src="${src}" alt="画像" style="${imageStyle(m, 480, 4000)}" class="max-w-full max-h-[60vh] object-contain select-none" draggable="false" />
@@ -3567,16 +4018,31 @@ const firebaseConfig = {
     // 画像をファイルとして保存（SVG は .svg、以前そのまま送られた画像は元の形式）
     function downloadImage(msgId) {
       const m = state.messages.find((x) => x.id === msgId);
-      if (m?.type !== "image" || !imageSrc(m.image)) return;
-      const svg = isSvgImage(m.image);
-      const ext = svg ? "svg" : imageFormat(m.image).toLowerCase().replace("jpeg", "jpg");
+      if (m?.type !== "image" || !msgImageSrc(m)) return;
       const d = toDate(m.createdAt) || new Date();
       const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+      if (isRawImage(m)) { downloadRawImage(m.imageUrl, `chatter-${stamp}.${RAW_IMAGE_EXT[m.imageType] || "jpg"}`); return; }
+      const svg = isSvgImage(m.image);
+      const ext = svg ? "svg" : imageFormat(m.image).toLowerCase().replace("jpeg", "jpg");
       if (svg) {
         const url = URL.createObjectURL(new Blob([m.image], { type: "image/svg+xml" }));
         saveFile(url, `chatter-${stamp}.svg`);
         setTimeout(() => URL.revokeObjectURL(url), 10000);
       } else saveFile(m.image, `chatter-${stamp}.${ext}`);
+    }
+
+    // Storage の画像は、取得できれば保存用の Blob にして保存する（だめなら新しいタブで開く）
+    async function downloadRawImage(url, filename) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blobUrl = URL.createObjectURL(await res.blob());
+        saveFile(blobUrl, filename);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      } catch (e) {
+        console.error(e);
+        window.open(url, "_blank", "noopener");
+      }
     }
 
     function saveFile(url, filename) {
@@ -3590,7 +4056,7 @@ const firebaseConfig = {
 
     // ---- 画像の転送（表示できる SVG の画像だけ。転送先は今のトーク以外で送信できるトーク） ----
     // 転送は元の画像（SVG・大きさ・本文）をそのままコピーして、転送先のトークに新しいメッセージとして送る
-    const isForwardableImage = (m) => m?.type === "image" && isSvgImage(m.image) && !!imageSrc(m.image) && Number(m.w) >= 1 && Number(m.h) >= 1;
+    const isForwardableImage = (m) => m?.type === "image" && (isRawImage(m) || isSvgImage(m.image)) && !!msgImageSrc(m) && Number(m.w) >= 1 && Number(m.h) >= 1;
     const forwardImageChip = (m) => isForwardableImage(m)
       ? `<button type="button" data-action="forward-image" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("forward", "w-3.5 h-3.5")}転送</button>`
       : "";
@@ -3599,13 +4065,13 @@ const firebaseConfig = {
       const m = state.messages.find((x) => x.id === msgId);
       if (!isForwardableImage(m)) return;
       if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
-      const targets = state.rooms.filter((r) => r.id !== state.activeRoomId && canSend(r));
+      const targets = state.rooms.filter((r) => r.id !== state.activeRoomId && canSend(r) && !(isOpen(r) && isRawImage(m)));
       const list = targets.length
         ? targets.map((r) => `
             <button type="button" data-action="forward-image-to" data-id="${esc(msgId)}" data-room="${esc(r.id)}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left hover:bg-indigo-50 transition">
               ${roomAvatar(r, "w-9 h-9 text-sm")}
               <span class="min-w-0 flex-1 truncate font-semibold text-slate-800">${esc(roomTitle(r))}</span>
-              <span class="shrink-0 text-xs text-slate-400">${r.type === "dm" ? "個人" : "グループ"}</span>
+              <span class="shrink-0 text-xs text-slate-400">${r.type === "dm" ? "個人" : isOpen(r) ? "オープン" : "グループ"}</span>
             </button>`).join("")
         : `<p class="text-sm text-slate-500 text-center py-8">転送できるトークがありません</p>`;
       openModal(`
@@ -3616,13 +4082,13 @@ const firebaseConfig = {
     async function forwardImage(msgId, roomId) {
       const m = state.messages.find((x) => x.id === msgId);
       const room = state.rooms.find((r) => r.id === roomId);
-      if (!isForwardableImage(m) || !room || room.id === state.activeRoomId || !canSend(room)) {
+      if (!isForwardableImage(m) || !room || room.id === state.activeRoomId || !canSend(room) || (isOpen(room) && isRawImage(m))) {
         toast("この画像は転送できません", "error");
         return;
       }
       closeModal();
       const message = {
-        type: "image", text: IMAGE_TEXT, image: m.image, w: Number(m.w), h: Number(m.h),
+        type: "image", text: IMAGE_TEXT, ...imageContentOf(m), w: Number(m.w), h: Number(m.h),
         senderId: state.me.id, senderName: state.me.name, senderUid: state.uid, createdAt: serverTimestamp(),
       };
       const lastMessage = { type: "image", text: IMAGE_TEXT, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() };
@@ -3738,6 +4204,7 @@ const firebaseConfig = {
             <button type="button" id="is-crop" data-action="is-crop" class="btn-secondary flex-1 py-2.5 text-sm" disabled>${icon("crop", "w-4 h-4")}トリミング</button>
             <button type="button" id="is-draw" data-action="is-draw" class="btn-secondary flex-1 py-2.5 text-sm" disabled>${icon("pencil", "w-4 h-4")}描く</button>
           </div>
+          ${RASTER_TYPES.includes(s.type) && s.file.size <= RAW_IMAGE_MAX_BYTES && !isOpen(state.rooms.find((r) => r.id === s.roomId)) ? `<button type="button" id="is-raw" data-action="is-raw" class="btn-secondary w-full py-2.5 text-sm">${icon("send", "w-4 h-4")}元の画像ファイルのまま送る（${fmtBytes(s.file.size)}）</button>` : ""}
           <p class="text-xs text-slate-500 leading-relaxed">画像は SVG の中に埋め込んで送信します（50KB を超えるときは圧縮します）。圧縮のあと「トリミング」で送る範囲を選んだり、「描く」で画像にペンで書き込んだりできます。</p>
           <p id="is-status" class="text-xs leading-relaxed rounded-xl px-3 py-2" hidden></p>
           <div class="flex gap-3">
@@ -3758,6 +4225,8 @@ const firebaseConfig = {
       $("#is-send").disabled = !r?.ok;
       $("#is-draw").disabled = !r || (!r.ok && !s.strokes.length); // 圧縮が終わってから描ける（書き込んで収まらなくなったときも直せるように）
       $("#is-crop").disabled = !r; // 収まらなかったときも、範囲を狭めれば収まることがある
+      const raw = $("#is-raw"); // 元のファイルのまま送るのは、トリミング・書き込みをしていないときだけ
+      if (raw) raw.disabled = !!s.crop || s.strokes.length > 0;
       $("#is-preview").src = r?.ok ? imageSrc(r.image) : s.url;
       el.hidden = !r;
       if (!r) return;
@@ -3804,6 +4273,49 @@ const firebaseConfig = {
       r.ok = r.bytes <= IMAGE_MAX_BYTES && isSvgImage(r.image) && !!imageSrc(r.image);
       s.result = r;
       renderImageStatus();
+    }
+
+    // 画像ファイルを元のまま送る（Storage にアップロードして、その URL をメッセージに入れる）
+    async function sendRawImage() {
+      const s = imgSend;
+      if (!s || !RASTER_TYPES.includes(s.type) || s.file.size > RAW_IMAGE_MAX_BYTES || s.crop || s.strokes.length) return;
+      const room = currentRoom();
+      if (!room || room.id !== s.roomId || !canSend(room)) { closeModal(); throw new Error("トークが切り替わったため、画像を送信できませんでした。"); }
+      if (isOpen(room)) return; // オープンチャットでは、URL に uid が入るため送らない
+      const busy = (on) => {
+        $("#is-busy").hidden = !on;
+        if (on) setImageBusy("アップロード中…");
+        $("#is-send").disabled = on || !s.result?.ok;
+        $("#is-raw").disabled = on;
+      };
+      busy(true);
+      let url;
+      try {
+        url = await uploadChatImage(room, s.file);
+      } catch (e) {
+        console.error(e);
+        if (imgSend === s) busy(false);
+        toast("画像をアップロードできませんでした。通信を確かめて、もう一度お試しください。", "error");
+        return;
+      }
+      closeModal(); // 閉じると送信画面の後始末（URL の解放）も行われる
+      const replyTo = state.replyTo;
+      state.replyTo = null;
+      renderReplyBar();
+      const w = Math.min(20000, Math.max(1, Math.round(s.dims.w))), h = Math.min(20000, Math.max(1, Math.round(s.dims.h)));
+      const message = {
+        type: "image", text: IMAGE_TEXT, ...imageContentOf({ type: "image", imageUrl: url, imageType: s.file.type, imageBytes: s.file.size }), w, h,
+        senderId: state.me.id, senderName: state.me.name, senderUid: state.uid, createdAt: serverTimestamp(),
+        ...(replyTo ? { replyTo } : {}),
+      };
+      const lastMessage = { type: "image", text: IMAGE_TEXT, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() };
+      try {
+        await postMessage(room, message, lastMessage);
+      } catch (e) {
+        if (replyTo && !state.replyTo && state.activeRoomId === room.id) { state.replyTo = replyTo; renderReplyBar(); }
+        console.error(e);
+        toast(errMsg(e), "error");
+      }
     }
 
     async function sendImage() {
@@ -4513,7 +5025,7 @@ const firebaseConfig = {
     // 受け取ったスタンプを自分のスタンプに保存する（メッセージ内の SVG と名前をコピー。送信者の原本は読まない）
     async function saveReceivedSticker(msgId) {
       const m = state.messages.find((x) => x.id === msgId);
-      if (!m || m.type !== "sticker" || m.senderId === state.me.id || !isMember(currentRoom())) return;
+      if (!m || m.type !== "sticker" || isMine(m) || !isMember(currentRoom())) return;
       await copyToMyStickers(m.name, m.svg, m.size);
     }
 
@@ -5964,6 +6476,7 @@ const firebaseConfig = {
           </div>`);
         return;
       }
+      if (isOpen(room)) { openOpenChatInfo(room); return; }
       const member = isMember(room);
       const notifyOn = !mutedRooms().has(room.id);
       const members = (room.members || []).map((id) => ({ id, u: state.users.get(id) }))
@@ -6041,6 +6554,15 @@ const firebaseConfig = {
       },
       "start-dm": (el) => startDM(el.dataset.id),
       "leave-group": () => leaveGroup(),
+      "leave-open": () => leaveOpenChat(),
+      "create-open": () => openCreateOpenChat(),
+      "browse-open": () => openBrowseOpenChats(),
+      "open-join-open": (el) => openJoinOpenChat(el.dataset.id),
+      "browse-open-room": (el) => {
+        const r = state.rooms.find((x) => x.id === el.dataset.id);
+        closeModal();
+        if (r) openRoom(r.id, r);
+      },
       "create-group": () => openCreateGroup(),
       "open-join": () => openJoinModal(),
       "invite-members": () => openInviteMembers(),
@@ -6121,6 +6643,7 @@ const firebaseConfig = {
       "more-public-stickers": () => loadMorePublicStickers(),
       // 画像
       "is-send": () => sendImage(),
+      "is-raw": () => sendRawImage(),
       "is-draw": () => openImageDrawer(),
       "se-image-back": () => closeImageDrawer(false),
       "is-crop": () => openImageCropper(),
@@ -6158,6 +6681,8 @@ const firebaseConfig = {
       "form-profile": (fd) => updateName(fd.get("name")),
       "form-create-group": (fd) => createGroup(fd.get("name"), fd.getAll("members")),
       "form-join": (fd) => joinGroup(parseInvite(fd.get("code"))),
+      "form-create-open": (fd) => createOpenChat(fd.get("name"), fd.get("description"), fd.get("nick")),
+      "form-join-open": (fd) => joinOpenChat(String(fd.get("roomId") || ""), fd.get("nick")),
       "form-invite": (fd) => inviteMembers(fd.getAll("members")),
       "form-delete-account": (fd) => deleteAccount(fd.get("password")),
       "form-sticker": (fd) => saveSticker(fd.get("name")),
@@ -6321,6 +6846,8 @@ const firebaseConfig = {
 
       // グループ作成モーダル：メンバー検索・選択数
       document.addEventListener("input", (e) => { if (e.target.id === "ar-search") renderRestrictList(); });
+      // オープンチャットを探す：名前・説明で絞り込む
+      document.addEventListener("input", (e) => { if (e.target.id === "ob-search" && openBrowse) { openBrowse.q = e.target.value; renderOpenBrowse(); } });
       document.addEventListener("input", (e) => {
         if (e.target.id !== "cg-search") return;
         const q = e.target.value.trim().toLowerCase();
@@ -6550,6 +7077,7 @@ const firebaseConfig = {
       try {
         const app = initializeApp(firebaseConfig);
         auth = getAuth(app);
+        storage = getStorage(app);
         try {
           // オフラインキャッシュ（再訪時の読み取り回数を節約）
           db = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
