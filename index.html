@@ -1647,6 +1647,7 @@ const firebaseConfig = {
 
     // トーク一覧 = メンバーになっている DM・グループ（baseRooms）+ 参加中のオープンチャット（openChats）
     let baseRooms = [];
+    let aliasNicks = new Map(); // 参加中のオープンチャットの alias -> 今のニックネーム（alias はトークごとにランダムなので、全トークで1つの表にする）
     const openChats = { members: new Map(), rooms: new Map(), unsubs: new Map(), synced: new Set() };
     function resetOpenChats() {
       openChats.unsubs.forEach((u) => u());
@@ -1655,6 +1656,7 @@ const firebaseConfig = {
       openChats.unsubs = new Map();
       openChats.synced = new Set();
       baseRooms = [];
+      aliasNicks = new Map();
     }
     // skip：新着を通知しないオープンチャット（端末のキャッシュから読んだだけのもの）
     function roomsChanged(notify, skip = []) {
@@ -1664,13 +1666,22 @@ const firebaseConfig = {
         .filter(([id]) => openChats.rooms.has(id))
         .map(([id, mem]) => ({ ...openChats.rooms.get(id), myAlias: mem.alias, myNick: mem.nick }));
       state.rooms = [...baseRooms, ...open].sort((a, b) => ms(b.updatedAt) - ms(a.updatedAt));
+      const prevNicks = aliasNicks;
+      aliasNicks = new Map();
+      for (const r of open) {
+        if (r.nicks && typeof r.nicks === "object") for (const [a, n] of Object.entries(r.nicks)) if (typeof n === "string" && n) aliasNicks.set(a, n);
+        aliasNicks.set(r.myAlias, r.myNick);
+      }
+      const nicksChanged = aliasNicks.size !== prevNicks.size || [...aliasNicks].some(([a, n]) => prevNicks.get(a) !== n);
       // 新しく一覧に加わったオープンチャット（ログイン直後の読み込み・参加した直後）の過去のメッセージは通知しない
       for (const r of open) if (!before.has(r.id) || skip.includes(r.id)) prevLast.set(r.id, Infinity);
       checkActiveRoomGone(before);
       if (notify) notifyNewMessages(prevLast);
       renderSidebar();
       renderChatHeader();
-      if (state.selectedMsgId && state.messagesLoaded) renderMessages(); // 「ピン留め」「ピン留めを解除」を切り替える
+      // 「ピン留め」「ピン留めを解除」の切り替え・ニックネームの変更を反映
+      if ((state.selectedMsgId || nicksChanged) && state.messagesLoaded) renderMessages();
+      if (nicksChanged) renderReplyBar();
     }
     function subscribeOpenRoom(id) {
       if (openChats.unsubs.has(id)) return;
@@ -1738,7 +1749,8 @@ const firebaseConfig = {
     // ============================================================
     const dmRoomId = (a, b) => "dm_" + [a, b].sort().join("~");
     const partnerOf = (room) => room.members?.find((m) => m !== state.me.id) || state.me.id;
-    const userName = (id, fallback) => state.users.get(id)?.name || fallback || id;
+    // オープンチャットの参加者（alias）は、ルームの nicks にある今のニックネーム（無ければメッセージに書かれた送信時のニックネーム）
+    const userName = (id, fallback) => (OPEN_ALIAS_RE.test(id || "") ? aliasNicks.get(id) || fallback || "参加者" : state.users.get(id)?.name || fallback || id);
     // オープンチャットでは、自分を alias とニックネームで表す（ユーザーID・表示名はメッセージに書かない）
     const isOpen = (room) => room?.type === "open";
     const selfId = (room) => (isOpen(room) ? room.myAlias : state.me?.id);
@@ -3046,10 +3058,9 @@ const firebaseConfig = {
     async function leaveOpenChat() {
       const room = currentRoom();
       if (!isOpen(room) || !isMember(room)) return;
-      const owner = room.ownerAlias === room.myAlias;
       const ok = await confirmDialog({
         title: "オープンチャットを退出しますか？",
-        message: `「${esc(room.name)}」から退出します。もう一度参加すると、別の参加者として扱われます。${owner ? "<br><b class=\"text-rose-600\">作成者が退出すると、このオープンチャットはだれも削除できなくなります。</b>" : ""}`,
+        message: `「${esc(room.name)}」から退出します。もう一度参加すると、別の参加者として扱われます。`,
         ok: "退出する",
         danger: true,
       });
@@ -3063,6 +3074,45 @@ const firebaseConfig = {
       }
       exitRoom();
       toast("オープンチャットを退出しました");
+    }
+
+    // ニックネームの変更：参加の記録とルームの nicks を同時に書き換え、トークにお知らせを出す
+    // （過去のメッセージも nicks で今のニックネームを表示する。alias は変わらない）
+    function openRenameNick() {
+      const room = currentRoom();
+      if (!isOpen(room) || !isMember(room)) return;
+      openModal(`
+        ${modalHead("ニックネームを変更", `「${esc(room.name)}」でのニックネーム`)}
+        <form id="form-open-nick" class="px-6 pb-6 space-y-4">
+          <input id="on-nick" name="nick" class="input" maxlength="${OPEN_MAX_NICK}" required autofocus autocomplete="off" value="${esc(room.myNick)}" />
+          <p class="text-xs text-slate-500 leading-relaxed">変更すると、トークにお知らせが表示され、これまでのメッセージの名前も新しいニックネームになります。ユーザー名・ユーザーIDは、これまでどおり表示されません。</p>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-action="room-info" class="btn-secondary flex-1">戻る</button>
+            <button type="submit" class="btn-primary flex-1">変更する</button>
+          </div>
+        </form>`);
+      const input = $("#on-nick");
+      input?.setSelectionRange(input.value.length, input.value.length);
+    }
+
+    async function renameOpenNick(raw) {
+      const room = currentRoom();
+      if (!isOpen(room) || !isMember(room)) throw new Error("このトークのニックネームは変更できません。");
+      const nick = checkNick(raw);
+      if (nick === room.myNick) { openRoomInfo(); return; }
+      const ref = doc(db, "rooms", room.id);
+      const text = `${room.myNick} さんがニックネームを「${nick}」に変更しました`;
+      const batch = writeBatch(db);
+      batch.update(doc(db, "users", state.me.id, "openChats", room.id), { nick });
+      batch.update(ref, { [`nicks.${room.myAlias}`]: nick, lastMessage: openLastMessage(text, room.myAlias, nick), updatedAt: serverTimestamp() });
+      batch.set(doc(collection(ref, "messages")), openSystemMessage(text, room.myAlias, nick));
+      await batch.commit();
+      // 参加の記録の購読より先に開き直しても新しいニックネームが出るよう、手元のルームにも反映しておく
+      room.myNick = nick;
+      renderChatHeader();
+      openRoomInfo();
+      toast("ニックネームを変更しました");
     }
 
     // オープンチャットを探す：作成されたオープンチャットの一覧（端末で並べ替え・検索する）
@@ -3195,7 +3245,10 @@ const firebaseConfig = {
 
           ${member ? `
           <div class="mt-5 rounded-2xl bg-emerald-50 ring-1 ring-emerald-100 px-4 py-3">
-            <div class="text-xs font-semibold text-emerald-700">あなたのニックネーム</div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-semibold text-emerald-700">あなたのニックネーム</span>
+              <button type="button" data-action="rename-open" class="text-xs text-indigo-600 font-semibold hover:underline inline-flex items-center gap-1">${icon("pencil", "w-3.5 h-3.5")}変更</button>
+            </div>
             <div class="mt-0.5 font-semibold text-slate-800 truncate">${esc(room.myNick)} <span class="text-slate-400 font-normal text-xs">${aliasTag(room.myAlias)}</span>${owner ? ` <span class="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">作成者</span>` : ""}</div>
             <p class="text-xs text-emerald-700/80 leading-relaxed mt-1">ユーザー名・ユーザーID・アイコンは、他の参加者に表示されません。</p>
           </div>
@@ -3277,7 +3330,7 @@ const firebaseConfig = {
       const me = selfId(room);
       // オープンチャットのリアクションは alias で記録されるので、読み込んだメッセージのニックネームから名前を探す（見つからなければ「参加者」）
       const nicks = new Map(state.messages.filter((x) => x.senderName).map((x) => [x.senderId, x.senderName]));
-      const nameOf = (id) => (isOpen(room) ? (id === me ? room.myNick : nicks.get(id) || "参加者") : userName(id));
+      const nameOf = (id) => (isOpen(room) ? userName(id, nicks.get(id)) : userName(id));
       const subOf = (id) => (isOpen(room) ? aliasTag(id) : `@${id}`);
       const rows = entries.sort(([idA, a], [idB, b]) =>
         order(a) - order(b) || (idB === me) - (idA === me) || nameOf(idA).localeCompare(nameOf(idB), "ja"));
@@ -3523,7 +3576,7 @@ const firebaseConfig = {
     function canDeleteRoom(room) {
       if (!room || !state.rooms.some((r) => r.id === room.id)) return false; // 未作成の DM・未参加のグループ
       if (room.type === "dm") return true;
-      if (isOpen(room)) return !!room.myAlias && room.ownerAlias === room.myAlias; // オープンチャットは作成者のみ
+      if (isOpen(room)) return !!room.myAlias; // オープンチャットは参加者ならだれでも
       return room.createdBy === state.me.id || !!state.users.get(room.createdBy)?.deleted;
     }
 
@@ -3553,7 +3606,8 @@ const firebaseConfig = {
         }
       };
       try {
-        await deleteMessages();
+        // オープンチャットは参加者ならだれでも削除できるが、他の人のメッセージは消せないので、ルームを先に消してから残りを消す
+        if (!open) await deleteMessages();
         const batch = writeBatch(db);
         (room.members || []).forEach((id) => batch.delete(doc(roomRef, "reads", id))); // 既読の記録
         if (isDm) room.members.forEach((id) => batch.delete(doc(roomRef, "typing", id))); // 入力中の記録
@@ -6555,6 +6609,7 @@ const firebaseConfig = {
       "start-dm": (el) => startDM(el.dataset.id),
       "leave-group": () => leaveGroup(),
       "leave-open": () => leaveOpenChat(),
+      "rename-open": () => openRenameNick(),
       "create-open": () => openCreateOpenChat(),
       "browse-open": () => openBrowseOpenChats(),
       "open-join-open": (el) => openJoinOpenChat(el.dataset.id),
@@ -6682,6 +6737,7 @@ const firebaseConfig = {
       "form-create-group": (fd) => createGroup(fd.get("name"), fd.getAll("members")),
       "form-join": (fd) => joinGroup(parseInvite(fd.get("code"))),
       "form-create-open": (fd) => createOpenChat(fd.get("name"), fd.get("description"), fd.get("nick")),
+      "form-open-nick": (fd) => renameOpenNick(fd.get("nick")),
       "form-join-open": (fd) => joinOpenChat(String(fd.get("roomId") || ""), fd.get("nick")),
       "form-invite": (fd) => inviteMembers(fd.getAll("members")),
       "form-delete-account": (fd) => deleteAccount(fd.get("password")),
