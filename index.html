@@ -3076,7 +3076,7 @@ const firebaseConfig = {
       toast("オープンチャットを退出しました");
     }
 
-    // ニックネームの変更：参加の記録とルームの nicks を同時に書き換え、トークにお知らせを出す
+    // ニックネームの変更：参加の記録とルームの nicks を同時に書き換える（トークにお知らせは出さない）
     // （過去のメッセージも nicks で今のニックネームを表示する。alias は変わらない）
     function openRenameNick() {
       const room = currentRoom();
@@ -3085,7 +3085,7 @@ const firebaseConfig = {
         ${modalHead("ニックネームを変更", `「${esc(room.name)}」でのニックネーム`)}
         <form id="form-open-nick" class="px-6 pb-6 space-y-4">
           <input id="on-nick" name="nick" class="input" maxlength="${OPEN_MAX_NICK}" required autofocus autocomplete="off" value="${esc(room.myNick)}" />
-          <p class="text-xs text-slate-500 leading-relaxed">変更すると、トークにお知らせが表示され、これまでのメッセージの名前も新しいニックネームになります。ユーザー名・ユーザーIDは、これまでどおり表示されません。</p>
+          <p class="text-xs text-slate-500 leading-relaxed">変更すると、これまでのメッセージの名前も新しいニックネームになります（トークにお知らせは表示されません）。ユーザー名・ユーザーIDは、これまでどおり表示されません。</p>
           <p class="form-error" hidden></p>
           <div class="flex gap-3">
             <button type="button" data-action="room-info" class="btn-secondary flex-1">戻る</button>
@@ -3101,12 +3101,10 @@ const firebaseConfig = {
       if (!isOpen(room) || !isMember(room)) throw new Error("このトークのニックネームは変更できません。");
       const nick = checkNick(raw);
       if (nick === room.myNick) { openRoomInfo(); return; }
-      const ref = doc(db, "rooms", room.id);
-      const text = `${room.myNick} さんがニックネームを「${nick}」に変更しました`;
+      // トークにお知らせは出さない（一覧の並び順も変えない）
       const batch = writeBatch(db);
       batch.update(doc(db, "users", state.me.id, "openChats", room.id), { nick });
-      batch.update(ref, { [`nicks.${room.myAlias}`]: nick, lastMessage: openLastMessage(text, room.myAlias, nick), updatedAt: serverTimestamp() });
-      batch.set(doc(collection(ref, "messages")), openSystemMessage(text, room.myAlias, nick));
+      batch.update(doc(db, "rooms", room.id), { [`nicks.${room.myAlias}`]: nick });
       await batch.commit();
       // 参加の記録の購読より先に開き直しても新しいニックネームが出るよう、手元のルームにも反映しておく
       room.myNick = nick;
