@@ -1186,6 +1186,7 @@ const firebaseConfig = {
         unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null },
       });
       adminKey = null;
+      adminUnlock = null;
       signOut(auth).catch((e) => console.warn(e));
       applyRestriction();
       closeModal();
@@ -6059,6 +6060,11 @@ const firebaseConfig = {
     const maxText = () => (adminSettings.longText ? MAX_TEXT_LONG : MAX_TEXT_SHORT);
     // 管理者メニューのパスワードのハッシュ。メニューを開いている間だけ持ち、閉じたら消す
     let adminKey = null;
+    // ロック解除：{ key: パスワードのハッシュ, until: 期限 }。期限まではパスワードなしで管理者メニュー・制限ショートカットを使える。
+    // 期限が来るか、タブが非アクティブ（ウィンドウの最小化・タブの切り替えなど）になるとロックする。メモリにだけ持つ
+    let adminUnlock = null;
+    const adminUnlocked = () => !!adminUnlock && adminUnlock.until > Date.now();
+    const ADMIN_UNLOCK_MAX_HOURS = 24;
     const ADMIN_PASSWORD_ERROR = "管理者パスワードが正しくありません。";
 
     function subscribeSettings() {
@@ -6127,6 +6133,8 @@ const firebaseConfig = {
     let adminAfterUnlock = null;
     function openAdminUnlock(next = null) {
       if (!isAdmin()) return;
+      // ロック解除中はパスワードを聞かずに入る
+      if (adminUnlocked()) { adminKey = adminUnlock.key; if (next) next(); else openAdminMenu(); return; }
       adminKey = null;
       adminAfterUnlock = next;
       openModal(`
@@ -6167,10 +6175,72 @@ const firebaseConfig = {
           ${adminSwitch("longText", `全ユーザーの、1回に送信できる文字数を切り替えます。オンで最大${MAX_TEXT_LONG}文字、オフで最大${MAX_TEXT_SHORT}文字です（メッセージの編集も同じです）。送信済みのメッセージはそのまま残ります。`)}
           <button type="button" data-action="admin-restrict" class="btn-secondary w-full !mt-5">${icon("alert", "w-5 h-5")}アカウントの制限</button>
           <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
+          <div id="admin-lock-box"></div>
           <button type="button" data-close class="btn-primary w-full">閉じる</button>
         </div>`);
       renderAdminSettings();
+      renderAdminLock();
     }
+
+    // 管理者メニューの「ロックを解除」の欄（解除中は残り時間と「今すぐロック」）
+    function renderAdminLock() {
+      const box = $("#admin-lock-box");
+      if (!box) return;
+      box.innerHTML = adminUnlocked() ? `
+        <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
+          <div class="text-sm font-semibold text-slate-800">ロック解除中</div>
+          <div class="text-xs font-semibold text-emerald-600 mt-0.5">ロックまであと${remainSpan(adminUnlock.until)}</div>
+          <p class="text-xs text-slate-400 mt-2 leading-relaxed">この間は、管理者パスワードを入力しなくても管理者メニューに入ったり、DM で Ctrl+Shift+K の制限ショートカットを使えます。タブが非アクティブになる（ウィンドウの最小化・タブの切り替えなど）と、すぐにロックされます。</p>
+          <button type="button" data-action="admin-lock" class="btn-secondary w-full mt-3">${icon("shield", "w-5 h-5")}今すぐロック</button>
+        </div>` : `
+        <button type="button" data-action="admin-unlock-timed" class="btn-secondary w-full">${icon("shield", "w-5 h-5")}ロックを解除</button>`;
+    }
+
+    function openAdminUnlockTimed() {
+      if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
+      openAdminModal(`
+        ${modalHead("ロックを解除", "指定した時間の間、管理者パスワードを入力しなくても管理者メニューに入ったり、制限ショートカット（Ctrl+Shift+K）を使えます。")}
+        <form id="form-admin-unlock-timed" class="px-6 pb-6 space-y-4">
+          <div>
+            <span class="label">ロックを解除する時間</span>
+            <div class="flex items-center gap-2">
+              <input name="hours" type="number" min="0" max="${ADMIN_UNLOCK_MAX_HOURS}" step="1" inputmode="numeric" class="input" value="" placeholder="0" aria-label="時間" autofocus />
+              <span class="shrink-0 text-sm text-slate-600">時間</span>
+              <input name="minutes" type="number" min="0" max="59" step="1" inputmode="numeric" class="input" value="30" placeholder="0" aria-label="分" />
+              <span class="shrink-0 text-sm text-slate-600">分</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-2 leading-relaxed">タブが非アクティブになる（ウィンドウの最小化・タブの切り替えなど）と、時間が残っていてもロックされます。</p>
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-action="admin-menu" class="btn-secondary flex-1">戻る</button>
+            <button type="submit" class="btn-primary flex-1">解除する</button>
+          </div>
+        </form>`);
+    }
+
+    function startAdminUnlock(hours, minutes) {
+      if (!isAdmin() || !adminKey) return;
+      const h = Number(hours || 0), m = Number(minutes || 0);
+      if (!Number.isInteger(h) || !Number.isInteger(m) || h < 0 || h > ADMIN_UNLOCK_MAX_HOURS || m < 0 || m > 59) {
+        throw new Error(`時間は 0〜${ADMIN_UNLOCK_MAX_HOURS}、分は 0〜59 の整数で入力してください。`);
+      }
+      if (!h && !m) throw new Error("ロックを解除する時間を 1 分以上で指定してください。");
+      if (h * 60 + m > ADMIN_UNLOCK_MAX_HOURS * 60) throw new Error(`ロックを解除できるのは最大${ADMIN_UNLOCK_MAX_HOURS}時間です。`);
+      adminUnlock = { key: adminKey, until: Date.now() + (h * 60 + m) * 60000 };
+      openAdminMenu();
+      toast("管理者メニューのロックを解除しました");
+    }
+
+    function lockAdmin(message = "管理者メニューをロックしました") {
+      if (!adminUnlock) return;
+      adminUnlock = null;
+      renderAdminLock();
+      if (message) toast(message);
+    }
+    // タブが非アクティブになったら（最小化・タブの切り替え・ページを離れるなど）すぐにロックする
+    document.addEventListener("visibilitychange", () => { if (document.hidden) lockAdmin(); });
+    window.addEventListener("pagehide", () => lockAdmin(null));
 
     // 管理者メニューのオン/オフの設定（adminSettings の項目ごとの見出し・状態の表示・切り替えたときのトースト）
     const ADMIN_SWITCHES = {
@@ -6257,6 +6327,7 @@ const firebaseConfig = {
         throw e;
       }
       adminKey = hash;
+      if (adminUnlock) adminUnlock.key = hash;
       openAdminMenu();
       toast("管理者パスワードを変更しました");
     }
@@ -6314,6 +6385,7 @@ const firebaseConfig = {
     let lastRestrictTick = Date.now();
     setInterval(() => {
       const prev = lastRestrictTick, now = lastRestrictTick = Date.now();
+      if (adminUnlock && !adminUnlocked()) lockAdmin("ロック解除の時間が終わり、管理者メニューをロックしました");
       if (!state.me) return;
       document.querySelectorAll("[data-until]").forEach((el) => { el.textContent = remainText(+el.dataset.until); });
       const ended = (u) => { const t = ms(u?.restrictedUntil); return t > prev && t <= now; };
@@ -6706,6 +6778,8 @@ const firebaseConfig = {
       "delete-account": () => openDeleteAccount(),
       // 管理者
       "admin-unlock": () => openAdminUnlock(),
+      "admin-unlock-timed": () => openAdminUnlockTimed(),
+      "admin-lock": () => lockAdmin(),
       "admin-menu": () => openAdminMenu(),
       "admin-toggle": (el) => toggleAdminSetting(el.dataset.key),
       "admin-password": () => openAdminPassword(),
@@ -6782,6 +6856,7 @@ const firebaseConfig = {
       "form-groupIcon": () => saveDrawnGroupIcon(),
       "form-image": () => closeImageDrawer(true),
       "form-admin-unlock": (fd) => unlockAdmin(fd.get("password")),
+      "form-admin-unlock-timed": (fd) => startAdminUnlock(fd.get("hours"), fd.get("minutes")),
       "form-admin-password": (fd) => changeAdminPassword(fd.get("current"), fd.get("password"), fd.get("password2")),
       "form-admin-restrict": (fd) => restrictUser(fd.get("user"), fd.get("hours"), fd.get("minutes"), fd.get("direct") === "1"),
     };
