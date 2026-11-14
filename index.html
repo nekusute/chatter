@@ -1750,8 +1750,9 @@ const firebaseConfig = {
     // ============================================================
     const dmRoomId = (a, b) => "dm_" + [a, b].sort().join("~");
     const partnerOf = (room) => room.members?.find((m) => m !== state.me.id) || state.me.id;
-    // オープンチャットの参加者（alias）は、ルームの nicks にある今のニックネーム（無ければメッセージに書かれた送信時のニックネーム）
-    const userName = (id, fallback) => (OPEN_ALIAS_RE.test(id || "") ? aliasNicks.get(id) || fallback || "参加者" : state.users.get(id)?.name || fallback || id);
+    // オープンチャットの参加者（alias）は、メッセージに書かれた送信時のニックネーム（ニックネームを変えても過去のメッセージは変えない）。
+    // 送信時のニックネームが無いとき（リアクションした人など）は、ルームの nicks にある今のニックネーム
+    const userName = (id, fallback) => (OPEN_ALIAS_RE.test(id || "") ? fallback || aliasNicks.get(id) || "参加者" : state.users.get(id)?.name || fallback || id);
     // オープンチャットでは、自分を alias とニックネームで表す（ユーザーID・表示名はメッセージに書かない）
     const isOpen = (room) => room?.type === "open";
     const selfId = (room) => (isOpen(room) ? room.myAlias : state.me?.id);
@@ -1894,7 +1895,7 @@ const firebaseConfig = {
               <div class="flex items-center gap-1.5">
                 <span class="font-semibold truncate text-slate-800">${esc(roomTitle(r))}</span>
                 ${isOpen(r) ? `<span class="shrink-0 px-1.5 py-px rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-semibold">オープン</span>` : ""}
-                ${r.type === "group" ? `<span class="text-xs text-slate-400 shrink-0">(${r.members.length})</span>` : isOpen(r) ? `<span class="text-xs text-slate-400 shrink-0">(${Number(r.memberCount) || 0})</span>` : ""}
+                ${r.type === "group" ? `<span class="text-xs text-slate-400 shrink-0">(${r.members.length})</span>` : ""}
                 ${r.type !== "dm" && muted.has(r.id) ? `<span class="text-slate-300 shrink-0" title="通知オフ">${icon("bell-off", "w-3.5 h-3.5")}</span>` : ""}
                 <span class="ml-auto pl-2 text-[11px] shrink-0 ${unread ? "text-indigo-600 font-semibold" : "text-slate-400"}">${shortTime(lm?.createdAt || r.updatedAt)}</span>
               </div>
@@ -1958,7 +1959,7 @@ const firebaseConfig = {
                 <span class="font-semibold truncate text-slate-800">${esc(g.name)}</span>
                 ${isOpen(g) ? `<span class="shrink-0 px-1.5 py-px rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-semibold">オープン</span>` : ""}
               </div>
-              <div class="text-xs text-slate-400 truncate">${isOpen(g) ? `${Number(g.memberCount) || 0}人 ・ ニックネーム「${esc(g.myNick)}」` : `${g.members.length}人のメンバー`} ・ 最終更新 ${esc(relTime(g.updatedAt))}</div>
+              <div class="text-xs text-slate-400 truncate">${isOpen(g) ? `ニックネーム「${esc(g.myNick)}」` : `${g.members.length}人のメンバー`} ・ 最終更新 ${esc(relTime(g.updatedAt))}</div>
             </div>
           </button>`).join("");
     }
@@ -2084,7 +2085,7 @@ const firebaseConfig = {
             ? `<span class="text-emerald-600 font-medium">● オンライン</span>`
             : `@${esc(pid)}${u ? ` ・ 最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}`;
       } else if (isOpen(room)) {
-        subtitle = `オープンチャット ・ ${Number(room.memberCount) || 0}人${isMember(room) ? ` ・ ニックネーム「${esc(room.myNick)}」` : ""}${isMember(room) && mutedRooms().has(room.id) ? " ・ 通知オフ" : ""}`;
+        subtitle = `オープンチャット${isMember(room) ? ` ・ ニックネーム「${esc(room.myNick)}」` : ""}${isMember(room) && mutedRooms().has(room.id) ? " ・ 通知オフ" : ""}`;
       } else {
         subtitle = `${room.members?.length ?? 0}人のメンバー${isMember(room) && mutedRooms().has(room.id) ? " ・ 通知オフ" : ""}`;
       }
@@ -3025,12 +3026,11 @@ const firebaseConfig = {
         const mine = await getDoc(doc(db, "users", state.me.id, "openChats", roomId));
         if (mine.exists()) { closeModal(); openRoom(roomId, { id: roomId, ...data, myAlias: mine.data().alias, myNick: mine.data().nick }); return; }
         const alias = newAlias();
-        const text = `${nick} さんが参加しました`;
+        // 参加のお知らせは出さない（トークにも一覧のプレビューにも残さず、最終更新も変えない）
         const batch = writeBatch(db);
-        batch.update(ref, { memberCount: increment(1), lastMessage: openLastMessage(text, alias, nick), updatedAt: serverTimestamp() });
+        batch.update(ref, { memberCount: increment(1) });
         batch.set(doc(db, "users", state.me.id, "openChats", roomId), { alias, nick, joinedAt: serverTimestamp() });
         batch.set(doc(ref, "aliases", alias), { at: serverTimestamp() });
-        batch.set(doc(collection(ref, "messages")), openSystemMessage(text, alias, nick));
         try {
           await batch.commit();
         } catch (e) {
@@ -3045,13 +3045,11 @@ const firebaseConfig = {
       }
     }
 
-    // 退出：お知らせを送り、参加の記録を消して人数を減らす（alias の予約は残すので、同じ alias はだれも使えない）
+    // 退出：お知らせは出さずに、参加の記録を消して人数を減らす（alias の予約は残すので、同じ alias はだれも使えない）
     function leaveOpenChatBatch(room) {
       const ref = doc(db, "rooms", room.id);
-      const text = `${room.myNick} さんが退出しました`;
       const batch = writeBatch(db);
-      batch.update(ref, { memberCount: increment(-1), lastMessage: openLastMessage(text, room.myAlias, room.myNick), updatedAt: serverTimestamp() });
-      batch.set(doc(collection(ref, "messages")), openSystemMessage(text, room.myAlias, room.myNick));
+      batch.update(ref, { memberCount: increment(-1) });
       batch.delete(doc(db, "users", state.me.id, "openChats", room.id));
       return batch;
     }
@@ -3078,7 +3076,7 @@ const firebaseConfig = {
     }
 
     // ニックネームの変更：参加の記録とルームの nicks を同時に書き換える（トークにお知らせは出さない）
-    // （過去のメッセージも nicks で今のニックネームを表示する。alias は変わらない）
+    // （過去のメッセージは送信時のニックネームのまま。新しいニックネームはこのあと送るメッセージから。alias は変わらない）
     function openRenameNick() {
       const room = currentRoom();
       if (!isOpen(room) || !isMember(room)) return;
@@ -3086,7 +3084,7 @@ const firebaseConfig = {
         ${modalHead("ニックネームを変更", `「${esc(room.name)}」でのニックネーム`)}
         <form id="form-open-nick" class="px-6 pb-6 space-y-4">
           <input id="on-nick" name="nick" class="input" maxlength="${OPEN_MAX_NICK}" required autofocus autocomplete="off" value="${esc(room.myNick)}" />
-          <p class="text-xs text-slate-500 leading-relaxed">変更すると、これまでのメッセージの名前も新しいニックネームになります（トークにお知らせは表示されません）。ユーザー名・ユーザーIDは、これまでどおり表示されません。</p>
+          <p class="text-xs text-slate-500 leading-relaxed">これまでに送ったメッセージは前のニックネームのままで、新しいニックネームはこのあと送るメッセージから表示されます（トークにお知らせは表示されません）。ユーザー名・ユーザーIDは、これまでどおり表示されません。</p>
           <p class="form-error" hidden></p>
           <div class="flex gap-3">
             <button type="button" data-action="room-info" class="btn-secondary flex-1">戻る</button>
@@ -3163,7 +3161,7 @@ const firebaseConfig = {
             <div class="min-w-0 flex-1">
               <div class="font-semibold text-slate-800 truncate">${esc(r.name)}</div>
               ${r.description ? `<div class="text-xs text-slate-500 truncate">${esc(r.description)}</div>` : ""}
-              <div class="text-[11px] text-slate-400 truncate">${Number(r.memberCount) || 0}人 ・ 最終更新 ${esc(relTime(r.updatedAt))}</div>
+              <div class="text-[11px] text-slate-400 truncate">最終更新 ${esc(relTime(r.updatedAt))}</div>
             </div>
             ${joined
               ? `<button type="button" data-action="browse-open-room" data-id="${esc(r.id)}" class="btn-chip shrink-0 py-1.5 text-xs bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100">開く</button>`
@@ -3216,7 +3214,6 @@ const firebaseConfig = {
             <div class="min-w-0">
               <div class="font-semibold text-slate-800 truncate">${esc(room.name)}</div>
               ${room.description ? `<div class="text-xs text-slate-500 leading-relaxed">${esc(room.description)}</div>` : ""}
-              <div class="text-[11px] text-slate-400">${Number(room.memberCount) || 0}人が参加中</div>
             </div>
           </div>
           ${nickField()}
@@ -3237,7 +3234,6 @@ const firebaseConfig = {
             ${groupAvatar(room, "w-16 h-16")}
             <div class="min-w-0">
               <div class="font-bold text-lg text-slate-900 truncate">${esc(room.name)}</div>
-              <div class="text-sm text-slate-500">${Number(room.memberCount) || 0}人が参加中</div>
             </div>
           </div>
           ${room.description ? `<p class="mt-3 text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">${esc(room.description)}</p>` : ""}
@@ -3327,9 +3323,9 @@ const firebaseConfig = {
       const order = (code) => REACTION_CODES.indexOf(code);
       const room = currentRoom();
       const me = selfId(room);
-      // オープンチャットのリアクションは alias で記録されるので、読み込んだメッセージのニックネームから名前を探す（見つからなければ「参加者」）
+      // オープンチャットのリアクションは alias で記録されるので、今のニックネーム（無ければ読み込んだメッセージのニックネーム）で表示する（見つからなければ「参加者」）
       const nicks = new Map(state.messages.filter((x) => x.senderName).map((x) => [x.senderId, x.senderName]));
-      const nameOf = (id) => (isOpen(room) ? userName(id, nicks.get(id)) : userName(id));
+      const nameOf = (id) => (isOpen(room) ? userName(id, aliasNicks.get(id) || nicks.get(id)) : userName(id));
       const subOf = (id) => (isOpen(room) ? aliasTag(id) : `@${id}`);
       const rows = entries.sort(([idA, a], [idB, b]) =>
         order(a) - order(b) || (idB === me) - (idA === me) || nameOf(idA).localeCompare(nameOf(idB), "ja"));
