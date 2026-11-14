@@ -3231,11 +3231,12 @@ const firebaseConfig = {
         ${modalHead("オープンチャット情報")}
         <div class="px-6 pb-6">
           <div class="flex items-center gap-4">
-            ${groupAvatar(room, "w-16 h-16")}
+            <div id="group-icon">${groupAvatar(room, "w-16 h-16")}</div>
             <div class="min-w-0">
               <div class="font-bold text-lg text-slate-900 truncate">${esc(room.name)}</div>
             </div>
           </div>
+          ${member ? groupIconButtons(room) : ""}
           ${room.description ? `<p class="mt-3 text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">${esc(room.description)}</p>` : ""}
 
           ${member ? `
@@ -3767,20 +3768,26 @@ const firebaseConfig = {
       if (ok) toast("アイコンを削除しました");
     }
 
-    // ---- グループのアイコン（rooms/{id}.icon。メンバーならだれでも変えられ、トークにお知らせを出す） ----
+    // ---- グループ・オープンチャットのアイコン（rooms/{id}.icon。メンバー・参加者ならだれでも変えられ、トークにお知らせを出す） ----
     // icon：描いた SVG / 画像の data URL（ユーザーのアイコンと同じ形式）。null なら既定のアイコンに戻す
+    // オープンチャットのお知らせは、ユーザー名ではなくニックネーム（送信者は alias）で出す
+    const roomKindLabel = (room) => (isOpen(room) ? "オープンチャット" : "グループ");
+    const canSetRoomIcon = (room) => !!room && (room.type === "group" || isOpen(room)) && isMember(room);
     async function setGroupIcon(roomId, icon) {
       const room = state.rooms.find((r) => r.id === roomId);
-      if (!room || room.type !== "group" || !isMember(room)) throw new Error("このグループのアイコンは変更できません。");
+      if (!canSetRoomIcon(room)) throw new Error("このトークのアイコンは変更できません。");
       const ref = doc(db, "rooms", roomId);
-      const text = `${state.me.name} さんがグループのアイコンを${icon ? "変更" : "削除"}しました`;
+      const open = isOpen(room);
+      const text = `${selfName(room)} さんが${roomKindLabel(room)}のアイコンを${icon ? "変更" : "削除"}しました`;
       const batch = writeBatch(db);
       batch.update(ref, {
         icon: icon || deleteField(),
-        lastMessage: { type: "system", text, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() },
+        lastMessage: open
+          ? openLastMessage(text, room.myAlias, room.myNick)
+          : { type: "system", text, senderId: state.me.id, senderName: state.me.name, createdAt: serverTimestamp() },
         updatedAt: serverTimestamp(),
       });
-      batch.set(doc(collection(ref, "messages")), systemMessage(text));
+      batch.set(doc(collection(ref, "messages")), open ? openSystemMessage(text, room.myAlias, room.myNick) : systemMessage(text));
       await batch.commit();
       // 一覧の購読より先にグループ情報を開き直しても新しいアイコンが出るよう、手元のルームにも反映しておく
       if (icon) room.icon = icon; else delete room.icon;
@@ -3791,8 +3798,8 @@ const firebaseConfig = {
     // グループのアイコンを描く（今のアイコンが描いたものなら、その続きから描ける）
     function openGroupIconEditor() {
       const room = currentRoom();
-      if (!room || room.type !== "group" || !isMember(room)) return;
-      openDrawEditor({ kind: "groupIcon", id: room.id, svg: PATH_SVG_RE.test(room.icon || "") ? room.icon : null, title: "グループのアイコンを描く" });
+      if (!canSetRoomIcon(room)) return;
+      openDrawEditor({ kind: "groupIcon", id: room.id, svg: PATH_SVG_RE.test(room.icon || "") ? room.icon : null, title: `${roomKindLabel(room)}のアイコンを描く` });
     }
 
     async function saveDrawnGroupIcon() {
@@ -3803,8 +3810,9 @@ const firebaseConfig = {
       if (svg.length > ICON_MAX_SVG) throw new Error("アイコンのデータが大きすぎます。線の数を減らしてください。");
       await setGroupIcon(ed.id, svg);
       store.remove(draftKey(ed));
-      openRoomInfo(); // グループ情報に戻る
-      toast("グループのアイコンを変更しました");
+      const room = state.rooms.find((r) => r.id === ed.id);
+      openRoomInfo(); // グループ情報・オープンチャット情報に戻る
+      toast(`${roomKindLabel(room)}のアイコンを変更しました`);
     }
 
     async function uploadGroupIcon(file) {
@@ -3820,21 +3828,22 @@ const firebaseConfig = {
         throw e;
       }
       if ($("#group-icon")) openRoomInfo(); // 削除ボタンを出すため描き直す
-      toast("グループのアイコンを変更しました");
+      toast(`${roomKindLabel(room)}のアイコンを変更しました`);
     }
 
     async function removeGroupIcon() {
       const room = currentRoom();
       if (!room?.icon) return;
+      const kind = roomKindLabel(room);
       const ok = await confirmDialog({
-        title: "グループのアイコンを削除しますか？",
-        message: "設定したアイコンを削除して、既定のグループのアイコンに戻します。",
+        title: `${kind}のアイコンを削除しますか？`,
+        message: `設定したアイコンを削除して、既定の${kind}のアイコンに戻します。`,
         ok: "削除する",
         danger: true,
       });
       if (ok) await setGroupIcon(room.id, null);
       openRoomInfo();
-      if (ok) toast("グループのアイコンを削除しました");
+      if (ok) toast(`${kind}のアイコンを削除しました`);
     }
 
     function handleJoinHash() {
@@ -5973,7 +5982,7 @@ const firebaseConfig = {
         </div>`;
     };
 
-    // グループ情報の、グループのアイコンの変更・削除のボタン（メンバーならだれでも変えられる）
+    // グループ情報・オープンチャット情報の、アイコンの変更・削除のボタン（メンバー・参加者ならだれでも変えられる）
     const groupIconButtons = (room) => {
       const chip = "btn-chip py-1.5 text-xs bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100";
       return `
