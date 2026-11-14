@@ -517,7 +517,7 @@ const firebaseConfig = {
             <div id="reply-bar" class="max-w-5xl mx-auto mb-2 flex items-center gap-2" hidden></div>
             <div class="max-w-5xl mx-auto flex items-end gap-2">
               <div class="flex-1 min-w-0 bg-slate-100 rounded-3xl px-4 py-2.5 border border-transparent transition focus-within:bg-white focus-within:border-indigo-300 focus-within:ring-4 focus-within:ring-indigo-500/15">
-                <textarea id="msg-input" rows="1" maxlength="10000" enterkeyhint="enter" class="block w-full resize-none bg-transparent outline-none text-base leading-6 max-h-36 placeholder:text-slate-400" placeholder="メッセージを入力"></textarea>
+                <textarea id="msg-input" rows="1" maxlength="30000" enterkeyhint="enter" class="block w-full resize-none bg-transparent outline-none text-base leading-6 max-h-36 placeholder:text-slate-400" placeholder="メッセージを入力"></textarea>
               </div>
               <label for="image-file" id="image-btn" role="button" tabindex="0" class="w-11 h-11 shrink-0 rounded-full grid place-items-center text-slate-500 cursor-pointer transition hover:bg-slate-100 hover:text-indigo-600 active:scale-95" aria-label="画像を送信" title="画像を送信">
                 <span data-icon="photo" data-icon-class="w-6 h-6"></span>
@@ -587,7 +587,7 @@ const firebaseConfig = {
     const MESSAGE_LIMIT = 100;              // 1ルームで最初に読み込む最新メッセージ数（上へスクロールすると、この件数ずつ古いメッセージを読み込む）
     const SEARCH_PAGE = 500;                // メッセージの検索で一度に読み込む数（「さらに古いメッセージを検索」で増やす）
     const MAX_TEXT_SHORT = 1000;            // 1メッセージの最大文字数（管理者の「長文の送信」がオフのとき。firestore.rules と合わせる）
-    const MAX_TEXT_LONG = 10000;            // 1メッセージの最大文字数（「長文の送信」がオンのとき）
+    const MAX_TEXT_LONG = 30000;          // 1メッセージの最大文字数（「長文の送信」がオンのとき）
     const EDIT_WINDOW = 10 * 60 * 1000;     // 送信後にテキストのメッセージを編集できる時間（firestore.rules と合わせる）
     const ONLINE_MS = 6 * 60 * 1000;        // タブを表示していて、この時間内に最終アクティブ時刻の更新があれば「オンライン」
     const PRESENCE_INTERVAL = 5 * 60 * 1000; // 最終アクティブ時刻の更新間隔
