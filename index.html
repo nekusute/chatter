@@ -3911,6 +3911,7 @@ const firebaseConfig = {
 
     // メッセージを1件書き込み、一覧用の lastMessage を更新する（未作成の DM はルームも作成）
     async function postMessage(room, message, lastMessage) {
+      if (message.imageUrl && !adminSettings.rawImage) throw new Error("画像ファイルのまま送る機能は、管理者が停止しています。");
       if (isOpen(room)) {
         if (message.imageUrl) throw new Error("オープンチャットには、画像ファイルのままの画像は送れません（SVG に埋め込んで送ってください）。");
         message = anonymize(room, message);
@@ -4114,7 +4115,7 @@ const firebaseConfig = {
 
     // ---- 画像の転送（表示できる SVG の画像だけ。転送先は今のトーク以外で送信できるトーク） ----
     // 転送は元の画像（SVG・大きさ・本文）をそのままコピーして、転送先のトークに新しいメッセージとして送る
-    const isForwardableImage = (m) => m?.type === "image" && (isRawImage(m) || isSvgImage(m.image)) && !!msgImageSrc(m) && Number(m.w) >= 1 && Number(m.h) >= 1;
+    const isForwardableImage = (m) => m?.type === "image" && ((isRawImage(m) && adminSettings.rawImage) || isSvgImage(m.image)) && !!msgImageSrc(m) && Number(m.w) >= 1 && Number(m.h) >= 1;
     const forwardImageChip = (m) => isForwardableImage(m)
       ? `<button type="button" data-action="forward-image" data-id="${esc(m.id)}" class="btn-chip py-1.5 text-xs bg-white text-indigo-600 ring-1 ring-indigo-200 shadow-sm hover:bg-indigo-50">${icon("forward", "w-3.5 h-3.5")}転送</button>`
       : "";
@@ -4262,7 +4263,7 @@ const firebaseConfig = {
             <button type="button" id="is-crop" data-action="is-crop" class="btn-secondary flex-1 py-2.5 text-sm" disabled>${icon("crop", "w-4 h-4")}トリミング</button>
             <button type="button" id="is-draw" data-action="is-draw" class="btn-secondary flex-1 py-2.5 text-sm" disabled>${icon("pencil", "w-4 h-4")}描く</button>
           </div>
-          ${RASTER_TYPES.includes(s.type) && s.file.size <= RAW_IMAGE_MAX_BYTES && !isOpen(state.rooms.find((r) => r.id === s.roomId)) ? `<button type="button" id="is-raw" data-action="is-raw" class="btn-secondary w-full py-2.5 text-sm">${icon("send", "w-4 h-4")}元の画像ファイルのまま送る（${fmtBytes(s.file.size)}）</button>` : ""}
+          <div id="is-raw-box">${rawImageButton(s)}</div>
           <p class="text-xs text-slate-500 leading-relaxed">画像は SVG の中に埋め込んで送信します（50KB を超えるときは圧縮します）。圧縮のあと「トリミング」で送る範囲を選んだり、「描く」で画像にペンで書き込んだりできます。</p>
           <p id="is-status" class="text-xs leading-relaxed rounded-xl px-3 py-2" hidden></p>
           <div class="flex gap-3">
@@ -4333,10 +4334,27 @@ const firebaseConfig = {
       renderImageStatus();
     }
 
+    // 「元の画像ファイルのまま送る」ボタン（管理者がオフにしている・オープンチャット・送れない形式や大きさのときは出さない）
+    const canSendRawImage = (s) => adminSettings.rawImage && RASTER_TYPES.includes(s.type) && s.file.size <= RAW_IMAGE_MAX_BYTES
+      && !isOpen(state.rooms.find((r) => r.id === s.roomId));
+    const rawImageButton = (s) => canSendRawImage(s)
+      ? `<button type="button" id="is-raw" data-action="is-raw" class="btn-secondary w-full py-2.5 text-sm">${icon("send", "w-4 h-4")}元の画像ファイルのまま送る（${fmtBytes(s.file.size)}）</button>`
+      : "";
+    // 送信画面を開いている間に管理者が設定を切り替えたら、ボタンを出し入れする
+    function renderRawImageButton() {
+      const box = $("#is-raw-box");
+      if (!box || !imgSend) return;
+      const busy = !$("#is-busy")?.hidden; // 変換中・アップロード中
+      box.innerHTML = rawImageButton(imgSend);
+      const btn = $("#is-raw");
+      if (btn && (busy || imgSend.crop || imgSend.strokes.length)) btn.disabled = true;
+    }
+
     // 画像ファイルを元のまま送る（Storage にアップロードして、その URL をメッセージに入れる）
     async function sendRawImage() {
       const s = imgSend;
       if (!s || !RASTER_TYPES.includes(s.type) || s.file.size > RAW_IMAGE_MAX_BYTES || s.crop || s.strokes.length) return;
+      if (!adminSettings.rawImage) { renderRawImageButton(); toast("画像ファイルのまま送る機能は、管理者が停止しています", "error"); return; }
       const room = currentRoom();
       if (!room || room.id !== s.roomId || !canSend(room)) { closeModal(); throw new Error("トークが切り替わったため、画像を送信できませんでした。"); }
       if (isOpen(room)) return; // オープンチャットでは、URL に uid が入るため送らない
@@ -4344,7 +4362,7 @@ const firebaseConfig = {
         $("#is-busy").hidden = !on;
         if (on) setImageBusy("アップロード中…");
         $("#is-send").disabled = on || !s.result?.ok;
-        $("#is-raw").disabled = on;
+        if ($("#is-raw")) $("#is-raw").disabled = on;
       };
       busy(true);
       let url;
@@ -6061,7 +6079,8 @@ const firebaseConfig = {
     // signupOpen：新規ユーザーの募集 / readReceipts：既読の表示（どちらも文書に無ければオン）
     // hideOnline：管理者のオンライン状態と入力中を全員から隠す（文書に無ければオフ）
     // longText：長文の送信。全ユーザーの1メッセージの最大文字数を切り替える（文書に無ければオン）
-    let adminSettings = { signupOpen: true, readReceipts: true, hideOnline: false, longText: true };
+    // rawImage：画像ファイルのまま送る機能（Storage にアップロードする画像）。全ユーザーに効く（文書に無ければオン）
+    let adminSettings = { signupOpen: true, readReceipts: true, hideOnline: false, longText: true, rawImage: true };
     const maxText = () => (adminSettings.longText ? MAX_TEXT_LONG : MAX_TEXT_SHORT);
     // 管理者メニューのパスワードのハッシュ。メニューを開いている間だけ持ち、閉じたら消す
     let adminKey = null;
@@ -6077,7 +6096,7 @@ const firebaseConfig = {
         doc(db, "admin", "settings"),
         (snap) => {
           const d = snap.data();
-          applySettings({ signupOpen: d?.signupOpen !== false, readReceipts: d?.readReceipts !== false, hideOnline: d?.hideOnline === true, longText: d?.longText !== false });
+          applySettings({ signupOpen: d?.signupOpen !== false, readReceipts: d?.readReceipts !== false, hideOnline: d?.hideOnline === true, longText: d?.longText !== false, rawImage: d?.rawImage !== false });
         },
         (e) => console.warn(e), // 読めないときは既定の設定（募集中・既読を表示）のまま
       );
@@ -6085,7 +6104,9 @@ const firebaseConfig = {
     function applySettings(next) {
       const readChanged = next.readReceipts !== adminSettings.readReceipts;
       const hideChanged = next.hideOnline !== adminSettings.hideOnline;
+      const rawChanged = next.rawImage !== adminSettings.rawImage;
       adminSettings = next;
+      if (rawChanged) renderRawImageButton();
       $("#msg-input").maxLength = maxText();
       renderSignupState();
       renderAdminSettings();
@@ -6178,6 +6199,7 @@ const firebaseConfig = {
           ${adminSwitch("readReceipts", "オンにすると、あなたが送ったメッセージの横に、相手が読むと「既読」（グループは読んだ人数。タップでだれが読んだか）が表示されます。この表示は管理者にだけ見えます。オフの間も既読は記録されるので、オンに戻すとすぐに表示されます。")}
           ${adminSwitch("hideOnline", "オンにしている間は、あなたのオンライン状態（緑の点・「オンライン」）と DM の「入力中...」が、全員から見えなくなります。最終アクティブの時刻も更新されません。")}
           ${adminSwitch("longText", `全ユーザーの、1回に送信できる文字数を切り替えます。オンで最大${MAX_TEXT_LONG}文字、オフで最大${MAX_TEXT_SHORT}文字です（メッセージの編集も同じです）。送信済みのメッセージはそのまま残ります。`)}
+          ${adminSwitch("rawImage", "オフにすると、全ユーザーが画像を送るときの「元の画像ファイルのまま送る」が使えなくなり、画像ファイルのままの画像の転送もできなくなります（SVG に埋め込んで送る方法はこれまでどおり使えます）。送信済みの画像はそのまま表示されます。")}
           <button type="button" data-action="admin-restrict" class="btn-secondary w-full !mt-5">${icon("alert", "w-5 h-5")}アカウントの制限</button>
           <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
           <div id="admin-lock-box"></div>
@@ -6253,6 +6275,7 @@ const firebaseConfig = {
       readReceipts: { label: "既読の表示", on: "表示する", off: "表示しない", toastOn: "既読を表示するようにしました", toastOff: "既読を表示しないようにしました" },
       hideOnline: { label: "オンラインを隠す", on: "隠している", off: "隠していない", toastOn: "オンライン状態と入力中を隠しました", toastOff: "オンライン状態と入力中を表示するようにしました" },
       longText: { label: "長文の送信", on: `オン（最大${MAX_TEXT_LONG}文字）`, off: `オフ（最大${MAX_TEXT_SHORT}文字）`, toastOn: `1回に送信できる文字数を最大${MAX_TEXT_LONG}文字にしました`, toastOff: `1回に送信できる文字数を最大${MAX_TEXT_SHORT}文字にしました` },
+      rawImage: { label: "画像ファイルのまま送る", on: "使える", off: "使えない", toastOn: "画像ファイルのまま送れるようにしました", toastOff: "画像ファイルのまま送れないようにしました" },
     };
     const adminSwitch = (key, note) => `
       <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
