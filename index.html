@@ -361,6 +361,9 @@ const firebaseConfig = {
             <div>
               <label for="login-password" class="label">パスワード</label>
               <input id="login-password" name="password" type="password" class="input" autocomplete="current-password" required />
+              <div class="text-right mt-1.5">
+                <button type="button" data-action="forgot-password" class="text-xs text-indigo-600 font-semibold hover:underline">パスワードを忘れた場合</button>
+              </div>
             </div>
             <p class="form-error" hidden></p>
             <button type="submit" class="btn-primary w-full"><span data-icon="login"></span>ログイン</button>
@@ -574,7 +577,7 @@ const firebaseConfig = {
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
     import {
       getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
-      EmailAuthProvider, reauthenticateWithCredential, updatePassword,
+      EmailAuthProvider, reauthenticateWithCredential, updatePassword, deleteUser,
     } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
     import {
       initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
@@ -1037,7 +1040,7 @@ const firebaseConfig = {
         const snap = await getDoc(doc(db, "users", id));
         if (!snap.exists()) throw new Error("このユーザーIDは登録されていません。「新規登録」から作成してください。");
         if (snap.data().deleted) throw new Error("このアカウントは削除されています。");
-        if (!snap.data().uid) { openSetPassword(id); return; } // パスワード導入前に作ったID
+        if (!snap.data().uid) { openSetPassword(id, !!snap.data().pwReset); return; } // パスワード導入前に作ったID / 管理者がリセットしたID
         throw new Error("パスワードが正しくありません。");
       }
       await enterWithAuthUser();
@@ -1070,16 +1073,70 @@ const firebaseConfig = {
       throw new Error("IDの発行に失敗しました。もう一度お試しください。");
     }
 
-    // パスワード導入前に作ったID：最初にパスワードを設定した人のアカウントになる
-    function openSetPassword(id) {
+    // パスワードのリセット：管理者が発行したリセットコード（generateId と同じ8文字。表示は4文字ずつ区切る）。
+    // Firestore にはハッシュだけを保存する（firestore.rules の pwResets と合わせる）
+    const RESET_DAYS = 7;
+    const fmtResetCode = (code) => `${code.slice(0, 4)}-${code.slice(4)}`;
+    const normResetCode = (raw) => String(raw ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    async function resetHash(code) {
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`chatter-reset:${code}`));
+      return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    // ログイン画面の「パスワードを忘れた場合」
+    function openForgotPassword() {
+      const id = normId($("#login-id").value);
       openModal(`
-        ${modalHead("パスワードを設定", `<b class="text-slate-800">@${esc(id)}</b> にはまだパスワードが設定されていません。`)}
+        ${modalHead("パスワードを忘れた場合", "管理者にリセットしてもらうと、新しいパスワードを設定できます。")}
+        <form id="form-forgot" class="px-6 pb-6 space-y-4">
+          <ol class="text-sm text-slate-600 leading-relaxed list-decimal pl-5 space-y-1">
+            <li>管理者（<b class="text-slate-800">@${esc(ADMIN_ID)}</b>）に、Chatter の外で連絡して、パスワードのリセットを頼んでください。</li>
+            <li>管理者から「リセットコード」を受け取ったら、下にユーザーIDを入力して進んでください。</li>
+          </ol>
+          <div>
+            <label class="label" for="fp-id">ユーザーID</label>
+            <div class="relative">
+              <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">@</span>
+              <input id="fp-id" name="id" class="input pl-9" value="${esc(ID_RE.test(id) ? id : "")}" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="your-id" autofocus />
+            </div>
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-close class="btn-secondary flex-1">キャンセル</button>
+            <button type="submit" class="btn-primary flex-1">リセットコードを入力</button>
+          </div>
+        </form>`);
+    }
+
+    async function startForgotReset(rawId) {
+      const id = normId(rawId);
+      if (!ID_RE.test(id)) throw new Error(ID_FORMAT_ERROR);
+      const snap = await getDoc(doc(db, "users", id));
+      if (!snap.exists()) throw new Error("このユーザーIDは登録されていません。");
+      if (snap.data().deleted) throw new Error("このアカウントは削除されています。");
+      if (!snap.data().pwReset) throw new Error("このユーザーIDはまだリセットされていません。管理者にリセットを頼んでください。");
+      openSetPassword(id, true);
+    }
+
+    // パスワード導入前に作ったID：最初にパスワードを設定した人のアカウントになる。
+    // reset：管理者がリセットしたID（リセットコードを入力した人のアカウントになる）
+    function openSetPassword(id, reset = false) {
+      openModal(`
+        ${modalHead(reset ? "新しいパスワードを設定" : "パスワードを設定", reset
+          ? `<b class="text-slate-800">@${esc(id)}</b> のパスワードは管理者によってリセットされています。`
+          : `<b class="text-slate-800">@${esc(id)}</b> にはまだパスワードが設定されていません。`)}
         <form id="form-set-password" class="px-6 pb-6 space-y-4">
           <input type="text" name="id" value="${esc(id)}" autocomplete="username" hidden />
-          <p class="text-sm text-slate-600 leading-relaxed">新しいパスワードを設定してログインします。次回からはこのパスワードが必要です。</p>
+          ${reset ? `<input type="hidden" name="reset" value="1" />` : ""}
+          <p class="text-sm text-slate-600 leading-relaxed">${reset ? "管理者から受け取ったリセットコードを入力して、" : ""}新しいパスワードを設定してログインします。次回からはこのパスワードが必要です。</p>
+          ${reset ? `
+          <div>
+            <label class="label" for="sp-code">リセットコード</label>
+            <input id="sp-code" name="code" class="input font-mono tracking-widest" autocomplete="one-time-code" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="xxxx-xxxx" autofocus />
+          </div>` : ""}
           <div>
             <label class="label" for="sp-password">新しいパスワード <span class="text-slate-400 font-normal">（${MIN_PASSWORD}文字以上）</span></label>
-            <input id="sp-password" name="password" type="password" class="input" autocomplete="new-password" autofocus />
+            <input id="sp-password" name="password" type="password" class="input" autocomplete="new-password"${reset ? "" : " autofocus"} />
           </div>
           <div>
             <label class="label" for="sp-password2">新しいパスワード（確認）</label>
@@ -1093,12 +1150,37 @@ const firebaseConfig = {
         </form>`);
     }
 
-    async function setLegacyPassword(rawId, password, password2) {
+    async function setLegacyPassword(rawId, password, password2, rawCode = null) {
       const id = normId(rawId);
+      const code = rawCode == null ? null : normResetCode(rawCode);
+      if (code !== null && code.length !== 8) throw new Error("リセットコード（8文字）を入力してください。");
       const pw = checkNewPassword(password, password2);
       const snap = await getDoc(doc(db, "users", id));
-      if (!snap.exists() || snap.data().deleted || snap.data().uid) throw new Error("このユーザーIDにはパスワードを設定できません。");
-      await createUserWithEmailAndPassword(auth, emailOf(id), pw);
+      if (!snap.exists() || snap.data().deleted || snap.data().uid || !!snap.data().pwReset !== (code !== null)) {
+        throw new Error("このユーザーIDにはパスワードを設定できません。");
+      }
+      try {
+        await createUserWithEmailAndPassword(auth, emailOf(id), pw);
+      } catch (e) {
+        if (e.code === "auth/email-already-in-use" && code !== null) {
+          throw new Error("このIDのログイン用アカウントがまだ残っています。管理者に、Firebase の Authentication から削除してもらってください。");
+        }
+        throw e;
+      }
+      if (code !== null) {
+        // リセットコードを確かめて、このアカウントを同じIDに付け直す。違っていたら、作ったアカウントを消してやり直せるようにする
+        try {
+          const batch = writeBatch(db);
+          batch.update(doc(db, "pwResets", id), { code, usedAt: serverTimestamp() });
+          batch.update(doc(db, "users", id), { uid: auth.currentUser.uid, lastSeen: serverTimestamp(), pwReset: deleteField() });
+          await batch.commit();
+        } catch (e) {
+          await deleteUser(auth.currentUser).catch(() => signOut(auth).catch(() => {}));
+          if (e.code === "permission-denied") throw new Error(`リセットコードが正しくないか、有効期限（${RESET_DAYS}日）が切れています。`);
+          throw e;
+        }
+        deleteDoc(doc(db, "pwResets", id)).catch((e) => console.warn(e)); // 使ったコードは消す
+      }
       await enterWithAuthUser();
       closeModal();
       toast("パスワードを設定しました");
@@ -1121,6 +1203,7 @@ const firebaseConfig = {
       } else {
         profile = snap.data();
         if (profile.deleted) return reject("このアカウントは削除されています。");
+        if (!profile.uid && profile.pwReset) return reject("パスワードは管理者によってリセットされています。ログイン画面の「パスワードを忘れた場合」から、新しいパスワードを設定してください。");
         if (!profile.uid) await updateDoc(ref, { uid: user.uid, lastSeen: serverTimestamp() }); // パスワード導入前に作ったID
         else if (profile.uid !== user.uid) return reject("このユーザーIDは別のアカウントで使われています。");
       }
@@ -1170,6 +1253,14 @@ const firebaseConfig = {
       });
       if (!ok) return;
       resetSession();
+    }
+
+    // 管理者がパスワードをリセットした（ユーザー文書の uid が外れた）ので、この端末もログアウトする
+    function signOutForReset() {
+      if (!state.me) return;
+      state.accountDeleting = true; // 書き込めないので、在席・入力中を消さない
+      resetSession();
+      toast("管理者がパスワードをリセットしました。新しいパスワードを設定してください", "error");
     }
 
     // 購読を止めてログアウトし、状態を初期化してログイン画面へ戻す
@@ -1577,6 +1668,7 @@ const firebaseConfig = {
         const snap = await getDoc(doc(db, "users", me.id)).catch(() => null);
         if (state.me !== me) return;
         if (snap?.data()?.deleted) { resetSession(); toast("このアカウントは削除されました", "error"); return; }
+        if (snap && snap.data()?.uid !== state.uid) { await signOutForReset(); return; }
       }
       toast(errMsg(e), "error");
     }
@@ -1595,12 +1687,14 @@ const firebaseConfig = {
             toast("このアカウントは削除されました", "error");
             return;
           }
+          if (mine && mine.uid !== state.uid && !snap.metadata.fromCache) { signOutForReset(); return; } // 管理者がパスワードをリセットした
           if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; }
           state.usersLoaded = true;
           applyRestriction();
           renderSidebar();
           renderChatHeader();
           renderRestrictList();
+          renderResetList();
           if (iconChanged && state.activeRoomId && state.messagesLoaded) renderMessages(); // 吹き出しの横のアイコンを更新
         },
         onListenError,
@@ -6373,12 +6467,17 @@ const firebaseConfig = {
     // 管理者の書き込み：admin/secret に今のパスワードのハッシュ（proof）を書いて、ルールでパスワードを確かめる。
     // 設定の変更は同じトランザクションで書く（トランザクションはこの端末のキャッシュに残らないので、ハッシュが端末に保存されない）
     // restrict：アカウントの制限 { id, until }（until が null なら解除）
-    async function adminWrite(proof, { hash = proof, settings = null, restrict = null } = {}) {
+    // reset：パスワードのリセット { id, hash }（uid を外し、リセットコードのハッシュを置く）
+    async function adminWrite(proof, { hash = proof, settings = null, restrict = null, reset = null } = {}) {
       try {
         await runTransaction(db, async (tx) => {
           tx.set(doc(db, "admin", "secret"), { hash, proof, at: serverTimestamp() });
           if (settings) tx.set(doc(db, "admin", "settings"), { ...settings, updatedAt: serverTimestamp() }, { merge: true });
           if (restrict) tx.update(doc(db, "users", restrict.id), { restrictedUntil: restrict.until ?? deleteField() });
+          if (reset) {
+            tx.set(doc(db, "pwResets", reset.id), { hash: reset.hash, createdAt: serverTimestamp() });
+            tx.update(doc(db, "users", reset.id), { uid: deleteField(), pwReset: true });
+          }
         });
       } catch (e) {
         if (e.code === "permission-denied") throw new Error(ADMIN_PASSWORD_ERROR);
@@ -6438,6 +6537,7 @@ const firebaseConfig = {
           ${adminSwitch("longText", `全ユーザーの、1回に送信できる文字数を切り替えます。オンで最大${MAX_TEXT_LONG}文字、オフで最大${MAX_TEXT_SHORT}文字です（メッセージの編集も同じです）。送信済みのメッセージはそのまま残ります。`)}
           ${adminSwitch("rawImage", "オフにすると、全ユーザーが画像を送るときの「元の画像ファイルのまま送る」が使えなくなり、画像ファイルのままの画像の転送もできなくなります（SVG に埋め込んで送る方法はこれまでどおり使えます）。送信済みの画像はそのまま表示されます。")}
           <button type="button" data-action="admin-restrict" class="btn-secondary w-full !mt-5">${icon("alert", "w-5 h-5")}アカウントの制限</button>
+          <button type="button" data-action="admin-reset" class="btn-secondary w-full">${icon("key", "w-5 h-5")}パスワードのリセット</button>
           <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
           <div id="admin-lock-box"></div>
           <button type="button" data-close class="btn-primary w-full">閉じる</button>
@@ -6784,6 +6884,93 @@ const firebaseConfig = {
       toast(`${userName(el.dataset.id)} さんの制限を解除しました`);
     }
 
+    // 管理者メニュー：パスワードのリセット（ユーザーの一覧。リセット待ちのユーザーが先頭）
+    function openAdminReset() {
+      if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
+      openAdminModal(`
+        ${modalHead("パスワードのリセット", "パスワードを忘れたユーザーを選ぶと、リセットコードを発行します。")}
+        <div class="px-6">
+          <div class="relative">
+            <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">${icon("search", "w-4 h-4")}</span>
+            <input id="apr-search" type="search" class="input pl-10 py-2.5 bg-slate-50 border-transparent" placeholder="ユーザーを検索" autocomplete="off" />
+          </div>
+        </div>
+        <div id="apr-list" class="mt-2 px-3 max-h-80 overflow-y-auto scroll-thin"></div>
+        <div class="px-6 pt-3 pb-6">
+          <button type="button" data-action="admin-menu" class="btn-secondary w-full">戻る</button>
+        </div>`);
+      renderResetList();
+    }
+    function renderResetList() {
+      const list = $("#apr-list");
+      if (!list) return;
+      const q = $("#apr-search").value.trim().toLowerCase();
+      const users = [...state.users.values()]
+        .filter((u) => u.id !== ADMIN_ID && !u.deleted && (!q || `${u.name} ${u.id}`.toLowerCase().includes(q)))
+        .sort((a, b) => (!!b.pwReset - !!a.pwReset) || String(a.name).localeCompare(String(b.name), "ja"));
+      list.innerHTML = users.map((u) => `
+        <button type="button" data-action="admin-reset-user" data-id="${esc(u.id)}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:bg-slate-50">
+          ${avatar(u.id, u.name, "w-10 h-10 text-sm")}
+          <div class="min-w-0 flex-1">
+            <div class="font-medium text-slate-800 truncate">${esc(u.name)}</div>
+            <div class="text-xs text-slate-400 truncate">@${esc(u.id)}${u.pwReset ? ` ・ <span class="text-amber-600 font-semibold">リセット待ち</span>` : ""}</div>
+          </div>
+        </button>`).join("") || `<p class="text-sm text-slate-400 text-center py-6">${q ? "該当するユーザーはいません" : "他のユーザーはまだいません"}</p>`;
+    }
+
+    // 選んだユーザーのリセットの確認
+    function openResetUser(id) {
+      const u = state.users.get(id);
+      if (!isAdmin() || !adminKey || !u || u.deleted || id === ADMIN_ID) return;
+      openAdminModal(`
+        ${modalHead("パスワードのリセット", `${esc(u.name)}（@${esc(id)}）`)}
+        <div class="px-6 pb-6 space-y-4">
+          ${u.pwReset ? `<p class="text-sm font-semibold text-amber-600">リセット待ちです。発行し直すと、前のリセットコードは使えなくなります。</p>` : ""}
+          <ul class="text-sm text-slate-600 leading-relaxed list-disc pl-5 space-y-1">
+            <li>このユーザーは、新しいパスワードを設定するまでログインできなくなります（ログイン中の端末もログアウトします）。</li>
+            <li>トーク・メッセージ・スタンプなどのデータはそのまま残ります。</li>
+            <li>リセットコードは発行から${RESET_DAYS}日間有効で、この画面でしか表示されません。</li>
+          </ul>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-3">
+            <button type="button" data-action="admin-reset" class="btn-secondary flex-1">戻る</button>
+            <button type="button" data-action="admin-reset-issue" data-id="${esc(id)}" class="btn-primary flex-1">${u.pwReset ? "発行し直す" : "リセットコードを発行"}</button>
+          </div>
+        </div>`);
+    }
+
+    async function issueReset(el) {
+      const id = el.dataset.id;
+      if (!isAdmin() || !adminKey || el.disabled) return;
+      el.disabled = true;
+      const code = generateId();
+      try {
+        await adminWrite(adminKey, { reset: { id, hash: await resetHash(code) } });
+      } catch (e) {
+        if (el.isConnected) el.disabled = false;
+        throw e;
+      }
+      const shown = fmtResetCode(code);
+      openAdminModal(`
+        ${modalHead("リセットコードを発行しました", `${esc(userName(id))}（@${esc(id)}）`)}
+        <div class="px-6 pb-6 space-y-4">
+          <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4 text-center">
+            <div class="text-xs text-slate-500">リセットコード（${RESET_DAYS}日間有効）</div>
+            <div class="mt-1 text-2xl font-bold tracking-widest text-slate-800 font-mono select-all">${esc(shown)}</div>
+            <button type="button" data-action="copy" data-copy="${esc(shown)}" data-label="リセットコードをコピーしました" class="btn-secondary w-full mt-3">${icon("copy", "w-5 h-5")}コピー</button>
+          </div>
+          <div class="text-sm text-slate-600 leading-relaxed space-y-2">
+            <p class="font-semibold text-slate-800">残りの手順</p>
+            <ol class="list-decimal pl-5 space-y-1">
+              <li>Firebase コンソールの Authentication →「ユーザー」で <b class="font-mono">${esc(emailOf(id))}</b> を削除する（アプリからは削除できないため）</li>
+              <li>このコードを本人に伝える（Chatter の外で）</li>
+              <li>本人がログイン画面の「パスワードを忘れた場合」から、ユーザーID・このコード・新しいパスワードを入力する</li>
+            </ol>
+          </div>
+          <button type="button" data-action="admin-reset" class="btn-primary w-full">一覧に戻る</button>
+        </div>`);
+    }
+
     // グループ：自分（管理者）のメッセージを読んだ人・まだ読んでいない人の一覧
     function openReaders(msgId) {
       const room = currentRoom();
@@ -7056,6 +7243,10 @@ const firebaseConfig = {
       "admin-restrict": () => openAdminRestrict(),
       "admin-restrict-user": (el) => openRestrictUser(el.dataset.id),
       "admin-unrestrict": (el) => unrestrictUser(el),
+      "admin-reset": () => openAdminReset(),
+      "admin-reset-user": (el) => openResetUser(el.dataset.id),
+      "admin-reset-issue": (el) => issueReset(el),
+      "forgot-password": () => openForgotPassword(),
       "readers": (el) => {
         if (state.selectedMsgId) { state.selectedMsgId = null; renderMessages(); }
         openReaders(el.dataset.id);
@@ -7110,7 +7301,8 @@ const firebaseConfig = {
     const forms = {
       "form-login": (fd) => loginWithId(fd.get("id"), fd.get("password")),
       "form-signup": (fd) => signup(fd.get("name"), fd.get("custom") ? fd.get("id") : null, fd.get("password"), fd.get("password2")),
-      "form-set-password": (fd) => setLegacyPassword(fd.get("id"), fd.get("password"), fd.get("password2")),
+      "form-set-password": (fd) => setLegacyPassword(fd.get("id"), fd.get("password"), fd.get("password2"), fd.get("reset") ? fd.get("code") : null),
+      "form-forgot": (fd) => startForgotReset(fd.get("id")),
       "form-change-password": (fd) => changePassword(fd.get("current"), fd.get("password"), fd.get("password2")),
       "form-profile": (fd) => updateName(fd.get("name")),
       "form-create-group": (fd) => createGroup(fd.get("name"), fd.getAll("members")),
@@ -7286,6 +7478,7 @@ const firebaseConfig = {
 
       // グループ作成モーダル：メンバー検索・選択数
       document.addEventListener("input", (e) => { if (e.target.id === "ar-search") renderRestrictList(); });
+      document.addEventListener("input", (e) => { if (e.target.id === "apr-search") renderResetList(); });
       // オープンチャットを探す：名前・説明で絞り込む
       document.addEventListener("input", (e) => { if (e.target.id === "ob-search" && openBrowse) { openBrowse.q = e.target.value; renderOpenBrowse(); } });
       document.addEventListener("input", (e) => {
