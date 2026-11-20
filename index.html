@@ -2307,7 +2307,7 @@ const firebaseConfig = {
         features: [
           ["Chatter Plus のすべての機能", ""],
           ["ダイナミック・ピクセル・エンハンサー", "アイコンやUIの彩度を1.5%上昇させます。"],
-          ["AI要約", "最先端の AI が、トークの内容をわかりやすく要約します。"],
+          ["AI要約", "Claude Fable5.5 やGPT-6.5 Astra, Gemini 5 Radon が、トークの内容をわかりやすく要約します。"],
         ],
       },
       {
@@ -2442,7 +2442,7 @@ const firebaseConfig = {
               ${p.features.map(([f, note]) => `
                 <li class="flex gap-2 text-sm">
                   <span class="text-emerald-500 shrink-0 mt-0.5">${icon("check", "w-4 h-4")}</span>
-                  <span class="min-w-0"><span class="font-medium text-slate-800">${f}</span>${note ? `<span class="block text-[11px] text-slate-400 leading-snug">（${note}）</span>` : ""}</span>
+                  <span class="min-w-0"><span class="font-medium text-slate-800">${f}</span>${note ? `<span class="block text-[11px] text-slate-400 leading-snug">${note}</span>` : ""}</span>
                 </li>`).join("")}
             </ul>
             ${mine && p.id === "max" ? `
