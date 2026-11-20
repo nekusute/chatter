@@ -180,6 +180,9 @@
       background-size: 18px 18px;
     }
 
+    /* AI要約（Chatter Pro）の「要約中...」のきらめき */
+    .ai-shimmer { background: linear-gradient(90deg, #D97757 0%, #D97757 35%, #f6d2c3 50%, #D97757 65%, #D97757 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: aiShimmer 2s linear infinite; }
+    @keyframes aiShimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
     @keyframes msgIn { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
     .msg-in { animation: msgIn .22s ease-out both; }
     /* 返信の引用をクリックしたときに、元のメッセージを光らせる */
@@ -480,6 +483,8 @@ const firebaseConfig = {
           <header class="flex items-center gap-1 px-2 sm:px-4 h-16 border-b border-slate-100 bg-white shrink-0">
             <button type="button" data-action="back" class="icon-btn md:hidden" aria-label="戻る"><span data-icon="back"></span></button>
             <div id="chat-header-main" class="flex items-center gap-3 min-w-0 flex-1 pl-1"></div>
+            <button type="button" data-action="open-plans" class="shrink-0 inline-flex items-center gap-1 h-9 px-2.5 mr-0.5 rounded-full bg-gradient-to-r from-amber-400 via-orange-500 to-pink-500 text-white text-xs font-bold shadow-md shadow-orange-500/30 hover:brightness-110 active:scale-95 transition" aria-label="無料オファー！" title="無料オファー！"><span data-icon="gift" data-icon-class="w-4 h-4"></span><span class="hidden min-[400px]:inline">無料オファー！</span></button>
+            <button type="button" id="ai-summary-btn" data-action="ai-summary" class="icon-btn text-[#D97757]" aria-label="AI要約" title="AI要約" hidden><span data-icon="sparkles"></span></button>
             <button type="button" id="msg-search-btn" data-action="toggle-msg-search" class="icon-btn aria-expanded:bg-slate-100 aria-expanded:text-indigo-600" aria-label="トーク内を検索" title="トーク内を検索" aria-expanded="false"><span data-icon="search"></span></button>
             <button type="button" data-action="room-info" class="icon-btn" aria-label="詳細"><span data-icon="info"></span></button>
           </header>
@@ -768,6 +773,8 @@ const firebaseConfig = {
     ICONS.dots = "M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"; // ケバブメニュー（︙）
     ICONS.globe = "M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z";
     ICONS.refresh = "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15";
+    ICONS.gift = "M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7";
+    ICONS.sparkles = "M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z";
     ICONS.crop = "M6 2v14a2 2 0 002 2h14M2 6h14a2 2 0 012 2v14"; // トリミング
     ICONS.lock ="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z";
     const icon = (name, cls = "w-5 h-5") =>
@@ -1141,7 +1148,7 @@ const firebaseConfig = {
 
     async function enterApp(user) {
       state.uid = auth.currentUser.uid;
-      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null };
+      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null };
       document.querySelectorAll('#screen-login input[type="password"]').forEach((el) => { el.value = ""; });
       readMap = store.json(`chatter:read:${user.id}`, {});
       readSentMap = store.json(`chatter:readsent:${user.id}`, {});
@@ -1578,9 +1585,9 @@ const firebaseConfig = {
       state.unsub.users = onSnapshot(
         query(collection(db, "users"), orderBy("lastSeen", "desc"), limit(300)),
         (snap) => {
-          const prevIcons = new Map([...state.users].map(([id, u]) => [id, u.icon]));
+          const prevIcons = new Map([...state.users].map(([id, u]) => [id, `${u.icon}|${badgeKey(u)}`]));
           state.users = new Map(snap.docs.map((d) => [d.id, withId(d)]));
-          const iconChanged = [...state.users].some(([id, u]) => u.icon !== prevIcons.get(id));
+          const iconChanged = [...state.users].some(([id, u]) => `${u.icon}|${badgeKey(u)}` !== prevIcons.get(id)); // 公式マークの変化も含める
           const mine = state.users.get(state.me.id);
           if (mine?.deleted && !state.accountDeleting) {
             // 別の端末でアカウントが削除された
@@ -1588,7 +1595,7 @@ const firebaseConfig = {
             toast("このアカウントは削除されました", "error");
             return;
           }
-          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; }
+          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; }
           state.usersLoaded = true;
           applyRestriction();
           renderSidebar();
@@ -1894,6 +1901,7 @@ const firebaseConfig = {
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5">
                 <span class="font-semibold truncate text-slate-800">${esc(roomTitle(r))}</span>
+                ${r.type === "dm" ? officialBadge(partnerOf(r)) : ""}
                 ${isOpen(r) ? `<span class="shrink-0 px-1.5 py-px rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-semibold">オープン</span>` : ""}
                 ${r.type === "group" ? `<span class="text-xs text-slate-400 shrink-0">(${r.members.length})</span>` : ""}
                 ${r.type !== "dm" && muted.has(r.id) ? `<span class="text-slate-300 shrink-0" title="通知オフ">${icon("bell-off", "w-3.5 h-3.5")}</span>` : ""}
@@ -1927,7 +1935,7 @@ const firebaseConfig = {
             <button type="button" data-action="start-dm" data-id="${esc(u.id)}" class="list-row group ${dmRoomId(state.me.id, u.id) === state.activeRoomId ? "is-active" : ""}">
               ${withPresence(avatar(u.id, u.name, "w-11 h-11 text-sm"), online)}
               <div class="min-w-0 flex-1">
-                <div class="font-semibold truncate text-slate-800">${esc(u.name)}</div>
+                <div class="flex items-center gap-1 min-w-0"><span class="font-semibold truncate text-slate-800">${esc(u.name)}</span>${officialBadge(u.id)}</div>
                 <div class="text-xs truncate text-slate-400">@${esc(u.id)} ・ ${isRestricted(u) ? RESTRICTED_LABEL : online ? `<span class="text-emerald-600">オンライン</span>` : esc(relTime(u.lastSeen))}</div>
               </div>
               <span class="w-9 h-9 rounded-full grid place-items-center text-slate-300 group-hover:text-indigo-500 group-hover:bg-indigo-50 transition">${icon("chat", "w-5 h-5")}</span>
@@ -2066,6 +2074,234 @@ const firebaseConfig = {
     }
 
     // ============================================================
+    // 有料プラン（ネタ）：Chatter Plus / Pro / Max（すべて永年無料）
+    // users/{id}.plan = "plus" | "pro" | "max"、users/{id}.badge = "blue" | "orange" | "gold"（Max の公式マークの色）
+    // 実際に動くのは Pro の「入力中」のバリエーションと AI要約（アニメーションを出すだけで何もしない）、Max の公式マークだけ
+    // ============================================================
+    const PLAN_RANK = { plus: 1, pro: 2, max: 3 };
+    const BADGE_COLORS = { blue: { label: "青", fill: "#1D9BF0" }, orange: { label: "オレンジ", fill: "#F97316" }, gold: { label: "金", fill: "#E0A800" } };
+    const PLANS = [
+      {
+        id: "plus", name: "Chatter Plus", price: 480, tagline: "いつものトークを、ちょっと上質に。",
+        grad: "from-sky-400 to-indigo-500",
+        features: [
+          ["リアクション絵文字の追加", "任意の絵文字を追加できるようにします。"],
+          ["ダイナミック・ピクセル・エンハンサー", "アイコンやUIの彩度を1.5%上昇させます。"],
+        ],
+      },
+      {
+        id: "pro", name: "Chatter Pro", price: 1480, tagline: "AI の力で、トークの未来へ。", popular: true,
+        grad: "from-violet-500 to-fuchsia-500",
+        features: [
+          ["Chatter Plus のすべての機能", ""],
+          ["「入力中...」表示のバリエーション増加", "相手の入力中の表示が、厳選された数十種類の言い回しからランダムに変わります。"],
+          ["AI要約", "最先端の AI が、トークの内容をわかりやすく要約します。"],
+        ],
+      },
+      {
+        id: "max", name: "Chatter Max", price: 4980, tagline: "選ばれし者のための、最上位プラン。",
+        grad: "from-amber-400 via-orange-500 to-rose-500",
+        features: [
+          ["Chatter Pro のすべての機能", ""],
+          ["メッセージのハッシュ化保存", "送受信したメッセージを、業界標準のハッシュ関数で保存します。"],
+          ["公式マークを名前の横に追加", "青・オレンジ・金のチェックマーク"],
+          ["優先アップデート権", "最新のアップデートを、優先的にお届けします。"],
+          ["新機能の先行体験", "開発中の新機能を、いち早くお試しいただけます。"],
+        ],
+      },
+    ];
+    const planRank = (u) => PLAN_RANK[u?.plan] || 0;
+    const myPlanRank = () => planRank(state.me);
+    const planName = (id) => PLANS.find((p) => p.id === id)?.name || "";
+    const badgeKey = (u) => (u?.plan === "max" && !u.deleted ? BADGE_COLORS[u.badge] ? u.badge : "blue" : "");
+
+    // 名前の横の公式マーク（Chatter Max）。オープンチャットの参加者（alias）には出さない
+    function officialBadge(id, cls = "w-4 h-4 shrink-0") {
+      if (!id || OPEN_ALIAS_RE.test(id)) return "";
+      const key = badgeKey(id === state.me?.id ? state.me : state.users.get(id));
+      if (!key) return "";
+      return `<svg class="${cls}" viewBox="0 0 24 24" role="img" aria-label="公式マーク"><title>公式マーク（Chatter Max）</title><path fill="${BADGE_COLORS[key].fill}" d="M8.603 3.799A4.49 4.49 0 0112 2.25c1.357 0 2.573.6 3.397 1.549a4.49 4.49 0 013.498 1.307 4.491 4.491 0 011.307 3.497A4.49 4.49 0 0121.75 12a4.49 4.49 0 01-1.549 3.397 4.491 4.491 0 01-1.307 3.497 4.491 4.491 0 01-3.497 1.307A4.49 4.49 0 0112 21.75a4.49 4.49 0 01-3.397-1.549 4.49 4.49 0 01-3.498-1.306 4.491 4.491 0 01-1.307-3.498A4.49 4.49 0 012.25 12c0-1.357.6-2.573 1.549-3.397a4.49 4.49 0 011.307-3.497 4.49 4.49 0 013.497-1.307z"/><path d="M8.2 12.4l2.5 2.5 5-5.4" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
+
+    // Claude の考え中アニメーション（記号がくるくる変わる）。.claude-spin が画面にあるときだけ書き換える
+    const CLAUDE_SPIN_FRAMES = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
+    let claudeSpinFrame = 0;
+    const claudeSpin = () => `<span class="claude-spin inline-block w-[1em] text-center" style="color:#D97757" aria-hidden="true">${CLAUDE_SPIN_FRAMES[claudeSpinFrame]}</span>`;
+    setInterval(() => {
+      const els = document.getElementsByClassName("claude-spin");
+      if (!els.length) return;
+      claudeSpinFrame = (claudeSpinFrame + 1) % CLAUDE_SPIN_FRAMES.length;
+      for (const el of els) el.textContent = CLAUDE_SPIN_FRAMES[claudeSpinFrame];
+    }, 120);
+
+    // Chatter Pro 以上：相手の「入力中...」を Claude のスピナーの言葉に（相手が記録を書き直すたびに変わる）
+    const CLAUDE_SPINNER_WORDS = [
+      "考え中", "熟考中", "思案中", "沈思黙考中", "反芻中", "推論中", "演算中", "計算中", "処理中", "生成中",
+      "合成中", "錬成中", "醸造中", "発酵中", "熟成中", "煮込み中", "ぐつぐつ中", "とろ火で煮込み中", "漬け込み中", "焼き上げ中",
+      "こねこね中", "むにゅむにゅ中", "かき混ぜ中", "噛み砕き中", "練り上げ中", "鍛造中", "具現化中", "召喚中", "顕現中", "変成中",
+      "孵化中", "ひらめき中", "思い巡らせ中", "ひねり出し中", "見極め中", "審議中", "検討中", "段取り中", "奔走中", "えっちら中",
+      "ぶらぶら中", "ぼんやり中", "ノリノリ中", "羊を集め中", "クロード中", "調合中", "融合中", "組み立て中", "仕込み中", "工夫中",
+    ];
+    function typingLabel() {
+      if (myPlanRank() < PLAN_RANK.pro) return `<span class="text-indigo-600 font-medium animate-pulse">入力中...</span>`;
+      const t = state.partnerTyping;
+      const seed = Math.floor((t?.at || t?.seen || 0) / 1000);
+      const word = CLAUDE_SPINNER_WORDS[((seed * 2654435761) >>> 0) % CLAUDE_SPINNER_WORDS.length];
+      return `<span class="font-medium" style="color:#D97757">${claudeSpin()} ${word}...</span>`;
+    }
+
+    // AI要約（Chatter Pro 以上）：考え中のアニメーションと「要約中...」を出し続けるだけ
+    let aiSummaryTimer = null;
+    function openAiSummary() {
+      if (myPlanRank() < PLAN_RANK.pro) { openPlans(); return; }
+      const room = currentRoom();
+      if (!room) return;
+      const started = Date.now();
+      clearInterval(aiSummaryTimer);
+      openModal(`
+        ${modalHead(`<span class="inline-flex items-center gap-1.5">${icon("sparkles", "w-5 h-5 text-[#D97757]")}AI要約</span>`, `「${esc(roomTitle(room))}」のトークを要約しています`)}
+        <div class="px-6 pb-6">
+          <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 px-4 py-5">
+            <div class="flex items-center gap-2 text-base">${claudeSpin()}<span class="ai-shimmer font-semibold">要約中...</span></div>
+            <div id="ai-summary-meta" class="mt-1 pl-7 text-xs text-slate-400 tabular-nums">（0秒 · ↓ 0 トークン）</div>
+          </div>
+          <p class="mt-3 text-[11px] leading-relaxed text-slate-400">要約が完了するまでの時間は、トークの長さ・サーバーの混雑状況・月の満ち欠けなどによって異なります。画面を閉じると要約は中断されます。</p>
+        </div>`, () => clearInterval(aiSummaryTimer));
+      aiSummaryTimer = setInterval(() => {
+        const el = $("#ai-summary-meta");
+        if (!el) { clearInterval(aiSummaryTimer); return; }
+        el.textContent = `（${Math.floor((Date.now() - started) / 1000)}秒 · ↓ 0 トークン）`;
+      }, 1000);
+    }
+
+    // プランの一覧（画面上部の「無料オファー！」から開く）
+    const PLAN_FINE_PRINT = [
+      "表示価格は税込みです。ただし、税込みでない場合を除きます。",
+      "「無料」とは料金が発生しないことをいい、料金が発生しないことを意味し、料金が発生しないことを指します。",
+      "ダイナミック・ピクセル・エンハンサーの効果には個人差があります。彩度の上昇を実感できない場合でも、彩度は上昇しているものとみなします。",
+      "1.5%とは、100%を100としたときの1.5をいいます。",
+      "AI要約の結果は、要約が完了した時点で表示されます。要約が完了する時期については、お答えいたしかねます。",
+      "「入力中...」表示のバリエーションは、相手が入力中の場合に限り表示されます。相手が入力中でない場合は、表示されません。",
+      "メッセージのハッシュ化保存における「ハッシュ化」とは、ハッシュ化することをいいます。",
+      "公式マークは、公式であることを示すものではありません。また、公式でないことを示すものでもありません。",
+      "優先アップデート権における「優先」とは、他のすべてのユーザーと同時に、同じ内容のアップデートを受け取ることをいいます。",
+      "新機能の先行体験は、先行して体験できる新機能が存在する場合に限ります。",
+      "プランの変更・解約はいつでも可能です。解約した場合、解約した時点から、解約された状態となります。",
+      "本オファーは期間限定です。期間は限定されていますが、その期間がいつ終了するかは限定されていません。",
+      "本プランの内容は、予告なく変更される場合、予告して変更される場合、および変更されない場合があります。",
+      "本オファーに関するお問い合わせは受け付けておりません。お問い合わせを受け付けていないことに関するお問い合わせも、受け付けておりません。",
+      "スクリーンショットはイメージです。実際の画面は、実際の画面と同じです。",
+    ];
+    function openPlans() {
+      if (!state.me) return;
+      const cur = state.me.plan && PLAN_RANK[state.me.plan] ? state.me.plan : null;
+      const curRank = myPlanRank();
+      const badge = badgeKey(state.me) || "blue";
+      const card = (p) => {
+        const mine = p.id === cur;
+        return `
+          <div class="relative rounded-2xl ring-1 ${mine ? "ring-2 ring-indigo-400" : "ring-slate-200"} bg-white p-4 ${p.popular ? "mt-5" : "mt-3"}">
+            ${p.popular ? `<span class="absolute -top-2.5 left-4 px-2 py-0.5 rounded-full bg-fuchsia-500 text-white text-[10px] font-bold">いちばん人気</span>` : ""}
+            <div class="flex items-center gap-2">
+              <span class="w-8 h-8 rounded-xl bg-gradient-to-br ${p.grad} text-white grid place-items-center shrink-0">${icon("sparkles", "w-4 h-4")}</span>
+              <div class="min-w-0 flex-1">
+                <div class="font-bold text-slate-900">${p.name}${mine ? ` <span class="ml-1 px-1.5 py-px rounded-md bg-indigo-50 text-indigo-600 text-[10px] font-semibold align-middle">ご利用中</span>` : ""}</div>
+                <div class="text-xs text-slate-500">${p.tagline}</div>
+              </div>
+              <div class="text-right shrink-0">
+                <div class="text-[11px] text-slate-400 line-through">¥${p.price.toLocaleString()}/月</div>
+                <div class="text-lg font-extrabold text-rose-500 leading-none">¥0<span class="text-[10px] font-semibold text-slate-400">/月※</span></div>
+              </div>
+            </div>
+            <ul class="mt-3 space-y-1.5">
+              ${p.features.map(([f, note]) => `
+                <li class="flex gap-2 text-sm">
+                  <span class="text-emerald-500 shrink-0 mt-0.5">${icon("check", "w-4 h-4")}</span>
+                  <span class="min-w-0"><span class="font-medium text-slate-800">${f}</span>${note ? `<span class="block text-[11px] text-slate-400 leading-snug">（${note}）</span>` : ""}</span>
+                </li>`).join("")}
+            </ul>
+            ${mine && p.id === "max" ? `
+            <div class="mt-3 rounded-xl bg-slate-50 ring-1 ring-slate-100 px-3 py-2.5">
+              <div class="text-xs font-semibold text-slate-500 mb-2">公式マークの色</div>
+              <div class="flex gap-2">
+                ${Object.entries(BADGE_COLORS).map(([k, c]) => `
+                  <button type="button" data-action="set-badge" data-badge="${k}" class="btn-chip flex-1 justify-center py-1.5 text-xs ring-1 ${k === badge ? "bg-white ring-indigo-400 text-indigo-700" : "bg-white ring-slate-200 text-slate-600 hover:bg-slate-100"}" aria-pressed="${k === badge}">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="${c.fill}"/><path d="M8.2 12.4l2.5 2.5 5-5.4" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>${c.label}
+                  </button>`).join("")}
+              </div>
+            </div>` : ""}
+            ${mine ? "" : `
+            <button type="button" data-action="subscribe-plan" data-plan="${p.id}" class="mt-4 w-full h-10 rounded-xl bg-gradient-to-r ${p.grad} text-white text-sm font-bold shadow-md hover:brightness-110 active:scale-[.98] transition inline-flex items-center justify-center gap-1.5">
+              ${PLAN_RANK[p.id] > curRank ? (cur ? "無料でアップグレード" : "無料で加入する") : "このプランに変更する"}
+            </button>`}
+          </div>`;
+      };
+      openModal(`
+        ${modalHead(`<span class="inline-flex items-center gap-1.5">${icon("gift", "w-5 h-5 text-orange-500")}無料オファー！</span>`, "今だけ、すべての有料プランが<b class=\"text-rose-500\">0円</b>※。")}
+        <div class="px-6 pb-6">
+          <div class="rounded-2xl bg-gradient-to-br from-amber-400 via-orange-500 to-pink-500 text-white p-4 shadow-lg shadow-orange-500/20">
+            <div class="text-xs font-semibold opacity-90">期間限定キャンペーン</div>
+            <div class="text-xl font-extrabold mt-0.5">Chatter を、もっと Chatter に。</div>
+            <div class="text-xs mt-1 opacity-90">${cur ? `現在のプラン：<b>${planName(cur)}</b>` : "クレジットカードの登録は不要です。"}</div>
+          </div>
+          ${PLANS.map(card).join("")}
+          ${cur ? `<button type="button" data-action="cancel-plan" class="mt-4 w-full text-center text-xs text-slate-400 hover:text-slate-600 underline">プランを解約する</button>` : ""}
+          <div class="mt-5 pt-3 border-t border-slate-100 text-[9px] leading-snug text-slate-400 space-y-0.5">
+            ${PLAN_FINE_PRINT.map((t, i) => `<p>※${i + 1} ${t}</p>`).join("")}
+            <p>※${PLAN_FINE_PRINT.length + 1} 本注意書きの内容は、本注意書きに記載されているとおりです。<span style="font-size:3px;letter-spacing:0">なお、Chatter Plus・Chatter Pro・Chatter Max はいずれも永年無料であり、料金が発生することは一切ありません。</span>以上をご確認のうえ、ご確認ください。</p>
+          </div>
+        </div>`);
+    }
+
+    async function updatePlan(fields) {
+      await updateDoc(doc(db, "users", state.me.id), fields);
+      Object.entries(fields).forEach(([k, v]) => { state.me[k] = typeof v === "string" ? v : null; });
+      renderSidebar();
+      if (state.activeRoomId) { renderChatHeader(); if (state.messagesLoaded) renderMessages(); }
+    }
+    let planBusy = false;
+    async function subscribePlan(el, plan) {
+      if (planBusy || !PLAN_RANK[plan]) return;
+      planBusy = true;
+      el.disabled = true;
+      el.innerHTML = `${spinner("w-4 h-4 border-2")}お支払い情報を確認中…（0円）`;
+      try {
+        await new Promise((r) => setTimeout(r, 1200)); // それらしい待ち時間
+        await updatePlan(plan === "max" ? { plan, badge: badgeKey(state.me) || "blue" } : { plan, badge: deleteField() });
+        openPlans();
+        toast(`${planName(plan)} へようこそ！`);
+      } catch (e) {
+        console.warn(e);
+        toast(errMsg(e), "error");
+        openPlans();
+      } finally {
+        planBusy = false;
+      }
+    }
+    async function setBadge(badge) {
+      if (planBusy || !BADGE_COLORS[badge] || state.me?.plan !== "max") return;
+      planBusy = true;
+      try { await updatePlan({ badge }); openPlans(); }
+      catch (e) { console.warn(e); toast(errMsg(e), "error"); }
+      finally { planBusy = false; }
+    }
+    async function cancelPlan() {
+      const cur = state.me?.plan;
+      if (!cur || planBusy) return;
+      const ok = await confirmDialog({
+        title: `${planName(cur)} を解約しますか？`,
+        message: "解約すると、永年無料のプランが永年無料ではなくなります（もともと無料です）。いつでも無料で再加入できます。",
+        ok: "解約する",
+        danger: true,
+      });
+      if (!ok) { openPlans(); return; }
+      planBusy = true;
+      try { await updatePlan({ plan: deleteField(), badge: deleteField() }); toast("プランを解約しました"); }
+      catch (e) { console.warn(e); toast(errMsg(e), "error"); }
+      finally { planBusy = false; }
+    }
+
+    // ============================================================
     // 描画：チャット画面
     // ============================================================
     function renderChatHeader() {
@@ -2080,7 +2316,7 @@ const firebaseConfig = {
           : isRestricted(u)
           ? RESTRICTED_LABEL
           : partnerIsTyping()
-          ? `<span class="text-indigo-600 font-medium animate-pulse">入力中...</span>`
+          ? typingLabel()
           : isOnline(u)
             ? `<span class="text-emerald-600 font-medium">● オンライン</span>`
             : `@${esc(pid)}${u ? ` ・ 最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}`;
@@ -2092,9 +2328,10 @@ const firebaseConfig = {
       $("#chat-header-main").innerHTML = `
         ${roomAvatar(room, "w-10 h-10 text-sm")}
         <div class="min-w-0">
-          <div class="font-semibold text-slate-900 truncate">${esc(roomTitle(room))}</div>
+          <div class="flex items-center gap-1 min-w-0"><span class="font-semibold text-slate-900 truncate">${esc(roomTitle(room))}</span>${room.type === "dm" ? officialBadge(partnerOf(room)) : ""}</div>
           <div class="text-xs text-slate-500 truncate">${subtitle}</div>
         </div>`;
+      $("#ai-summary-btn").hidden = myPlanRank() < PLAN_RANK.pro;
       const member = isMember(room);
       const partnerGone = room.type === "dm" && !!state.users.get(partnerOf(room))?.deleted;
       $("#composer").hidden = !member || partnerGone;
@@ -2392,7 +2629,7 @@ const firebaseConfig = {
             <div class="flex items-start gap-2 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""} ${selected ? "relative z-10" : ""}" data-msg-id="${esc(m.id)}">
               <div class="w-8 shrink-0">${cont ? "" : avatar(m.senderId, name, "w-8 h-8 text-xs")}</div>
               <div class="min-w-0 flex-1">
-                ${!cont && isGroup ? `<div class="text-xs text-slate-500 mb-1 ml-1 truncate">${esc(name)}${isOpen(room) && aliasTag(m.senderId) ? ` <span class="text-slate-300">${aliasTag(m.senderId)}</span>` : ""}</div>` : ""}
+                ${!cont && isGroup ? `<div class="text-xs text-slate-500 mb-1 ml-1 truncate">${esc(name)}${officialBadge(m.senderId, "w-3.5 h-3.5 inline-block align-[-0.2em] ml-0.5")}${isOpen(room) && aliasTag(m.senderId) ? ` <span class="text-slate-300">${aliasTag(m.senderId)}</span>` : ""}</div>` : ""}
                 <div class="relative flex items-end gap-1.5">
                   ${selected ? reactionPicker(m, canReply, room) : ""}
                   <div class="${bubbleCls} ${canReact ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-indigo-300 ring-offset-2" : ""}" ${selectable}>${body}</div>
@@ -6020,7 +6257,7 @@ const firebaseConfig = {
         <div class="px-6 pb-6">
           <div class="flex flex-col items-center text-center">
             <div id="profile-icon" class="flex flex-col items-center">${profileIconBlock()}</div>
-            <div class="mt-3 font-bold text-lg text-slate-900">${esc(state.me.name)}</div>
+            <div class="mt-3 font-bold text-lg text-slate-900">${esc(state.me.name)}${officialBadge(state.me.id, "w-5 h-5 inline-block align-[-0.2em] ml-1")}</div>
           </div>
           <div class="mt-5 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
             <div class="text-xs font-semibold text-slate-500">あなたのユーザーID</div>
@@ -6657,7 +6894,7 @@ const firebaseConfig = {
           ${modalHead("ユーザー情報")}
           <div class="px-6 pb-6 text-center">
             <div class="flex justify-center">${withPresence(avatar(pid, roomTitle(room), "w-20 h-20 text-3xl"), isOnline(u))}</div>
-            <div class="mt-3 font-bold text-lg text-slate-900">${esc(roomTitle(room))}</div>
+            <div class="mt-3 font-bold text-lg text-slate-900">${esc(roomTitle(room))}${officialBadge(pid, "w-5 h-5 inline-block align-[-0.2em] ml-1")}</div>
             <div class="text-sm text-slate-500">@${esc(pid)}</div>
             <div class="text-xs mt-1 ${isOnline(u) ? "text-emerald-600" : "text-slate-400"}">${u?.deleted ? "退会済み" : isRestricted(u) ? RESTRICTED_LABEL : isOnline(u) ? "オンライン" : u ? `最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}</div>
             <button type="button" data-action="copy" data-copy="${esc(pid)}" data-label="ユーザーIDをコピーしました" class="btn-secondary w-full mt-6">${icon("copy", "w-5 h-5")}ユーザーIDをコピー</button>
@@ -6758,6 +6995,11 @@ const firebaseConfig = {
       "invite-members": () => openInviteMembers(),
       "reset-invite": () => resetInviteLink(),
       "room-info": () => openRoomInfo(),
+      "open-plans": () => openPlans(),
+      "subscribe-plan": (el) => subscribePlan(el, el.dataset.plan),
+      "cancel-plan": () => cancelPlan(),
+      "set-badge": (el) => setBadge(el.dataset.badge),
+      "ai-summary": () => openAiSummary(),
       "profile": () => openProfile(),
       "draw-icon": () => openIconEditor(),
       "remove-icon": () => removeIcon(),
