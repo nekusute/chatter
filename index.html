@@ -1727,6 +1727,7 @@ const firebaseConfig = {
           renderChatHeader();
           renderRestrictList();
           renderResetList();
+          renderAdminPlanList();
           if (iconChanged && state.activeRoomId && state.messagesLoaded) renderMessages(); // 吹き出しの横のアイコンを更新
         },
         onListenError,
@@ -6677,6 +6678,7 @@ const firebaseConfig = {
           ${adminSwitch("rawImage", "オフにすると、全ユーザーが画像を送るときの「元の画像ファイルのまま送る」が使えなくなり、画像ファイルのままの画像の転送もできなくなります（SVG に埋め込んで送る方法はこれまでどおり使えます）。送信済みの画像はそのまま表示されます。")}
           <button type="button" data-action="admin-restrict" class="btn-secondary w-full !mt-5">${icon("alert", "w-5 h-5")}アカウントの制限</button>
           <button type="button" data-action="admin-reset" class="btn-secondary w-full">${icon("key", "w-5 h-5")}パスワードのリセット</button>
+          <button type="button" data-action="admin-plans" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}プランの加入状況</button>
           <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
           <div id="admin-lock-box"></div>
           <button type="button" data-close class="btn-primary w-full">閉じる</button>
@@ -6933,6 +6935,70 @@ const firebaseConfig = {
             <div class="text-xs text-slate-400 truncate">@${esc(u.id)}${isRestricted(u) ? ` ・ ${RESTRICTED_LABEL} あと${remainSpan(ms(u.restrictedUntil))}` : ""}</div>
           </div>
         </button>`).join("") || `<p class="text-sm text-slate-400 text-center py-6">${q ? "該当するユーザーはいません" : "他のユーザーはまだいません"}</p>`;
+    }
+
+    // 管理者メニュー：ユーザーごとのプラン（Chatter Plus / Pro / Max）の加入状況。見るだけ（変更は本人のプラン画面から）
+    let adminPlanFilter = "all"; // "all" | "none" | "plus" | "pro" | "max"
+    function openAdminPlans() {
+      if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
+      adminPlanFilter = "all";
+      openAdminModal(`
+        ${modalHead("プランの加入状況", "ユーザーごとの Chatter Plus・Pro・Max の加入状況です（すべて永年無料）。")}
+        <div class="px-6">
+          <div id="ap-summary"></div>
+          <div class="relative mt-3">
+            <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">${icon("search", "w-4 h-4")}</span>
+            <input id="ap-search" type="search" class="input pl-10 py-2.5 bg-slate-50 border-transparent" placeholder="ユーザーを検索" autocomplete="off" />
+          </div>
+        </div>
+        <div id="ap-list" class="mt-2 px-3 max-h-80 overflow-y-auto scroll-thin"></div>
+        <div class="px-6 pt-3 pb-6">
+          <button type="button" data-action="admin-menu" class="btn-secondary w-full">戻る</button>
+        </div>`);
+      renderAdminPlanList();
+    }
+    function renderAdminPlanList() {
+      const list = $("#ap-list"), summary = $("#ap-summary");
+      if (!list || !summary) return;
+      const planOf = (u) => (PLAN_RANK[u.plan] ? u.plan : "none");
+      const all = [...state.users.values()].filter((u) => !u.deleted);
+      const count = (p) => all.filter((u) => p === "all" || planOf(u) === p).length;
+      // 表示価格で払っていたらいくらになるか（実際は 0 円）
+      const virtual = all.reduce((sum, u) => sum + (PLANS.find((p) => p.id === u.plan)?.price || 0), 0);
+      const chips = [["all", "すべて"], ["none", "未加入"], ...PLANS.map((p) => [p.id, p.name.replace("Chatter ", "")])];
+      summary.innerHTML = `
+        <div class="grid grid-cols-4 gap-2 text-center">
+          ${[["none", "未加入"], ...PLANS.map((p) => [p.id, p.name.replace("Chatter ", "")])].map(([id, label]) => `
+            <div class="rounded-xl bg-slate-50 ring-1 ring-slate-100 py-2">
+              <div class="text-lg font-bold text-slate-800 tabular-nums">${count(id)}</div>
+              <div class="text-[11px] text-slate-500">${label}</div>
+            </div>`).join("")}
+        </div>
+        <p class="mt-2 text-xs text-slate-500">今月の売上：<b class="text-slate-800">¥0</b> <span class="text-slate-400">（表示価格なら ¥${virtual.toLocaleString()}/月）</span></p>
+        <div class="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="プランで絞り込む">
+          ${chips.map(([id, label]) => `
+            <button type="button" data-action="admin-plan-filter" data-plan="${id}" aria-pressed="${adminPlanFilter === id}"
+              class="btn-chip py-1 text-xs ring-1 ${adminPlanFilter === id ? "bg-indigo-50 ring-indigo-300 text-indigo-700" : "bg-white ring-slate-200 text-slate-600 hover:bg-slate-100"}">${label} <span class="tabular-nums opacity-70">${count(id)}</span></button>`).join("")}
+        </div>`;
+      const q = ($("#ap-search")?.value || "").trim().toLowerCase();
+      const users = all
+        .filter((u) => (adminPlanFilter === "all" || planOf(u) === adminPlanFilter) && (!q || `${u.name} ${u.id}`.toLowerCase().includes(q)))
+        .sort((a, b) => planRank(b) - planRank(a) || String(a.name).localeCompare(String(b.name), "ja"));
+      const tag = (u) => {
+        const p = PLANS.find((x) => x.id === u.plan);
+        if (!p) return `<span class="shrink-0 px-2 py-0.5 rounded-full bg-slate-100 text-slate-400 text-[11px] font-semibold">未加入</span>`;
+        return `<span class="shrink-0 px-2 py-0.5 rounded-full bg-gradient-to-r ${p.grad} text-white text-[11px] font-bold">${p.name.replace("Chatter ", "")}</span>`;
+      };
+      const badgeNote = (u) => (u.plan !== "max" ? "" : u.badge === BADGE_NONE ? " ・ 公式マーク：なし" : ` ・ 公式マーク：${BADGE_COLORS[badgeKey(u)]?.label || "青"}`);
+      list.innerHTML = users.map((u) => `
+        <div class="flex items-center gap-3 px-3 py-2.5 rounded-xl">
+          ${withPresence(avatar(u.id, u.name, "w-10 h-10 text-sm"), isOnline(u))}
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1 min-w-0"><span class="font-medium text-slate-800 truncate">${esc(u.name)}</span>${officialBadge(u.id)}${u.id === state.me.id ? `<span class="text-xs text-slate-400 shrink-0">(あなた)</span>` : ""}</div>
+            <div class="text-xs text-slate-400 truncate">@${esc(u.id)}${badgeNote(u)}</div>
+          </div>
+          ${tag(u)}
+        </div>`).join("") || `<p class="text-sm text-slate-400 text-center py-6">該当するユーザーはいません</p>`;
     }
 
     // 前回制限した時間（次に制限画面を開いたときの初期値。この端末に保存）
@@ -7385,6 +7451,8 @@ const firebaseConfig = {
       "admin-toggle": (el) => toggleAdminSetting(el.dataset.key),
       "admin-password": () => openAdminPassword(),
       "admin-restrict": () => openAdminRestrict(),
+      "admin-plans": () => openAdminPlans(),
+      "admin-plan-filter": (el) => { adminPlanFilter = el.dataset.plan; renderAdminPlanList(); },
       "admin-restrict-user": (el) => openRestrictUser(el.dataset.id),
       "admin-unrestrict": (el) => unrestrictUser(el),
       "admin-reset": () => openAdminReset(),
@@ -7621,7 +7689,7 @@ const firebaseConfig = {
       window.addEventListener("resize", () => closeStickerMenu());
 
       // グループ作成モーダル：メンバー検索・選択数
-      document.addEventListener("input", (e) => { if (e.target.id === "ar-search") renderRestrictList(); });
+      document.addEventListener("input", (e) => { if (e.target.id === "ar-search") renderRestrictList(); if (e.target.id === "ap-search") renderAdminPlanList(); });
       document.addEventListener("input", (e) => { if (e.target.id === "apr-search") renderResetList(); });
       // オープンチャットを探す：名前・説明で絞り込む
       document.addEventListener("input", (e) => { if (e.target.id === "ob-search" && openBrowse) { openBrowse.q = e.target.value; renderOpenBrowse(); } });
