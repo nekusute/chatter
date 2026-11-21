@@ -443,8 +443,8 @@ const firebaseConfig = {
         </div>
 
         <div class="px-4">
-          <!-- 4つのタブが横に収まるよう、アイコンを文字の上に置く -->
-          <div class="grid grid-cols-4 gap-1 p-1 bg-slate-100 rounded-2xl" role="tablist">
+          <!-- 5つのタブが横に収まるよう、アイコンを文字の上に置く -->
+          <div class="grid grid-cols-5 gap-1 p-1 bg-slate-100 rounded-2xl" role="tablist">
             <button type="button" data-action="tab" data-tab="talk" class="tab-btn is-active flex-col gap-0.5 py-1.5 text-xs" role="tab">
               <span data-icon="chat" data-icon-class="w-4 h-4"></span>トーク
               <span id="unread-badge" class="absolute top-0.5 right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold grid place-items-center" hidden></span>
@@ -457,6 +457,9 @@ const firebaseConfig = {
             </button>
             <button type="button" data-action="tab" data-tab="stickers" class="tab-btn flex-col gap-0.5 py-1.5 text-xs" role="tab">
               <span data-icon="sticker" data-icon-class="w-4 h-4"></span>スタンプ
+            </button>
+            <button type="button" data-action="tab" data-tab="games" class="tab-btn flex-col gap-0.5 py-1.5 text-xs" role="tab">
+              <span data-icon="game" data-icon-class="w-4 h-4"></span>ゲーム
             </button>
           </div>
         </div>
@@ -543,6 +546,16 @@ const firebaseConfig = {
             このユーザーは退会しているため、メッセージを送信できません
           </div>
         </div>
+
+        <!-- ゲーム画面（ゲームタブの一覧から選んだゲームを iframe で遊ぶ） -->
+        <div id="game-pane" class="flex-1 min-h-0 flex flex-col" hidden>
+          <header class="flex items-center gap-1 px-2 sm:px-4 h-16 border-b border-slate-100 bg-white shrink-0">
+            <button type="button" data-action="back" class="icon-btn md:hidden" aria-label="戻る"><span data-icon="back"></span></button>
+            <div id="game-header-main" class="flex items-center gap-3 min-w-0 flex-1 pl-1"></div>
+            <button type="button" data-action="close-game" class="icon-btn hidden md:grid" aria-label="ゲームを閉じる" title="ゲームを閉じる"><span data-icon="x"></span></button>
+          </header>
+          <div id="game-frame-wrap" class="flex-1 min-h-0 bg-[#fdf6e3]"></div>
+        </div>
       </main>
     </div>
   </section>
@@ -560,6 +573,700 @@ const firebaseConfig = {
   <input type="file" id="sticker-file" accept=".svg,image/svg+xml" multiple class="sr-only" style="position:fixed" tabindex="-1" aria-hidden="true" />
   <!-- チャットで送る画像の選択 -->
   <input type="file" id="image-file" accept="image/*" class="sr-only" style="position:fixed" tabindex="-1" aria-hidden="true" />
+
+  <!-- ===================== ゲーム ===================== -->
+  <!-- 各ゲームは <template id="game-src-<ゲームID>"> に1つずつ置く（JS の GAMES と合わせる）。
+       中身はそのまま iframe（sandbox）の <body> に入れて動かすので、アプリのスタイルや変数とは干渉しない。
+       ゲームからアプリへは parent.postMessage({ source: "chatter-game", type: "gameover", score }) でスコアを送る。
+       アプリからゲームへは { source: "chatter", type: "best", best } で自己ベストを送る -->
+  <template id="game-src-suika">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    background-color: #fdf6e3;
+    font-family: 'Hiragino Maru Gothic ProN', 'Yu Gothic', sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 12px; overflow: auto; color: #5d4037;
+  }
+  /* margin: auto で中央に置く（高さが足りないときは上が切れずにスクロールできる） */
+  .game-wrapper { display: flex; gap: 16px; align-items: flex-start; justify-content: center; margin: auto 0; }
+  .canvas-container {
+    position: relative; background: #fff8e7;
+    border: 6px solid #8d6e63; border-top: none; border-radius: 0 0 16px 16px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.12);
+    /* 画面に収まるように縮める（中の座標は 380×540 のまま） */
+    width: min(380px, calc(100vw - 24px), calc((100vh - 30px) * 380 / 540));
+    overflow: hidden;
+  }
+  canvas#gameCanvas { display: block; width: 100%; height: auto; aspect-ratio: 380 / 540; touch-action: none; cursor: pointer; }
+  .side-panel { display: flex; flex-direction: column; gap: 12px; width: 200px; }
+  .card { background: #fff; border: 3px solid #d7ccc8; border-radius: 14px; padding: 10px 12px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+  .card h2 { font-size: 13px; color: #8d6e63; margin-bottom: 4px; }
+  .score-val { font-size: 26px; font-weight: bold; color: #e65100; }
+  .best-val { color: #8d6e63; font-size: 22px; }
+  #next-canvas { margin: 0 auto; display: block; width: 90px; height: 90px; }
+  .evolution-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; margin-top: 4px; }
+  .evo-item { display: flex; align-items: center; font-size: 11px; background: #fdf6e3; padding: 2px 6px; border-radius: 8px; border: 1px solid #ffe0b2; }
+  .controls-info { font-size: 12px; line-height: 1.6; text-align: left; color: #6d4c41; }
+  .controls-info kbd { background: #efebe9; border: 1px solid #bcaaa4; border-radius: 4px; padding: 1px 5px; font-family: monospace; font-weight: bold; }
+  #game-over-overlay {
+    position: absolute; inset: 0; background: rgba(62, 39, 35, 0.82);
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; z-index: 10; text-align: center; padding: 16px;
+  }
+  #game-over-overlay h2 { font-size: 32px; color: #ffcc80; margin-bottom: 10px; }
+  #game-over-overlay p { font-size: 18px; margin-bottom: 12px; }
+  #new-best { color: #ffe082; font-weight: bold; }
+  button {
+    background: #ff7043; color: #fff; border: none; border-radius: 25px;
+    padding: 10px 24px; font-size: 16px; font-weight: bold; cursor: pointer;
+    box-shadow: 0 4px 0 #d84315; transition: transform 0.1s; margin-top: 8px;
+  }
+  button:active { transform: translateY(3px); box-shadow: 0 1px 0 #d84315; }
+  /* 高さが低いときは、説明を隠してスクロールせずに収める */
+  @media (max-height: 640px) { .card.info { display: none; } }
+  /* 幅が狭いとき（スマホ・狭いウィンドウ）：スコアなどを上に横並びにし、説明は隠す */
+  @media (max-width: 660px) {
+    body { padding: 8px 12px 12px; }
+    .game-wrapper { flex-direction: column; align-items: center; gap: 8px; margin: 0; }
+    .side-panel { order: -1; flex-direction: row; width: min(380px, calc(100vw - 24px)); gap: 8px; }
+    .side-panel .card { flex: 1; padding: 4px 6px; border-width: 2px; border-radius: 10px; display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+    .card h2 { font-size: 11px; margin-bottom: 0; }
+    .score-val { font-size: 20px; }
+    .best-val { font-size: 17px; }
+    #next-canvas { width: 44px; height: 44px; }
+    .card.info { display: none; }
+    .canvas-container { width: min(380px, calc(100vw - 24px), calc((100vh - 90px) * 380 / 540)); }
+  }
+</style>
+
+<div class="game-wrapper">
+  <div class="canvas-container" id="container">
+    <canvas id="gameCanvas" width="380" height="540"></canvas>
+    <div id="game-over-overlay">
+      <h2>GAME OVER</h2>
+      <p>スコア: <span id="final-score">0</span></p>
+      <p id="new-best" hidden>🎉 自己ベスト更新！</p>
+      <button id="restart-btn">もう一度遊ぶ</button>
+    </div>
+  </div>
+
+  <div class="side-panel">
+    <div class="card">
+      <h2>スコア</h2>
+      <div class="score-val" id="score">0</div>
+    </div>
+    <div class="card">
+      <h2>ベスト</h2>
+      <div class="score-val best-val" id="best">-</div>
+    </div>
+    <div class="card">
+      <h2>ネクスト</h2>
+      <canvas id="next-canvas" width="90" height="90"></canvas>
+    </div>
+    <div class="card info">
+      <h2>操作方法</h2>
+      <div class="controls-info">
+        <div>移動: <kbd>←</kbd><kbd>→</kbd> または <kbd>A</kbd><kbd>D</kbd></div>
+        <div>落下: <kbd>↓</kbd> / <kbd>S</kbd> / <kbd>Space</kbd></div>
+        <div>マウス・タッチ：動かして位置を決め、離すと落下</div>
+      </div>
+    </div>
+    <div class="card info">
+      <h2>シンカの順番</h2>
+      <div class="evolution-list" id="evo-list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const nextCanvas = document.getElementById('next-canvas');
+const nextCtx = nextCanvas.getContext('2d');
+
+const W = canvas.width;
+const H = canvas.height;
+const DEADLINE_Y = 85;
+const SPAWN_Y = 45;
+
+// 11段階のフルーツ定義（半径、色、名前、スコア、イラスト描画タイプ）
+const FRUITS = [
+  { name: 'さくらんぼ', radius: 15, color: '#e53935', accent: '#ffcdd2', score: 1,   type: 'cherry' },
+  { name: 'いちご',     radius: 21, color: '#ff4081', accent: '#f8bbd0', score: 3,   type: 'strawberry' },
+  { name: 'ぶどう',     radius: 28, color: '#8e24aa', accent: '#e1bee7', score: 6,   type: 'grape' },
+  { name: 'デコポン',   radius: 34, color: '#fb8c00', accent: '#ffe0b2', score: 10,  type: 'dekopon' },
+  { name: 'かき',       radius: 42, color: '#f4511e', accent: '#ffccbc', score: 15,  type: 'persimmon' },
+  { name: 'りんご',     radius: 50, color: '#d32f2f', accent: '#ffebee', score: 21,  type: 'apple' },
+  { name: 'なし',       radius: 58, color: '#c0ca33', accent: '#f0f4c3', score: 28,  type: 'pear' },
+  { name: 'もも',       radius: 67, color: '#f48fb1', accent: '#fce4ec', score: 36,  type: 'peach' },
+  { name: 'パイナップル', radius: 77, color: '#fdd835', accent: '#fff9c4', score: 45, type: 'pineapple' },
+  { name: 'メロン',     radius: 88, color: '#7cb342', accent: '#dcedc8', score: 55,  type: 'melon' },
+  { name: 'スイカ',     radius: 100, color: '#2e7d32', accent: '#a5d6a7', score: 66, type: 'watermelon' }
+];
+
+// シンカリスト表示
+const evoListEl = document.getElementById('evo-list');
+FRUITS.forEach((f, idx) => {
+  const span = document.createElement('span');
+  span.className = 'evo-item';
+  span.textContent = `${idx + 1}.${f.name}`;
+  evoListEl.appendChild(span);
+});
+
+let bodies = [];
+let particles = [];
+let score = 0;
+let currentLevel = 0;
+let nextLevel = 0;
+let dropperX = W / 2;
+let canDrop = true;
+let dropCooldown = 0;
+let isGameOver = false;
+let dangerTimer = 0;
+let bestScore = null; // アプリから届く自己ベスト（届くまでは null）
+
+// ---- アプリとのやりとり ----
+function sendToApp(msg) {
+  try { parent.postMessage(Object.assign({ source: 'chatter-game' }, msg), '*'); } catch (e) {}
+}
+function showBest() {
+  document.getElementById('best').textContent = bestScore === null ? '-' : bestScore;
+}
+window.addEventListener('message', (e) => {
+  const d = e.data;
+  if (e.source !== parent || !d || d.source !== 'chatter') return;
+  if (d.type === 'best' && Number.isInteger(d.best)) {
+    bestScore = Math.max(bestScore || 0, d.best);
+    showBest();
+  }
+});
+
+// キー入力管理
+const keys = { left: false, right: false };
+
+window.addEventListener('keydown', (e) => {
+  if (isGameOver) return;
+  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+    keys.left = true;
+  } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+    keys.right = true;
+  } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S' || e.key === ' ') {
+    e.preventDefault();
+    if (!e.repeat) dropFruit();
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+    keys.left = false;
+  } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+    keys.right = false;
+  }
+});
+
+// マウス・タッチ操作（動かして位置を決め、離すと落とす）
+function moveDropperTo(clientX) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (clientX - rect.left) * (W / rect.width);
+  const r = FRUITS[currentLevel].radius;
+  dropperX = Math.max(r + 4, Math.min(W - r - 4, x));
+}
+let pointerActive = false;
+canvas.addEventListener('pointermove', (e) => {
+  if (isGameOver) return;
+  if (e.pointerType === 'mouse' || pointerActive) moveDropperTo(e.clientX);
+});
+canvas.addEventListener('pointerdown', (e) => {
+  if (isGameOver) return;
+  pointerActive = true;
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  moveDropperTo(e.clientX);
+});
+canvas.addEventListener('pointerup', (e) => {
+  if (!pointerActive) return;
+  pointerActive = false;
+  if (isGameOver) return;
+  moveDropperTo(e.clientX);
+  dropFruit();
+});
+canvas.addEventListener('pointercancel', () => { pointerActive = false; });
+
+document.getElementById('restart-btn').addEventListener('click', initGame);
+
+function randomSpawnLevel() {
+  return Math.floor(Math.random() * 5); // さくらんぼ〜かき
+}
+
+function initGame() {
+  bodies = [];
+  particles = [];
+  score = 0;
+  updateScore(0);
+  currentLevel = randomSpawnLevel();
+  nextLevel = randomSpawnLevel();
+  dropperX = W / 2;
+  canDrop = true;
+  dropCooldown = 0;
+  isGameOver = false;
+  dangerTimer = 0;
+  document.getElementById('game-over-overlay').style.display = 'none';
+  drawNextPreview();
+  sendToApp({ type: 'start' });
+}
+
+function updateScore(add) {
+  score += add;
+  document.getElementById('score').textContent = score;
+}
+
+function endGame() {
+  isGameOver = true;
+  keys.left = keys.right = false;
+  const isNewBest = bestScore !== null && score > bestScore;
+  document.getElementById('final-score').textContent = score;
+  document.getElementById('new-best').hidden = !isNewBest;
+  document.getElementById('game-over-overlay').style.display = 'flex';
+  if (bestScore !== null) { bestScore = Math.max(bestScore, score); showBest(); }
+  sendToApp({ type: 'gameover', score });
+}
+
+function dropFruit() {
+  if (!canDrop || isGameOver) return;
+  const f = FRUITS[currentLevel];
+  bodies.push({
+    x: dropperX,
+    y: SPAWN_Y,
+    vx: 0,
+    vy: 2,
+    angle: 0,
+    vAngle: (Math.random() - 0.5) * 0.05,
+    level: currentLevel,
+    radius: f.radius,
+    mass: f.radius * f.radius,
+    merged: false,
+    spawnTime: performance.now()
+  });
+  canDrop = false;
+  dropCooldown = 28; // フレーム数
+  currentLevel = nextLevel;
+  nextLevel = randomSpawnLevel();
+  const nextR = FRUITS[currentLevel].radius;
+  dropperX = Math.max(nextR + 4, Math.min(W - nextR - 4, dropperX));
+  drawNextPreview();
+}
+
+function createParticles(x, y, color) {
+  for (let i = 0; i < 12; i++) {
+    const ang = (Math.PI * 2 * i) / 12 + Math.random() * 0.3;
+    const spd = 2 + Math.random() * 4;
+    particles.push({
+      x, y,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      life: 25,
+      color,
+      size: 3 + Math.random() * 4
+    });
+  }
+}
+
+// フルーツのイラスト描画
+function drawFruitIllustration(context, x, y, level, angle) {
+  const f = FRUITS[level];
+  const r = f.radius;
+
+  context.save();
+  context.translate(x, y);
+  context.rotate(angle);
+
+  // 本体ベース
+  context.beginPath();
+  context.arc(0, 0, r, 0, Math.PI * 2);
+  context.fillStyle = f.color;
+  context.fill();
+  context.lineWidth = 2;
+  context.strokeStyle = 'rgba(0,0,0,0.18)';
+  context.stroke();
+
+  // ハイライト
+  context.beginPath();
+  context.arc(-r * 0.3, -r * 0.3, r * 0.22, 0, Math.PI * 2);
+  context.fillStyle = 'rgba(255,255,255,0.35)';
+  context.fill();
+
+  // 種類ごとの特徴イラスト
+  switch (f.type) {
+    case 'cherry':
+      context.beginPath();
+      context.moveTo(0, -r * 0.7);
+      context.quadraticCurveTo(r * 0.3, -r * 1.3, r * 0.6, -r * 1.2);
+      context.strokeStyle = '#558b2f';
+      context.lineWidth = 2.5;
+      context.stroke();
+      break;
+
+    case 'strawberry':
+      context.fillStyle = '#fff59d';
+      for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) {
+          if (i === 0 && j === 0) continue;
+          context.beginPath();
+          context.arc(i * r * 0.38, j * r * 0.38, 1.5, 0, Math.PI * 2);
+          context.fill();
+        }
+      }
+      drawLeaf(context, 0, -r * 0.85, r * 0.45, '#43a047');
+      break;
+
+    case 'grape': {
+      context.fillStyle = 'rgba(255,255,255,0.2)';
+      const offsets = [[-0.35, -0.2], [0.35, -0.2], [0, 0.35], [0, -0.45]];
+      offsets.forEach(([ox, oy]) => {
+        context.beginPath();
+        context.arc(ox * r, oy * r, r * 0.28, 0, Math.PI * 2);
+        context.fill();
+      });
+      drawLeaf(context, 0, -r * 0.9, r * 0.35, '#689f38');
+      break;
+    }
+
+    case 'dekopon':
+      context.beginPath();
+      context.arc(0, -r * 0.92, r * 0.28, 0, Math.PI * 2);
+      context.fillStyle = f.color;
+      context.fill();
+      drawLeaf(context, r * 0.2, -r * 1.05, r * 0.3, '#388e3c');
+      break;
+
+    case 'persimmon':
+      context.fillStyle = '#558b2f';
+      context.fillRect(-r * 0.35, -r * 0.98, r * 0.7, r * 0.22);
+      break;
+
+    case 'apple':
+      context.strokeStyle = '#5d4037';
+      context.lineWidth = 3;
+      context.beginPath();
+      context.moveTo(0, -r * 0.75);
+      context.lineTo(0, -r * 1.1);
+      context.stroke();
+      drawLeaf(context, r * 0.25, -r * 0.98, r * 0.35, '#4caf50');
+      break;
+
+    case 'pear':
+      context.fillStyle = 'rgba(121, 85, 72, 0.35)';
+      [[-0.3, 0.2], [0.35, 0.1], [0.1, 0.45], [-0.2, -0.2]].forEach(([ox, oy]) => {
+        context.beginPath();
+        context.arc(ox * r, oy * r, 2, 0, Math.PI * 2);
+        context.fill();
+      });
+      drawLeaf(context, 0, -r * 0.95, r * 0.3, '#689f38');
+      break;
+
+    case 'peach':
+      context.beginPath();
+      context.moveTo(0, -r * 0.85);
+      context.quadraticCurveTo(r * 0.25, 0, 0, r * 0.85);
+      context.strokeStyle = 'rgba(216, 27, 96, 0.35)';
+      context.lineWidth = 3;
+      context.stroke();
+      drawLeaf(context, -r * 0.2, -r * 0.95, r * 0.35, '#43a047');
+      break;
+
+    case 'pineapple':
+      context.strokeStyle = 'rgba(230, 81, 0, 0.3)';
+      context.lineWidth = 2;
+      for (let d = -r * 0.6; d <= r * 0.6; d += r * 0.4) {
+        context.beginPath();
+        context.moveTo(d - r * 0.3, -r * 0.5);
+        context.lineTo(d + r * 0.3, r * 0.5);
+        context.stroke();
+        context.beginPath();
+        context.moveTo(d + r * 0.3, -r * 0.5);
+        context.lineTo(d - r * 0.3, r * 0.5);
+        context.stroke();
+      }
+      drawLeaf(context, 0, -r * 0.98, r * 0.45, '#2e7d32');
+      break;
+
+    case 'melon':
+      context.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      context.lineWidth = 2.5;
+      context.beginPath();
+      context.moveTo(-r * 0.7, 0);
+      context.lineTo(r * 0.7, 0);
+      context.moveTo(0, -r * 0.7);
+      context.lineTo(0, r * 0.7);
+      context.stroke();
+      context.strokeStyle = '#558b2f';
+      context.lineWidth = 4;
+      context.beginPath();
+      context.moveTo(0, -r * 0.9);
+      context.lineTo(0, -r * 1.12);
+      context.moveTo(-r * 0.2, -r * 1.12);
+      context.lineTo(r * 0.2, -r * 1.12);
+      context.stroke();
+      break;
+
+    case 'watermelon':
+      context.strokeStyle = '#1b5e20';
+      context.lineWidth = 5;
+      for (let i = -2; i <= 2; i++) {
+        context.beginPath();
+        context.ellipse(i * r * 0.28, 0, r * 0.12, r * 0.88, 0, 0, Math.PI * 2);
+        context.stroke();
+      }
+      break;
+  }
+
+  // かわいい顔（目と口）
+  const eyeOffsetX = r * 0.24;
+  const eyeOffsetY = r * 0.05;
+  const eyeSize = Math.max(2, r * 0.07);
+
+  context.fillStyle = '#3e2723';
+  context.beginPath();
+  context.arc(-eyeOffsetX, eyeOffsetY, eyeSize, 0, Math.PI * 2);
+  context.arc(eyeOffsetX, eyeOffsetY, eyeSize, 0, Math.PI * 2);
+  context.fill();
+
+  // ほっぺ
+  context.fillStyle = 'rgba(255, 138, 128, 0.5)';
+  context.beginPath();
+  context.arc(-eyeOffsetX * 1.35, eyeOffsetY + r * 0.14, eyeSize * 1.2, 0, Math.PI * 2);
+  context.arc(eyeOffsetX * 1.35, eyeOffsetY + r * 0.14, eyeSize * 1.2, 0, Math.PI * 2);
+  context.fill();
+
+  // にっこり口
+  context.beginPath();
+  context.arc(0, eyeOffsetY + r * 0.08, r * 0.14, 0.15 * Math.PI, 0.85 * Math.PI);
+  context.strokeStyle = '#3e2723';
+  context.lineWidth = Math.max(1.5, r * 0.04);
+  context.stroke();
+
+  context.restore();
+}
+
+function drawLeaf(context, x, y, size, color) {
+  context.fillStyle = color;
+  context.beginPath();
+  context.ellipse(x, y, size, size * 0.45, -0.3, 0, Math.PI * 2);
+  context.fill();
+}
+
+function drawNextPreview() {
+  nextCtx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
+  const scale = Math.min(1, 32 / FRUITS[nextLevel].radius);
+  nextCtx.save();
+  nextCtx.translate(45, 48);
+  nextCtx.scale(scale, scale);
+  drawFruitIllustration(nextCtx, 0, 0, nextLevel, 0);
+  nextCtx.restore();
+}
+
+// 物理演算とゲームループ
+function update() {
+  if (isGameOver) return;
+
+  const moveSpeed = 5;
+  const curR = FRUITS[currentLevel].radius;
+  if (keys.left) dropperX -= moveSpeed;
+  if (keys.right) dropperX += moveSpeed;
+  dropperX = Math.max(curR + 4, Math.min(W - curR - 4, dropperX));
+
+  if (!canDrop) {
+    dropCooldown--;
+    if (dropCooldown <= 0) canDrop = true;
+  }
+
+  const gravity = 0.42;
+  const friction = 0.985;
+  const bounce = 0.25;
+  const subSteps = 6;
+
+  for (let step = 0; step < subSteps; step++) {
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      if (b.merged) continue;
+      b.vy += gravity / subSteps;
+      b.x += b.vx / subSteps;
+      b.y += b.vy / subSteps;
+      b.angle += b.vAngle / subSteps;
+
+      if (b.x - b.radius < 0) {
+        b.x = b.radius;
+        b.vx = -b.vx * bounce;
+      } else if (b.x + b.radius > W) {
+        b.x = W - b.radius;
+        b.vx = -b.vx * bounce;
+      }
+
+      if (b.y + b.radius > H) {
+        b.y = H - b.radius;
+        b.vy = -b.vy * bounce;
+        b.vx *= friction;
+        b.vAngle = b.vx / b.radius;
+      }
+    }
+
+    for (let i = 0; i < bodies.length; i++) {
+      for (let j = i + 1; j < bodies.length; j++) {
+        const b1 = bodies[i];
+        const b2 = bodies[j];
+        if (b1.merged || b2.merged) continue;
+
+        const dx = b2.x - b1.x;
+        const dy = b2.y - b1.y;
+        const dist = Math.hypot(dx, dy);
+        const minDist = b1.radius + b2.radius;
+
+        if (dist < minDist && dist > 0) {
+          if (b1.level === b2.level) {
+            b1.merged = true;
+            b2.merged = true;
+            const midX = (b1.x + b2.x) / 2;
+            const midY = (b1.y + b2.y) / 2;
+            const nextLvl = b1.level + 1;
+
+            updateScore(FRUITS[b1.level].score * 2);
+            createParticles(midX, midY, FRUITS[b1.level].color);
+
+            if (nextLvl < FRUITS.length) {
+              const nf = FRUITS[nextLvl];
+              bodies.push({
+                x: Math.max(nf.radius, Math.min(W - nf.radius, midX)),
+                y: Math.min(H - nf.radius, midY),
+                vx: (b1.vx + b2.vx) * 0.5,
+                vy: -1.5,
+                angle: 0,
+                vAngle: 0,
+                level: nextLvl,
+                radius: nf.radius,
+                mass: nf.radius * nf.radius,
+                merged: false,
+                spawnTime: performance.now()
+              });
+            } else {
+              updateScore(500); // スイカ同士が合体したら消えて大ボーナス
+            }
+            continue;
+          }
+
+          // 押し戻し処理
+          const nx = dx / dist;
+          const ny = dy / dist;
+          const overlap = minDist - dist;
+          const totalMass = b1.mass + b2.mass;
+          const m1Ratio = b2.mass / totalMass;
+          const m2Ratio = b1.mass / totalMass;
+
+          b1.x -= nx * overlap * m1Ratio;
+          b1.y -= ny * overlap * m1Ratio;
+          b2.x += nx * overlap * m2Ratio;
+          b2.y += ny * overlap * m2Ratio;
+
+          const rvx = b2.vx - b1.vx;
+          const rvy = b2.vy - b1.vy;
+          const velAlongNormal = rvx * nx + rvy * ny;
+
+          if (velAlongNormal < 0) {
+            const impulse = -(1 + bounce) * velAlongNormal;
+            b1.vx -= impulse * nx * m1Ratio;
+            b1.vy -= impulse * ny * m1Ratio;
+            b2.vx += impulse * nx * m2Ratio;
+            b2.vy += impulse * ny * m2Ratio;
+          }
+        }
+      }
+    }
+  }
+
+  bodies = bodies.filter(b => !b.merged);
+
+  particles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life--;
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  // ゲームオーバー判定（落下から一定時間経過したフルーツがデッドラインを超えているか）
+  const now = performance.now();
+  let isOverLine = false;
+  for (const b of bodies) {
+    if (now - b.spawnTime > 1200 && b.y - b.radius < DEADLINE_Y) {
+      isOverLine = true;
+      break;
+    }
+  }
+
+  if (isOverLine) {
+    dangerTimer++;
+    if (dangerTimer > 90) endGame(); // 約1.5秒オーバーで終了
+  } else {
+    dangerTimer = 0;
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.setLineDash([8, 6]);
+  ctx.moveTo(0, DEADLINE_Y);
+  ctx.lineTo(W, DEADLINE_Y);
+  ctx.strokeStyle = dangerTimer > 0 ? '#e53935' : 'rgba(141, 110, 99, 0.45)';
+  ctx.lineWidth = dangerTimer > 0 ? 3 : 2;
+  ctx.stroke();
+  ctx.restore();
+
+  if (canDrop && !isGameOver) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.setLineDash([4, 4]);
+    ctx.moveTo(dropperX, SPAWN_Y);
+    ctx.lineTo(dropperX, H);
+    ctx.strokeStyle = 'rgba(255, 112, 67, 0.4)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+
+    drawFruitIllustration(ctx, dropperX, SPAWN_Y, currentLevel, 0);
+  }
+
+  for (const b of bodies) {
+    drawFruitIllustration(ctx, b.x, b.y, b.level, b.angle);
+  }
+
+  for (const p of particles) {
+    ctx.save();
+    ctx.globalAlpha = p.life / 25;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// 画面の更新間隔によらず、1秒に60回だけ物理演算を進める（120Hz の画面で速くならないように）
+let lastTime = performance.now();
+let acc = 0;
+function loop(t) {
+  acc += Math.min(100, t - lastTime);
+  lastTime = t;
+  while (acc >= 1000 / 60) { update(); acc -= 1000 / 60; }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+initGame();
+requestAnimationFrame((t) => { lastTime = t; loop(t); });
+</script>
+  </template>
 
   <script type="module">
     // ============================================================
@@ -739,7 +1446,10 @@ const firebaseConfig = {
       reads: new Map(),       // 開いているトークの既読（管理者のみ）：userId -> 最後にトークを見た時刻（ms）
       readsLoaded: false,
       partnerTyping: null,    // 開いている DM の相手の入力中 { on, at（書いた時刻 ms）, seen（受け取った時刻 ms） }
-      unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null },
+      gameStats: new Map(),   // 自分のゲームの記録：ゲームID -> { best, plays, lastScore, bestAt, createdAt, updatedAt }
+      gameStatsLoaded: false,
+      activeGameId: null,     // 遊んでいるゲーム（GAMES の id）
+      unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null, games: null },
     };
     let readMap = {};
     let readSentMap = {};     // 既読を記録した、管理者の最新メッセージの時刻（roomId -> ms）
@@ -812,6 +1522,8 @@ const firebaseConfig = {
     ICONS.sparkles = "M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z";
     ICONS.crop = "M6 2v14a2 2 0 002 2h14M2 6h14a2 2 0 012 2v14"; // トリミング
     ICONS.lock ="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z";
+    ICONS.game = "M6 11h4M8 9v4M15 12h.01M18 10h.01M17.32 5H6.68a4 4 0 00-3.978 3.59l-.6 6A3 3 0 005.087 18h.913a3 3 0 002.4-1.2l.6-.8a2 2 0 011.6-.8h2.8a2 2 0 011.6.8l.6.8a3 3 0 002.4 1.2h.913a3 3 0 002.985-3.41l-.6-6A4 4 0 0017.32 5z"; // ゲームのコントローラー
+    ICONS.trophy = "M8 21h8m-4-4v4m-5-17h10v5a5 5 0 01-10 0V4zm10 1h2a2 2 0 010 4h-2M7 5H5a2 2 0 000 4h2";
     const icon = (name, cls = "w-5 h-5") =>
       `<svg class="${cls}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
     const hydrateIcons = (root = document) =>
@@ -1313,8 +2025,10 @@ const firebaseConfig = {
         stickers: [], stickersLoaded: false, reads: new Map(), readsLoaded: false,
         stickerView: "mine", publicStickers: [], publicStickersLoaded: false, publicStickersError: false,
         publicLimit: PUBLIC_STICKER_PAGE, publicHasMore: false, publicSearch: "", partnerTyping: null,
-        unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null },
+        gameStats: new Map(), gameStatsLoaded: false,
+        unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null, games: null },
       });
+      closeGame();
       adminKey = null;
       adminUnlock = null;
       signOut(auth).catch((e) => console.warn(e));
@@ -1778,6 +2492,22 @@ const firebaseConfig = {
         },
         onListenError,
       );
+      // 自分のゲームの記録（本人だけが読める）
+      state.unsub.games = onSnapshot(
+        collection(db, "users", state.me.id, "games"),
+        (snap) => {
+          state.gameStats = new Map(snap.docs.map((d) => [d.id, withId(d)]));
+          state.gameStatsLoaded = true;
+          if (state.tab === "games") renderSidebar();
+          if (state.activeGameId) { renderGameHeader(); sendBestToGame(); }
+        },
+        // 読めなくてもゲームは遊べるので、エラーは出さない（ログアウト・退会などは他の購読で処理される）
+        (e) => {
+          console.warn(e);
+          state.gameStatsLoaded = true;
+          if (state.tab === "games") renderSidebar();
+        },
+      );
     }
 
     // トーク一覧 = メンバーになっている DM・グループ（baseRooms）+ 参加中のオープンチャット（openChats）
@@ -1984,7 +2714,7 @@ const firebaseConfig = {
       document.title = unread ? `(${unread}) Chatter` : "Chatter";
 
       const publicView = state.tab === "stickers" && state.stickerView === "public";
-      $("#search-wrap").hidden = publicView;
+      $("#search-wrap").hidden = publicView || state.tab === "games";
       // みんなのスタンプは、検索欄に入力中でもフォーカスが外れないよう、結果だけを描き直す
       const results = $("#public-sticker-results");
       if (publicView && results) { results.innerHTML = renderPublicStickerResults(); return; }
@@ -1993,6 +2723,7 @@ const firebaseConfig = {
       list.innerHTML = state.tab === "talk" ? renderTalkList(q)
         : state.tab === "users" ? renderUserList(q)
         : state.tab === "stickers" ? renderStickerList(q)
+        : state.tab === "games" ? renderGameList()
         : renderGroupList(q);
       // 開いている「︙」メニューのスタンプが一覧から消えたら閉じる
       if (stickerMenuId !== null && (state.tab !== "stickers" || state.stickerView !== "mine" || !state.stickers.some((s) => s.id === stickerMenuId))) closeStickerMenu();
@@ -2198,6 +2929,147 @@ const firebaseConfig = {
       state.tab = tab;
       renderSidebar();
       $("#list").scrollTop = 0;
+    }
+
+    // ============================================================
+    // ゲーム：ゲームタブの一覧から選び、右側（スマホでは全画面）の iframe で遊ぶ。
+    // 終わったときのスコアを users/{自分のID}/games/{ゲームID} に記録する（自己ベスト・プレイ回数。特典の判定に使う予定）
+    // ============================================================
+    // ゲームを増やすときは、ここに1行足し、<template id="game-src-<id>"> にゲーム本体を置き、firestore.rules の games の gameId の一覧にも id を足す
+    const GAMES = [
+      { id: "suika", name: "スイカゲーム風パズル", emoji: "🍉", desc: "同じフルーツをくっつけて大きくしよう。スイカを目指せ！", bg: "from-lime-300 to-emerald-500" },
+    ];
+    const GAME_SCORE_MAX = 10000000; // 記録できるスコアの上限（firestore.rules と合わせる）
+    const gameById = (id) => GAMES.find((g) => g.id === id) || null;
+    const gameThumb = (g, cls) => `<div class="${cls} shrink-0 rounded-2xl bg-gradient-to-br ${g.bg} grid place-items-center shadow-sm" aria-hidden="true">${g.emoji}</div>`;
+
+    function renderGameList() {
+      return `<p class="px-3 pt-1 pb-2 text-xs font-medium text-slate-400">遊ぶゲームを選んでください</p>` +
+        GAMES.map((g) => {
+          const s = state.gameStats.get(g.id);
+          const record = !state.gameStatsLoaded ? "記録を読み込み中…"
+            : s ? `ベスト <b class="text-amber-600">${s.best.toLocaleString()}</b> ・ ${s.plays.toLocaleString()}回プレイ`
+            : "まだ遊んでいません";
+          return `
+            <button type="button" data-action="open-game" data-id="${esc(g.id)}" class="list-row group ${g.id === state.activeGameId ? "is-active" : ""}">
+              ${gameThumb(g, "w-12 h-12 text-2xl")}
+              <div class="min-w-0 flex-1">
+                <div class="font-semibold truncate text-slate-800">${esc(g.name)}</div>
+                <div class="text-xs text-slate-500 truncate">${esc(g.desc)}</div>
+                <div class="text-xs text-slate-400 truncate mt-0.5">${record}</div>
+              </div>
+              <span class="w-9 h-9 shrink-0 rounded-full grid place-items-center text-slate-300 group-hover:text-indigo-500 group-hover:bg-indigo-50 transition">${icon("chevron", "w-5 h-5")}</span>
+            </button>`;
+        }).join("") +
+        `<p class="px-3 pt-4 text-center text-xs text-slate-400">ゲームは今後も追加予定です</p>`;
+    }
+
+    function renderGameHeader() {
+      const g = gameById(state.activeGameId);
+      if (!g) return;
+      const s = state.gameStats.get(g.id);
+      $("#game-header-main").innerHTML = `
+        ${gameThumb(g, "w-10 h-10 text-xl")}
+        <div class="min-w-0">
+          <div class="font-semibold truncate text-slate-800">${esc(g.name)}</div>
+          <div class="text-xs text-slate-400 truncate">${s ? `${icon("trophy", "w-3.5 h-3.5 inline -mt-0.5 text-amber-500")} ベスト ${s.best.toLocaleString()} ・ ${s.plays.toLocaleString()}回プレイ` : "スコアは自動で記録されます"}</div>
+        </div>`;
+    }
+
+    let gameFrame = null;
+    function sendBestToGame() {
+      const s = state.gameStats.get(state.activeGameId);
+      if (!gameFrame?.contentWindow || !state.gameStatsLoaded) return;
+      gameFrame.contentWindow.postMessage({ source: "chatter", type: "best", best: s?.best ?? 0 }, "*");
+    }
+
+    function openGame(id) {
+      const g = gameById(id);
+      const src = document.getElementById(`game-src-${id}`);
+      if (!g || !src || isRestricted(state.me)) return;
+      if (state.activeRoomId) closeRoom();
+      if (state.activeGameId !== id) {
+        closeGame(false);
+        state.activeGameId = id;
+        // ゲームは sandbox の iframe（アプリとは別の origin）で動かし、postMessage でだけやりとりする
+        const frame = document.createElement("iframe");
+        frame.className = "block w-full h-full border-0";
+        frame.title = g.name;
+        frame.setAttribute("sandbox", "allow-scripts");
+        frame.srcdoc = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${esc(g.name)}</title></head><body>${src.innerHTML}</body></html>`;
+        frame.addEventListener("load", () => {
+          sendBestToGame();
+          if (!isCoarse()) frame.focus(); // キーボードで操作できるように
+        });
+        gameFrame = frame;
+        $("#game-frame-wrap").replaceChildren(frame);
+        renderGameHeader();
+      }
+      $("#chat-empty").hidden = true;
+      $("#chat-room").hidden = true;
+      $("#game-pane").hidden = false;
+      const app = $("#app");
+      if (app.dataset.view !== "chat") {
+        if (isMobile()) history.pushState({ chatter: "chat" }, ""); // スマホの「戻る」で一覧へ
+        app.dataset.view = "chat";
+      }
+      renderSidebar();
+    }
+
+    // ゲームを閉じる（iframe を外すと、ゲームも止まる）。showEmpty：トークを開いていなければ、ようこそ画面に戻す
+    function closeGame(showEmpty = true) {
+      if (!state.activeGameId && !gameFrame) return;
+      state.activeGameId = null;
+      gameFrame = null;
+      $("#game-frame-wrap").replaceChildren();
+      $("#game-pane").hidden = true;
+      if (showEmpty && !state.activeRoomId) $("#chat-empty").hidden = false;
+    }
+
+    function exitGame() {
+      if (history.state?.chatter === "chat") history.back(); // popstate で closeRoom → closeGame される
+      else { closeGame(); $("#app").dataset.view = "list"; renderSidebar(); }
+    }
+
+    // ゲームから届いたメッセージ（遊んでいる iframe からのものだけを受け付ける）
+    window.addEventListener("message", (e) => {
+      if (!gameFrame || e.source !== gameFrame.contentWindow) return;
+      const d = e.data;
+      if (!d || d.source !== "chatter-game") return;
+      if (d.type === "gameover") saveGameScore(state.activeGameId, d.score);
+    });
+
+    // スコアを記録する：プレイ回数を1増やし、自己ベストを超えていれば更新する
+    async function saveGameScore(gameId, score) {
+      if (!state.me || !gameById(gameId) || isRestricted(state.me)) return;
+      if (!Number.isInteger(score) || score < 0) return;
+      score = Math.min(score, GAME_SCORE_MAX);
+      const me = state.me;
+      const ref = doc(db, "users", me.id, "games", gameId);
+      try {
+        const newBest = await runTransaction(db, async (tx) => {
+          const snap = await tx.get(ref);
+          const prev = snap.exists() ? snap.data() : null;
+          if (!prev) {
+            tx.set(ref, { best: score, plays: 1, lastScore: score, bestAt: serverTimestamp(), createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+            return score > 0;
+          }
+          const better = score > prev.best;
+          tx.update(ref, {
+            best: better ? score : prev.best,
+            plays: prev.plays + 1,
+            lastScore: score,
+            ...(better ? { bestAt: serverTimestamp() } : {}),
+            updatedAt: serverTimestamp(),
+          });
+          return better;
+        });
+        if (state.me !== me) return;
+        if (newBest) toast(`自己ベスト更新！ ${score.toLocaleString()}点`);
+      } catch (e) {
+        console.error(e);
+        if (state.me === me) toast("スコアを記録できませんでした", "error");
+      }
     }
 
     // ============================================================
@@ -3047,6 +3919,7 @@ const firebaseConfig = {
     // ============================================================
     function openRoom(roomId, fallback = null) {
       if (isRestricted(state.me)) return;
+      closeGame(false);
       if (state.activeRoomId !== roomId) {
         state.unsub.messages?.();
         state.activeRoomId = roomId;
@@ -3262,6 +4135,7 @@ const firebaseConfig = {
       renderMentionBox();
       closeStickerBox();
       closeStickerSuggest();
+      closeGame(false);
       $("#chat-room").hidden = true;
       $("#chat-empty").hidden = false;
       $("#app").dataset.view = "list";
@@ -6862,6 +7736,7 @@ const firebaseConfig = {
         closeStickerBox();
         closeStickerMenu();
         if (state.activeRoomId) exitRoom();
+        else if (state.activeGameId) exitGame();
       }
       if (on && root.dataset.end !== String(until)) {
         root.dataset.end = until;
@@ -7366,6 +8241,8 @@ const firebaseConfig = {
     // ============================================================
     const actions = {
       "tab": (el) => setTab(el.dataset.tab),
+      "open-game": (el) => openGame(el.dataset.id),
+      "close-game": () => exitGame(),
       "open-room": (el) => {
         const id = el.dataset.id;
         openRoom(id, state.rooms.find((r) => r.id === id) || null);
@@ -7613,6 +8490,7 @@ const firebaseConfig = {
         if (e.key === "Escape" && !e.isComposing && e.target.matches?.(TEXT_FIELD) && !e.target.value) { e.preventDefault(); e.target.blur(); return; }
         // チャットを開いていて文字の入力欄にフォーカスしていなければ、Esc でチャットを抜ける（PC は「Chatter へようこそ」、スマホは一覧に戻る）
         if (e.key === "Escape" && !e.defaultPrevented && state.activeRoomId && !e.target.closest?.("input, textarea, select, [contenteditable]")) { exitRoom(); return; }
+        if (e.key === "Escape" && !e.defaultPrevented && state.activeGameId && !e.target.closest?.("input, textarea, select, [contenteditable]")) { exitGame(); return; }
         // チャットを開いていて文字の入力欄にフォーカスしていなければ、/ でメッセージの入力欄にフォーカスする（/ は入力しない）
         if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing && $("#modal-root").hidden && state.activeRoomId
             && !e.target.closest?.("input, textarea, select, [contenteditable]")) {
