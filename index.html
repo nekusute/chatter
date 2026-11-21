@@ -204,6 +204,17 @@
     @keyframes float { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(40px, 30px) scale(1.08); } }
     .blob { position: absolute; border-radius: 9999px; filter: blur(70px); animation: float 18s ease-in-out infinite; }
 
+    /* アイコンの枠（ゲームの特典）。アイコンを包み、外側 3px に色の輪を出す（アイコンの大きさは変えない） */
+    .av-frame { position: relative; isolation: isolate; display: inline-flex; flex-shrink: 0; border-radius: 9999px; }
+    .av-frame::before { content: ""; position: absolute; inset: -3px; border-radius: inherit; z-index: -1; background: var(--frame); }
+    .av-frame.f-red { --frame: #ef4444; }
+    .av-frame.f-green { --frame: #22c55e; }
+    .av-frame.f-blue { --frame: #3b82f6; }
+    .av-frame.f-gold { --frame: linear-gradient(135deg, #fde68a, #d97706 30%, #fef3c7 55%, #b45309 80%, #fcd34d); }
+    .av-frame.f-rainbow, .av-frame.f-rainbow-anim { --frame: conic-gradient(#ef4444, #f97316, #facc15, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444); }
+    .av-frame.f-rainbow-anim::before { animation: frameSpin 2.4s linear infinite; }
+    @keyframes frameSpin { to { transform: rotate(360deg); } }
+
     /* メッセージ内のリンクはダブルタップで開くので、ダブルタップでの拡大をさせない（2 回目がリンクの少し外に当たることもあるので一覧全体） */
     #messages { touch-action: manipulation; }
 
@@ -577,7 +588,9 @@ const firebaseConfig = {
   <!-- ===================== ゲーム ===================== -->
   <!-- 各ゲームは <template id="game-src-<ゲームID>"> に1つずつ置く（JS の GAMES と合わせる）。
        中身はそのまま iframe（sandbox）の <body> に入れて動かすので、アプリのスタイルや変数とは干渉しない。
-       ゲームからアプリへは parent.postMessage({ source: "chatter-game", type: "gameover", score }) でスコアを送る。
+       ゲームからアプリへは parent.postMessage({ source: "chatter-game", type: "gameover", score }) でスコアを送る
+       （Esc を押したときは type: "escape" を送ると、アプリがゲームを閉じる。type: "progress" で途中のスコアを送っておくと、
+       途中でゲームを閉じたときにアプリがそのスコアを記録する。type: "start" で新しいゲームを始めたことを知らせる）。
        アプリからゲームへは { source: "chatter", type: "best", best } で自己ベストを送る -->
   <template id="game-src-suika">
 <style>
@@ -747,6 +760,8 @@ window.addEventListener('message', (e) => {
 const keys = { left: false, right: false };
 
 window.addEventListener('keydown', (e) => {
+  // Esc はアプリに伝えてゲームを閉じてもらう（iframe の中のキー入力はアプリに届かないため）
+  if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
   if (isGameOver) return;
   if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
     keys.left = true;
@@ -819,6 +834,8 @@ function initGame() {
 function updateScore(add) {
   score += add;
   document.getElementById('score').textContent = score;
+  // 途中のスコア（ゲームを途中で閉じたときは、アプリがこれを記録する）
+  if (add > 0 && !isGameOver) sendToApp({ type: 'progress', score });
 }
 
 function endGame() {
@@ -1268,6 +1285,1057 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 </script>
   </template>
 
+  <template id="game-src-2048">
+<style>
+  * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    padding: 16px 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #faf8ef;
+    color: #776e65;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow: auto;
+    touch-action: none;
+  }
+  /* 盤面の幅（画面に収まるように縮める） */
+  :root { --w: min(340px, calc(100vw - 24px), calc(100vh - 170px)); }
+  .wrap { margin: auto 0; display: flex; flex-direction: column; align-items: center; }
+  .header, .sub-bar { width: var(--w); display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 8px; }
+  h1 { margin: 0; font-size: 38px; font-weight: 800; color: #776e65; }
+  .scores { display: flex; gap: 8px; }
+  .score-box { background: #bbada0; color: #fff; padding: 6px 12px; border-radius: 6px; text-align: center; min-width: 70px; }
+  .score-label { font-size: 11px; font-weight: 700; color: #eee4da; }
+  .score-val { font-size: 18px; font-weight: 800; }
+  .sub-text { font-size: 13px; }
+  button { background: #8f7a66; color: #f9f6f2; border: none; border-radius: 6px; padding: 8px 14px; font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+  button:hover { background: #9f8b77; }
+  .grid-container {
+    position: relative;
+    width: var(--w);
+    height: var(--w);
+    background: #bbada0;
+    border-radius: 8px;
+    padding: 10px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(4, 1fr);
+    gap: 10px;
+  }
+  .tile { background: rgba(238, 228, 218, 0.35); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 800; min-width: 0; }
+  .t-2 { background: #eee4da; color: #776e65; }
+  .t-4 { background: #ede0c8; color: #776e65; }
+  .t-8 { background: #f2b179; color: #f9f6f2; }
+  .t-16 { background: #f59563; color: #f9f6f2; }
+  .t-32 { background: #f67c5f; color: #f9f6f2; }
+  .t-64 { background: #f65e3b; color: #f9f6f2; }
+  .t-128 { background: #edcf72; color: #f9f6f2; font-size: 26px; }
+  .t-256 { background: #edcc61; color: #f9f6f2; font-size: 26px; }
+  .t-512 { background: #edc850; color: #f9f6f2; font-size: 26px; }
+  .t-1024 { background: #edc53f; color: #f9f6f2; font-size: 21px; }
+  .t-2048 { background: #edc22e; color: #f9f6f2; font-size: 21px; }
+  .t-super { background: #3c3a32; color: #f9f6f2; font-size: 18px; }
+  .overlay { position: absolute; inset: 0; background: rgba(238, 228, 218, 0.82); border-radius: 8px; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; z-index: 2; }
+  .overlay.show { display: flex; }
+  .overlay-title { font-size: 30px; font-weight: 800; color: #776e65; }
+  .overlay-sub { font-size: 15px; font-weight: 700; }
+  .overlay-btns { display: flex; gap: 8px; }
+  .hint { margin-top: 12px; font-size: 12px; color: #776e65; text-align: center; width: var(--w); }
+  @media (max-width: 380px) { h1 { font-size: 30px; } .score-box { min-width: 60px; padding: 5px 8px; } .tile { font-size: 24px; } .t-128, .t-256, .t-512 { font-size: 20px; } .t-1024, .t-2048 { font-size: 16px; } .t-super { font-size: 14px; } }
+</style>
+<div class="wrap">
+  <div class="header">
+    <h1>2048</h1>
+    <div class="scores">
+      <div class="score-box"><div class="score-label">SCORE</div><div class="score-val" id="score">0</div></div>
+      <div class="score-box"><div class="score-label">BEST</div><div class="score-val" id="best">-</div></div>
+    </div>
+  </div>
+  <div class="sub-bar">
+    <div class="sub-text">数字を合体させて <strong>2048</strong> を作ろう！</div>
+    <button id="newGameBtn">ニューゲーム</button>
+  </div>
+  <div class="grid-container" id="grid">
+    <div class="overlay" id="overlay">
+      <div class="overlay-title" id="overlayTitle">Game Over!</div>
+      <div class="overlay-sub" id="overlaySub"></div>
+      <div class="overlay-btns">
+        <button id="continueBtn" hidden>続ける</button>
+        <button id="retryBtn">もう一度遊ぶ</button>
+      </div>
+    </div>
+  </div>
+  <div class="hint">PC: 矢印キー（↑↓←→）または WASD ｜ スマホ: 盤面をスワイプ<br>ゲームオーバー・ニューゲーム・ゲームを閉じたときにスコアを記録します</div>
+</div>
+
+<script>
+  const SIZE = 4;
+  let board = [];
+  let score = 0;
+  let best = null;       // アプリから届く自己ベスト（届くまでは null）
+  let wonShown = false;
+  let reported = false;  // このゲームのスコアをアプリに送ったか
+  let moves = 0;
+
+  const gridEl = document.getElementById('grid');
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const overlayEl = document.getElementById('overlay');
+  const overlayTitleEl = document.getElementById('overlayTitle');
+  const overlaySubEl = document.getElementById('overlaySub');
+  const continueBtn = document.getElementById('continueBtn');
+
+  // ---- アプリとのやりとり ----
+  function sendToApp(msg) {
+    try { parent.postMessage(Object.assign({ source: 'chatter-game' }, msg), '*'); } catch (e) {}
+  }
+  function showBest() { bestEl.textContent = best === null ? '-' : Math.max(best, score); }
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== parent || !d || d.source !== 'chatter') return;
+    if (d.type === 'best' && Number.isInteger(d.best)) { best = Math.max(best || 0, d.best); showBest(); }
+  });
+  // このゲームのスコアを1回だけ送る（ゲームオーバー、または途中でニューゲームにしたとき）
+  function reportScore() {
+    if (reported || moves === 0) return false;
+    reported = true;
+    const isNewBest = best !== null && score > best;
+    if (best !== null) best = Math.max(best, score);
+    sendToApp({ type: 'gameover', score });
+    return isNewBest;
+  }
+
+  function init() {
+    reportScore();
+    board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+    score = 0;
+    moves = 0;
+    wonShown = false;
+    reported = false;
+    overlayEl.classList.remove('show');
+    addRandomTile();
+    addRandomTile();
+    render();
+    sendToApp({ type: 'start' });
+  }
+
+  function addRandomTile() {
+    const empty = [];
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        if (board[r][c] === 0) empty.push({ r, c });
+      }
+    }
+    if (empty.length === 0) return;
+    const { r, c } = empty[Math.floor(Math.random() * empty.length)];
+    board[r][c] = Math.random() < 0.9 ? 2 : 4;
+  }
+
+  function render() {
+    scoreEl.textContent = score;
+    showBest();
+    gridEl.querySelectorAll('.tile').forEach(t => t.remove());
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        const val = board[r][c];
+        const tile = document.createElement('div');
+        tile.className = 'tile';
+        if (val > 0) {
+          tile.textContent = val;
+          tile.classList.add(val <= 2048 ? `t-${val}` : 't-super');
+        }
+        gridEl.insertBefore(tile, overlayEl);
+      }
+    }
+  }
+
+  function slideRowLeft(row) {
+    let arr = row.filter(v => v !== 0);
+    for (let i = 0; i < arr.length - 1; i++) {
+      if (arr[i] === arr[i + 1]) {
+        arr[i] *= 2;
+        score += arr[i];
+        arr[i + 1] = 0;
+        if (arr[i] === 2048 && !wonShown) {
+          wonShown = true;
+          setTimeout(() => {
+            if (overlayEl.classList.contains('show')) return; // 同時にゲームオーバーになった
+            overlayTitleEl.textContent = '🎉 2048 達成！';
+            overlaySubEl.textContent = 'このまま続けてスコアを伸ばせます';
+            continueBtn.hidden = false;
+            overlayEl.classList.add('show');
+          }, 150);
+        }
+      }
+    }
+    arr = arr.filter(v => v !== 0);
+    while (arr.length < SIZE) arr.push(0);
+    return arr;
+  }
+
+  function rotateClockwise(mat) {
+    const res = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        res[c][SIZE - 1 - r] = mat[r][c];
+      }
+    }
+    return res;
+  }
+
+  function move(dir) {
+    if (overlayEl.classList.contains('show')) return;
+    let rotated = board.map(r => [...r]);
+    // 0: left, 1: up (3x cw), 2: right (2x cw), 3: down (1x cw)
+    const times = [0, 3, 2, 1][dir];
+    for (let i = 0; i < times; i++) rotated = rotateClockwise(rotated);
+
+    let moved = false;
+    for (let r = 0; r < SIZE; r++) {
+      const nextRow = slideRowLeft(rotated[r]);
+      if (nextRow.join(',') !== rotated[r].join(',')) moved = true;
+      rotated[r] = nextRow;
+    }
+
+    for (let i = 0; i < (4 - times) % 4; i++) rotated = rotateClockwise(rotated);
+
+    if (moved) {
+      moves++;
+      board = rotated;
+      addRandomTile();
+      render();
+      sendToApp({ type: 'progress', score }); // 途中のスコア（ゲームを途中で閉じたときは、アプリがこれを記録する）
+      if (isGameOver()) {
+        const isNewBest = reportScore();
+        overlayTitleEl.textContent = 'Game Over!';
+        overlaySubEl.textContent = 'スコア: ' + score + (isNewBest ? '　🎉 自己ベスト更新！' : '');
+        continueBtn.hidden = true;
+        overlayEl.classList.add('show');
+        showBest();
+      }
+    }
+  }
+
+  function isGameOver() {
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        if (board[r][c] === 0) return false;
+        if (c < SIZE - 1 && board[r][c] === board[r][c + 1]) return false;
+        if (r < SIZE - 1 && board[r][c] === board[r + 1][c]) return false;
+      }
+    }
+    return true;
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
+    const map = {
+      ArrowLeft: 0, a: 0, A: 0,
+      ArrowUp: 1, w: 1, W: 1,
+      ArrowRight: 2, d: 2, D: 2,
+      ArrowDown: 3, s: 3, S: 3
+    };
+    if (e.key in map) {
+      e.preventDefault();
+      move(map[e.key]);
+    }
+  });
+
+  // スワイプ（タッチ・マウスのドラッグ）
+  let startX = 0, startY = 0, swiping = false;
+  gridEl.addEventListener('pointerdown', (e) => { swiping = true; startX = e.clientX; startY = e.clientY; });
+  window.addEventListener('pointerup', (e) => {
+    if (!swiping) return;
+    swiping = false;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 25) return;
+    if (Math.abs(dx) > Math.abs(dy)) move(dx > 0 ? 2 : 0);
+    else move(dy > 0 ? 3 : 1);
+  });
+  window.addEventListener('pointercancel', () => { swiping = false; });
+
+  document.getElementById('newGameBtn').addEventListener('click', init);
+  document.getElementById('retryBtn').addEventListener('click', init);
+  continueBtn.addEventListener('click', () => { overlayEl.classList.remove('show'); continueBtn.hidden = true; });
+
+  init();
+</script>
+  </template>
+
+  <template id="game-src-balloon">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    background-color: #f7f7f7;
+    color: #535353;
+    font-family: "Courier New", Courier, monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    touch-action: none;
+  }
+  /* 縦横比を保ったまま画面に収める（中の座標は 210×375 のまま） */
+  #game-wrapper {
+    position: relative;
+    width: min(420px, 100vw, calc(100vh * 210 / 375));
+    aspect-ratio: 210 / 375;
+    background-color: #ffffff;
+    border: 2px solid #535353;
+    overflow: hidden;
+  }
+  canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; }
+  #ui-overlay { position: absolute; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 14px; }
+  #score-bar { display: flex; justify-content: space-between; font-size: 18px; font-weight: bold; letter-spacing: 1px; color: #535353; }
+  #message-box {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    text-align: center; background: rgba(255, 255, 255, 0.92); border: 2px solid #535353;
+    padding: 18px 20px; width: 84%; pointer-events: auto;
+  }
+  #message-box h1 { font-size: 20px; margin-bottom: 10px; letter-spacing: 1px; }
+  #message-box p { font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
+  button { background: #535353; color: #ffffff; border: none; padding: 10px 22px; font-family: "Courier New", Courier, monospace; font-size: 16px; font-weight: bold; cursor: pointer; letter-spacing: 1px; }
+  button:active { background: #222222; }
+  .hidden { display: none !important; }
+</style>
+<div id="game-wrapper">
+  <canvas id="gameCanvas"></canvas>
+  <div id="ui-overlay">
+    <div id="score-bar">
+      <span id="hi-score">HI -----</span>
+      <span id="current-score">00000</span>
+    </div>
+    <div id="message-box">
+      <h1 id="msg-title">HOT AIR BALLOON</h1>
+      <p id="msg-desc">タップ / ドラッグ / 左右キーで気球を操作<br>トゲを避けて泡やアイテムを集めよう</p>
+      <button id="start-btn">START</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const msgBox = document.getElementById('message-box');
+  const msgTitle = document.getElementById('msg-title');
+  const msgDesc = document.getElementById('msg-desc');
+  const startBtn = document.getElementById('start-btn');
+  const scoreEl = document.getElementById('current-score');
+  const hiScoreEl = document.getElementById('hi-score');
+
+  // 内部解像度（ドット絵感を出すため低解像度キャンバスに描画）
+  const WIDTH = 210;
+  const HEIGHT = 375;
+  canvas.width = WIDTH;
+  canvas.height = HEIGHT;
+
+  // モノクロパレット
+  const COLOR_BG = '#ffffff';
+  const COLOR_DARK = '#535353';
+  const COLOR_MID = '#888888';
+
+  // ドット絵スプライト定義 (1 = #535353, 2 = #888888, 3 = #ffffff, 0 = 透明)
+  const SPRITE_BALLOON = [
+    "0000011111100000",
+    "0001133113311000",
+    "0013331111333100",
+    "0133311331133310",
+    "0133113333113310",
+    "1333133333313331",
+    "1331133333311331",
+    "1331133333311331",
+    "1333133333313331",
+    "0133113333113310",
+    "0133311331133310",
+    "0013331111333100",
+    "0001111111111000",
+    "0000100110010000",
+    "0000010110100000",
+    "0000011111100000",
+    "0000012222100000",
+    "0000011111100000"
+  ];
+
+  const SPRITE_SPIKE = [
+    "00000011000000",
+    "00000011000000",
+    "00100111100100",
+    "00110111101100",
+    "00011111111000",
+    "00111133111100",
+    "11111333311111",
+    "11111333311111",
+    "00111133111100",
+    "00011111111000",
+    "00110111101100",
+    "00100111100100",
+    "00000011000000",
+    "00000011000000"
+  ];
+
+  const SPRITE_BUBBLE = [
+    "0001111000",
+    "0113333110",
+    "1331133331",
+    "1313333331",
+    "1333333331",
+    "1333333331",
+    "1333333331",
+    "1333333331",
+    "0113333110",
+    "0001111000"
+  ];
+
+  const SPRITE_SHIELD = [
+    "001111111100",
+    "013333333310",
+    "133111111331",
+    "131331133131",
+    "131331133131",
+    "131111111131",
+    "131331133131",
+    "013131131310",
+    "013311113310",
+    "001333333100",
+    "000113311000",
+    "000001100000"
+  ];
+
+  const SPRITE_MAGNET = [
+    "011100001110",
+    "122210012221",
+    "111110011111",
+    "133310013331",
+    "133310013331",
+    "133310013331",
+    "133311113331",
+    "013333333310",
+    "001333333100",
+    "000111111000"
+  ];
+
+  const SPRITE_CLOUD = [
+    "000000222220000000",
+    "000022333332200000",
+    "002233333333322000",
+    "023333333333333220",
+    "233333333333333332",
+    "222222222222222222"
+  ];
+
+  function drawSprite(sprite, x, y, scale = 1) {
+    const rx = Math.round(x);
+    const ry = Math.round(y);
+    for (let row = 0; row < sprite.length; row++) {
+      const line = sprite[row];
+      for (let col = 0; col < line.length; col++) {
+        const ch = line[col];
+        if (ch === '0') continue;
+        if (ch === '1') ctx.fillStyle = COLOR_DARK;
+        else if (ch === '2') ctx.fillStyle = COLOR_MID;
+        else if (ch === '3') ctx.fillStyle = COLOR_BG;
+        ctx.fillRect(rx + col * scale, ry + row * scale, scale, scale);
+      }
+    }
+  }
+
+  // ゲーム状態
+  let state = 'START'; // START, PLAYING, GAMEOVER
+  let score = 0;
+  let hiScore = null; // アプリから届く自己ベスト（届くまでは null）
+  let speed = 1.6;
+  let frame = 0;
+
+  // ---- アプリとのやりとり ----
+  function sendToApp(msg) {
+    try { parent.postMessage(Object.assign({ source: 'chatter-game' }, msg), '*'); } catch (e) {}
+  }
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== parent || !d || d.source !== 'chatter') return;
+    if (d.type === 'best' && Number.isInteger(d.best)) { hiScore = Math.max(hiScore || 0, d.best); updateScoreDisplay(); }
+  });
+
+  // プレイヤー
+  const player = {
+    x: WIDTH / 2 - 8,
+    y: HEIGHT - 75,
+    w: 16,
+    h: 18,
+    targetX: WIDTH / 2 - 8,
+    shieldTimer: 0,
+    magnetTimer: 0
+  };
+
+  let entities = [];
+  let clouds = [];
+  let particles = [];
+
+  for (let i = 0; i < 6; i++) {
+    clouds.push({ x: Math.random() * (WIDTH - 20), y: Math.random() * HEIGHT, speed: 0.3 + Math.random() * 0.3 });
+  }
+
+  function updateScoreDisplay() {
+    scoreEl.textContent = String(Math.floor(score)).padStart(5, '0');
+    hiScoreEl.textContent = 'HI ' + (hiScore === null ? '-----' : String(Math.floor(Math.max(hiScore, state === 'PLAYING' ? 0 : score))).padStart(5, '0'));
+  }
+  updateScoreDisplay();
+
+  function spawnParticles(x, y, count = 8) {
+    for (let i = 0; i < count; i++) {
+      const angle = (Math.PI * 2 * i) / count;
+      const spd = 0.8 + Math.random() * 1.5;
+      particles.push({ x, y, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd, life: 18 + Math.floor(Math.random() * 10) });
+    }
+  }
+
+  function resetGame() {
+    score = 0;
+    speed = 1.6;
+    frame = 0;
+    player.x = WIDTH / 2 - 8;
+    player.targetX = player.x;
+    player.shieldTimer = 0;
+    player.magnetTimer = 0;
+    entities = [];
+    particles = [];
+    state = 'PLAYING';
+    msgBox.classList.add('hidden');
+    updateScoreDisplay();
+    sendToApp({ type: 'start' });
+  }
+
+  function gameOver() {
+    state = 'GAMEOVER';
+    keys.ArrowLeft = keys.ArrowRight = keys.a = keys.d = false;
+    spawnParticles(player.x + 8, player.y + 8, 16);
+    const final = Math.floor(score);
+    const isNewBest = hiScore !== null && final > hiScore;
+    if (hiScore !== null) hiScore = Math.max(hiScore, final);
+    updateScoreDisplay();
+    msgTitle.textContent = 'GAME OVER';
+    msgDesc.innerHTML = 'SCORE: ' + final + (isNewBest ? '<br>🎉 自己ベスト更新！' : '') + '<br>もう一度挑戦しますか？';
+    startBtn.textContent = 'RETRY';
+    msgBox.classList.remove('hidden');
+    sendToApp({ type: 'gameover', score: final });
+  }
+
+  // 入力処理（タッチ・マウス・キーボード）
+  let isPointerDown = false;
+  const keys = { ArrowLeft: false, ArrowRight: false, a: false, d: false };
+
+  function setTargetFromClientX(clientX) {
+    const rect = canvas.getBoundingClientRect();
+    const relX = (clientX - rect.left) / rect.width;
+    const canvasX = relX * WIDTH;
+    player.targetX = Math.max(4, Math.min(WIDTH - player.w - 4, canvasX - player.w / 2));
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (state !== 'PLAYING') return;
+    isPointerDown = true;
+    setTargetFromClientX(e.clientX);
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!isPointerDown || state !== 'PLAYING') return;
+    setTargetFromClientX(e.clientX);
+  });
+  window.addEventListener('pointerup', () => { isPointerDown = false; });
+  window.addEventListener('pointercancel', () => { isPointerDown = false; });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
+    const k = e.key === 'A' ? 'a' : e.key === 'D' ? 'd' : e.key;
+    if (k in keys) { keys[k] = true; e.preventDefault(); }
+    if ((e.key === ' ' || e.key === 'Enter') && state !== 'PLAYING') {
+      e.preventDefault();
+      resetGame();
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    const k = e.key === 'A' ? 'a' : e.key === 'D' ? 'd' : e.key;
+    if (k in keys) keys[k] = false;
+  });
+
+  startBtn.addEventListener('click', resetGame);
+
+  function spawnEntity() {
+    const rand = Math.random();
+    let type = 'bubble';
+    let w = 10, h = 10;
+    if (rand < 0.46) { type = 'spike'; w = 14; h = 14; }
+    else if (rand < 0.90) { type = 'bubble'; w = 10; h = 10; }
+    else if (rand < 0.95) { type = 'shield'; w = 12; h = 12; }
+    else { type = 'magnet'; w = 12; h = 10; }
+    const x = 8 + Math.random() * (WIDTH - w - 16);
+    entities.push({ type, x, y: -20, w, h, vx: type === 'spike' && Math.random() < 0.25 ? (Math.random() < 0.5 ? -0.5 : 0.5) : 0 });
+  }
+
+  function checkCollision(a, b) {
+    const pad = 2;
+    return a.x + pad < b.x + b.w - pad && a.x + a.w - pad > b.x + pad && a.y + pad < b.y + b.h - pad && a.y + a.h - pad > b.y + pad;
+  }
+
+  function update() {
+    for (let c of clouds) {
+      c.y += c.speed * (state === 'PLAYING' ? 1.2 : 0.5);
+      if (c.y > HEIGHT + 10) { c.y = -15; c.x = Math.random() * (WIDTH - 20); }
+    }
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.life--;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+
+    if (state !== 'PLAYING') return;
+
+    frame++;
+    score += 0.15 * speed;
+    speed = Math.min(4.2, 1.6 + score * 0.0006);
+
+    if (player.shieldTimer > 0) player.shieldTimer--;
+    if (player.magnetTimer > 0) player.magnetTimer--;
+
+    const keySpeed = 3.2;
+    if (keys.ArrowLeft || keys.a) player.targetX = Math.max(4, player.targetX - keySpeed);
+    if (keys.ArrowRight || keys.d) player.targetX = Math.min(WIDTH - player.w - 4, player.targetX + keySpeed);
+
+    player.x += (player.targetX - player.x) * 0.28;
+
+    const spawnInterval = Math.max(18, Math.floor(42 - speed * 5));
+    if (frame % spawnInterval === 0) spawnEntity();
+
+    for (let i = entities.length - 1; i >= 0; i--) {
+      const ent = entities[i];
+      ent.y += speed;
+      ent.x += ent.vx;
+      if (ent.x <= 4 || ent.x + ent.w >= WIDTH - 4) ent.vx *= -1;
+
+      // 磁石効果
+      if (player.magnetTimer > 0 && ent.type === 'bubble') {
+        const dx = (player.x + player.w / 2) - (ent.x + ent.w / 2);
+        const dy = (player.y + player.h / 2) - (ent.y + ent.h / 2);
+        const dist = Math.hypot(dx, dy);
+        if (dist < 75 && dist > 1) {
+          ent.x += (dx / dist) * 2.5;
+          ent.y += (dy / dist) * 2.5;
+        }
+      }
+
+      if (checkCollision(player, ent)) {
+        if (ent.type === 'bubble') {
+          score += 25;
+          spawnParticles(ent.x + 5, ent.y + 5, 6);
+          entities.splice(i, 1);
+          continue;
+        } else if (ent.type === 'shield') {
+          player.shieldTimer = 360;
+          score += 15;
+          spawnParticles(ent.x + 6, ent.y + 6, 8);
+          entities.splice(i, 1);
+          continue;
+        } else if (ent.type === 'magnet') {
+          player.magnetTimer = 420;
+          score += 15;
+          spawnParticles(ent.x + 6, ent.y + 5, 8);
+          entities.splice(i, 1);
+          continue;
+        } else if (ent.type === 'spike') {
+          if (player.shieldTimer > 0) {
+            player.shieldTimer = 0;
+            spawnParticles(ent.x + 7, ent.y + 7, 12);
+            entities.splice(i, 1);
+            continue;
+          } else {
+            gameOver();
+            return;
+          }
+        }
+      }
+
+      if (ent.y > HEIGHT + 20) entities.splice(i, 1);
+    }
+
+    updateScoreDisplay();
+  }
+
+  function draw() {
+    ctx.fillStyle = COLOR_BG;
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    ctx.fillStyle = '#eeeeee';
+    for (let y = (frame * Math.floor(speed)) % 24; y < HEIGHT; y += 24) {
+      for (let x = 12; x < WIDTH; x += 24) ctx.fillRect(x, y, 1, 1);
+    }
+
+    for (let c of clouds) drawSprite(SPRITE_CLOUD, c.x, c.y, 1);
+
+    for (let ent of entities) {
+      if (ent.type === 'spike') drawSprite(SPRITE_SPIKE, ent.x, ent.y, 1);
+      else if (ent.type === 'bubble') drawSprite(SPRITE_BUBBLE, ent.x, ent.y, 1);
+      else if (ent.type === 'shield') drawSprite(SPRITE_SHIELD, ent.x, ent.y, 1);
+      else if (ent.type === 'magnet') drawSprite(SPRITE_MAGNET, ent.x, ent.y, 1);
+    }
+
+    if (state !== 'GAMEOVER') {
+      const bob = Math.sin(frame * 0.12) * 1.2;
+      drawSprite(SPRITE_BALLOON, player.x, player.y + bob, 1);
+
+      if (player.shieldTimer > 0) {
+        if (player.shieldTimer > 90 || Math.floor(frame / 4) % 2 === 0) {
+          ctx.fillStyle = COLOR_DARK;
+          const cx = Math.round(player.x + 8);
+          const cy = Math.round(player.y + 9 + bob);
+          const r = 13;
+          for (let a = 0; a < 16; a++) {
+            const ang = (Math.PI * 2 * a) / 16 + frame * 0.05;
+            ctx.fillRect(Math.round(cx + Math.cos(ang) * r), Math.round(cy + Math.sin(ang) * r), 1, 1);
+          }
+        }
+      }
+
+      if (player.magnetTimer > 0 && Math.floor(frame / 6) % 2 === 0) {
+        ctx.fillStyle = COLOR_MID;
+        ctx.fillRect(Math.round(player.x - 3), Math.round(player.y + 6 + bob), 1, 4);
+        ctx.fillRect(Math.round(player.x + player.w + 2), Math.round(player.y + 6 + bob), 1, 4);
+      }
+    }
+
+    ctx.fillStyle = COLOR_DARK;
+    for (let p of particles) ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2);
+  }
+
+  // 画面の更新間隔によらず、1秒に60回だけ進める（120Hz の画面で速くならないように）
+  let lastTime = performance.now();
+  let acc = 0;
+  function loop(t) {
+    acc += Math.min(100, t - lastTime);
+    lastTime = t;
+    while (acc >= 1000 / 60) { update(); acc -= 1000 / 60; }
+    draw();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame((t) => { lastTime = t; loop(t); });
+})();
+</script>
+  </template>
+
+  <template id="game-src-minesweeper">
+<style>
+  :root {
+    --bg: #f0f2f5;
+    --panel: #ffffff;
+    --border: #d0d7de;
+    --cell-closed: #c9d1d9;
+    --cell-hover: #b6c2cf;
+    --cell-open: #f6f8fa;
+    --text: #1f2328;
+    --accent: #0969da;
+  }
+  * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    padding: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow: auto;
+  }
+  .controls {
+    display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; align-items: center;
+    background: var(--panel); padding: 10px 14px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 10px;
+  }
+  select, button { padding: 6px 12px; font-size: 14px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--text); cursor: pointer; font-weight: 600; }
+  button:hover, select:hover { background: #f3f4f6; }
+  button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .status-bar {
+    display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; font-size: 15px; font-weight: 700;
+    background: var(--panel); padding: 8px 16px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 10px;
+  }
+  .board-wrapper { background: var(--panel); padding: 10px; border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,0.1); max-width: 100%; overflow-x: auto; flex-shrink: 0; }
+  #board { display: grid; gap: 2px; background: #8c959f; border: 2px solid #8c959f; width: max-content; }
+  .cell { width: 30px; height: 30px; background: var(--cell-closed); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; cursor: pointer; transition: background 0.1s; }
+  .cell:hover:not(.open) { background: var(--cell-hover); }
+  .cell.open { background: var(--cell-open); cursor: default; }
+  .cell.mine { background: #ffebe9; }
+  .cell.exploded { background: #cf222e; color: #fff; }
+  .n1 { color: #0969da; }
+  .n2 { color: #1a7f37; }
+  .n3 { color: #cf222e; }
+  .n4 { color: #8250df; }
+  .n5 { color: #9a6700; }
+  .n6 { color: #0550ae; }
+  .n7 { color: #24292f; }
+  .n8 { color: #57606a; }
+  #message { margin-top: 10px; font-size: 17px; font-weight: 700; min-height: 25px; text-align: center; }
+  .hint { margin-top: 6px; font-size: 12px; color: #57606a; text-align: center; line-height: 1.6; }
+</style>
+  <div class="controls">
+    <select id="difficulty">
+      <option value="easy">初級 (9×9 / 地雷10)</option>
+      <option value="medium" selected>中級 (16×16 / 地雷40)</option>
+      <option value="hard">上級 (30×16 / 地雷99)</option>
+    </select>
+    <button id="modeBtn" title="スマホ・タブレット用にクリック動作を切替">モード: 開く 🔍</button>
+    <button id="resetBtn">リセット 🔄</button>
+  </div>
+  <div class="status-bar">
+    <div>🚩 残り: <span id="minesLeft">40</span></div>
+    <div>⏱️ <span id="timer">0</span>秒</div>
+    <div>🏆 ベスト: <span id="best">-</span></div>
+  </div>
+  <div class="board-wrapper">
+    <div id="board"></div>
+  </div>
+  <div id="message"></div>
+  <div class="hint">PC: 左クリックで開く / 右クリックで旗 ｜ スマホ: 「モード」で切替（長押しでも旗）<br>クリアすると得点：初級 100・中級 400・上級 1200 点 ＋ 速さのボーナス</div>
+
+<script>
+  // base：クリアの得点、par：この秒数より速いほどボーナス、mult：1秒あたりのボーナス
+  const LEVELS = {
+    easy: { cols: 9, rows: 9, mines: 10, base: 100, par: 120, mult: 1 },
+    medium: { cols: 16, rows: 16, mines: 40, base: 400, par: 400, mult: 2 },
+    hard: { cols: 30, rows: 16, mines: 99, base: 1200, par: 900, mult: 3 }
+  };
+
+  let cols, rows, totalMines, level;
+  let grid = [];
+  let gameOver = false;
+  let firstClick = true;
+  let flagsPlaced = 0;
+  let cellsOpened = 0;
+  let timer = 0;
+  let timerInterval = null;
+  let flagMode = false;
+  let best = null; // アプリから届く自己ベスト（届くまでは null）
+
+  const boardEl = document.getElementById('board');
+  const minesLeftEl = document.getElementById('minesLeft');
+  const timerEl = document.getElementById('timer');
+  const bestEl = document.getElementById('best');
+  const messageEl = document.getElementById('message');
+  const diffEl = document.getElementById('difficulty');
+  const modeBtn = document.getElementById('modeBtn');
+  const resetBtn = document.getElementById('resetBtn');
+
+  // ---- アプリとのやりとり ----
+  function sendToApp(msg) {
+    try { parent.postMessage(Object.assign({ source: 'chatter-game' }, msg), '*'); } catch (e) {}
+  }
+  function showBest() { bestEl.textContent = best === null ? '-' : best; }
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== parent || !d || d.source !== 'chatter') return;
+    if (d.type === 'best' && Number.isInteger(d.best)) { best = Math.max(best || 0, d.best); showBest(); }
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); }
+  });
+
+  function initGame() {
+    level = LEVELS[diffEl.value];
+    cols = level.cols;
+    rows = level.rows;
+    totalMines = level.mines;
+    grid = [];
+    gameOver = false;
+    firstClick = true;
+    flagsPlaced = 0;
+    cellsOpened = 0;
+    timer = 0;
+    clearInterval(timerInterval);
+    timerInterval = null;
+    timerEl.textContent = '0';
+    minesLeftEl.textContent = totalMines;
+    messageEl.textContent = '';
+
+    boardEl.style.gridTemplateColumns = `repeat(${cols}, 30px)`;
+    boardEl.innerHTML = '';
+
+    for (let r = 0; r < rows; r++) {
+      const row = [];
+      for (let c = 0; c < cols; c++) {
+        const cellEl = document.createElement('div');
+        cellEl.className = 'cell';
+        cellEl.addEventListener('click', () => {
+          if (longPressed) { longPressed = false; return; }
+          handleCellClick(r, c);
+        });
+        cellEl.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          if (e.pointerType === 'touch' || longPressed) return; // 長押しは下で旗にする
+          toggleFlag(r, c);
+        });
+        // スマホの長押しで旗
+        cellEl.addEventListener('pointerdown', (e) => {
+          if (e.pointerType !== 'touch') return;
+          clearTimeout(pressTimer);
+          longPressed = false;
+          pressTimer = setTimeout(() => { longPressed = true; toggleFlag(r, c); }, 450);
+        });
+        cellEl.addEventListener('pointerup', () => clearTimeout(pressTimer));
+        cellEl.addEventListener('pointerleave', () => clearTimeout(pressTimer));
+        cellEl.addEventListener('pointercancel', () => clearTimeout(pressTimer));
+        boardEl.appendChild(cellEl);
+        row.push({ r, c, mine: false, open: false, flag: false, count: 0, el: cellEl });
+      }
+      grid.push(row);
+    }
+  }
+  let pressTimer = null;
+  let longPressed = false;
+
+  function placeMines(excludeR, excludeC) {
+    let placed = 0;
+    while (placed < totalMines) {
+      const r = Math.floor(Math.random() * rows);
+      const c = Math.floor(Math.random() * cols);
+      if (grid[r][c].mine) continue;
+      if (Math.abs(r - excludeR) <= 1 && Math.abs(c - excludeC) <= 1) continue;
+      grid[r][c].mine = true;
+      placed++;
+    }
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (grid[r][c].mine) continue;
+        let count = 0;
+        getNeighbors(r, c).forEach(n => { if (n.mine) count++; });
+        grid[r][c].count = count;
+      }
+    }
+  }
+
+  function getNeighbors(r, c) {
+    const res = [];
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const nr = r + dr, nc = c + dc;
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) res.push(grid[nr][nc]);
+      }
+    }
+    return res;
+  }
+
+  function handleCellClick(r, c) {
+    if (gameOver) return;
+    if (flagMode) { toggleFlag(r, c); return; }
+    const cell = grid[r][c];
+    if (cell.flag || cell.open) return;
+
+    if (firstClick) {
+      firstClick = false;
+      placeMines(r, c);
+      timerInterval = setInterval(() => { timer++; timerEl.textContent = timer; }, 1000);
+      sendToApp({ type: 'start' });
+    }
+
+    if (cell.mine) {
+      revealAllMines(cell);
+      endGame(false);
+      return;
+    }
+
+    openCell(r, c);
+    checkWin();
+  }
+
+  // 0 のマスから広がるときに深い再帰にならないよう、順に開く
+  function openCell(r, c) {
+    const stack = [grid[r][c]];
+    while (stack.length) {
+      const cell = stack.pop();
+      if (cell.open || cell.flag) continue;
+      cell.open = true;
+      cell.el.classList.add('open');
+      cellsOpened++;
+      if (cell.count > 0) {
+        cell.el.textContent = cell.count;
+        cell.el.classList.add('n' + cell.count);
+      } else {
+        getNeighbors(cell.r, cell.c).forEach(n => { if (!n.open && !n.flag) stack.push(n); });
+      }
+    }
+  }
+
+  function toggleFlag(r, c) {
+    if (gameOver) return;
+    const cell = grid[r][c];
+    if (cell.open) return;
+    cell.flag = !cell.flag;
+    cell.el.textContent = cell.flag ? '🚩' : '';
+    flagsPlaced += cell.flag ? 1 : -1;
+    minesLeftEl.textContent = totalMines - flagsPlaced;
+  }
+
+  function revealAllMines(explodedCell) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const cell = grid[r][c];
+        if (cell.mine) {
+          cell.el.classList.add('open', 'mine');
+          cell.el.textContent = '💣';
+        }
+      }
+    }
+    if (explodedCell) explodedCell.el.classList.add('exploded');
+  }
+
+  function checkWin() {
+    if (cellsOpened === rows * cols - totalMines) endGame(true);
+  }
+
+  function endGame(won) {
+    gameOver = true;
+    clearInterval(timerInterval);
+    if (won) {
+      const score = level.base + Math.max(0, level.par - timer) * level.mult;
+      const isNewBest = best !== null && score > best;
+      if (best !== null) { best = Math.max(best, score); showBest(); }
+      messageEl.textContent = `🎉 クリア！ タイム ${timer}秒 ・ ${score}点` + (isNewBest ? '（自己ベスト更新！）' : '');
+      messageEl.style.color = '#1a7f37';
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (grid[r][c].mine && !grid[r][c].flag) grid[r][c].el.textContent = '🚩';
+        }
+      }
+      minesLeftEl.textContent = '0';
+      sendToApp({ type: 'gameover', score });
+    } else {
+      messageEl.textContent = '💥 ゲームオーバー！リセットして再挑戦しよう';
+      messageEl.style.color = '#cf222e';
+      sendToApp({ type: 'gameover', score: 0 }); // プレイ回数だけ数える
+    }
+  }
+
+  modeBtn.addEventListener('click', () => {
+    flagMode = !flagMode;
+    modeBtn.textContent = flagMode ? 'モード: 旗 🚩' : 'モード: 開く 🔍';
+    modeBtn.classList.toggle('active', flagMode);
+  });
+
+  diffEl.addEventListener('change', initGame);
+  resetBtn.addEventListener('click', initGame);
+
+  initGame();
+</script>
+  </template>
+
+
   <script type="module">
     // ============================================================
     // ★ Firebase 設定：Firebase コンソールでコピーした値に書き換えてください
@@ -1553,12 +2621,19 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       return src;
     }
     const userIcon = (id) => (id === state.me?.id ? state.me.icon : state.users.get(id)?.icon);
-    function avatar(id, name, size = "w-10 h-10 text-sm") {
+    // アイコン（枠なし）
+    function avatarBase(id, name, size = "w-10 h-10 text-sm") {
       const src = iconSrc(userIcon(id));
       if (src) return `<img src="${src}" alt="" class="${size} shrink-0 rounded-full object-cover bg-[#fff] ring-1 ring-slate-200 select-none shadow-sm" draggable="false" decoding="async" />`;
       const ch =[...String(name || id || "?").trim()][0]?.toUpperCase() || "?";
       return `<div class="${size} shrink-0 rounded-full bg-gradient-to-br ${gradientOf(id)} text-white font-semibold grid place-items-center select-none shadow-sm">${esc(ch)}</div>`;
     }
+    // アイコン（設定していれば枠を付ける）
+    function avatar(id, name, size) { return withFrame(avatarBase(id, name, size), frameOf(id)); }
+    // アイコンの枠（ゲームの特典）。users/{id}.frame。退会したユーザー・オープンチャットの匿名の送信者には付けない
+    function userFrame(u) { return u && !u.deleted && FRAME_BY_ID[u.frame] ? u.frame : null; }
+    function frameOf(id) { return userFrame(id === state.me?.id ? state.me : state.users.get(id)); }
+    function withFrame(html, frame) { return frame ? `<span class="av-frame f-${frame}">${html}</span>` : html; }
     // グループのアバター：設定したアイコン（room.icon。形式はユーザーのアイコンと同じ）か、既定のグループのアイコン
     function groupAvatar(room, size = "w-10 h-10") {
       const src = iconSrc(room.icon);
@@ -1975,7 +3050,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 
     async function enterApp(user) {
       state.uid = auth.currentUser.uid;
-      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null };
+      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null, frame: user.frame ?? null };
       document.querySelectorAll('#screen-login input[type="password"]').forEach((el) => { el.value = ""; });
       readMap = store.json(`chatter:read:${user.id}`, {});
       readSentMap = store.json(`chatter:readsent:${user.id}`, {});
@@ -2423,9 +3498,9 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       state.unsub.users = onSnapshot(
         query(collection(db, "users"), orderBy("lastSeen", "desc"), limit(300)),
         (snap) => {
-          const prevIcons = new Map([...state.users].map(([id, u]) => [id, `${u.icon}|${badgeKey(u)}`]));
+          const prevIcons = new Map([...state.users].map(([id, u]) => [id, `${u.icon}|${badgeKey(u)}|${userFrame(u)}`]));
           state.users = new Map(snap.docs.map((d) => [d.id, withId(d)]));
-          const iconChanged = [...state.users].some(([id, u]) => `${u.icon}|${badgeKey(u)}` !== prevIcons.get(id)); // 公式マークの変化も含める
+          const iconChanged = [...state.users].some(([id, u]) => `${u.icon}|${badgeKey(u)}|${userFrame(u)}` !== prevIcons.get(id)); // 公式マーク・アイコンの枠の変化も含める
           const mine = state.users.get(state.me.id);
           if (mine?.deleted && !state.accountDeleting) {
             // 別の端末でアカウントが削除された
@@ -2434,7 +3509,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             return;
           }
           if (mine && mine.uid !== state.uid && !snap.metadata.fromCache) { signOutForReset(); return; } // 管理者がパスワードをリセットした
-          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; }
+          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; state.me.frame = mine.frame ?? null; }
           state.usersLoaded = true;
           applyRestriction();
           renderSidebar();
@@ -2933,23 +4008,82 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 
     // ============================================================
     // ゲーム：ゲームタブの一覧から選び、右側（スマホでは全画面）の iframe で遊ぶ。
-    // 終わったときのスコアを users/{自分のID}/games/{ゲームID} に記録する（自己ベスト・プレイ回数。特典の判定に使う予定）
+    // 終わったときのスコアを users/{自分のID}/games/{ゲームID} に記録する（自己ベスト・プレイ回数・得点の合計）。
+    // 特典：どれか1つのゲームの得点の合計が段階ごとの値に届くと、アイコンの枠の色が使えるようになる
     // ============================================================
-    // ゲームを増やすときは、ここに1行足し、<template id="game-src-<id>"> にゲーム本体を置き、firestore.rules の games の gameId の一覧にも id を足す
+    // ゲームを増やすときは、ここに1行足し、<template id="game-src-<id>"> にゲーム本体を置き、
+    // firestore.rules の games の gameId の一覧と、frameEarned（枠の獲得条件）にも足す
+    // tiers：アイコンの枠（FRAMES の順）を獲得できる、そのゲームの得点の合計（firestore.rules の frameEarned と合わせる）
     const GAMES = [
-      { id: "suika", name: "スイカゲーム風パズル", emoji: "🍉", desc: "同じフルーツをくっつけて大きくしよう。スイカを目指せ！", bg: "from-lime-300 to-emerald-500" },
+      { id: "suika", name: "スイカゲーム風パズル", emoji: "🍉", desc: "同じフルーツをくっつけて大きくしよう。スイカを目指せ！", bg: "from-lime-300 to-emerald-500",
+        tiers: [1000, 5000, 15000, 40000, 100000, 250000] },
+      { id: "2048", name: "2048 パズル", emoji: "🔢", desc: "同じ数字を合体させて 2048 を作ろう", bg: "from-amber-200 to-orange-400",
+        tiers: [5000, 30000, 100000, 300000, 800000, 2000000] },
+      { id: "balloon", name: "熱気球", emoji: "🎈", desc: "トゲをよけて泡やアイテムを集めよう", bg: "from-slate-200 to-slate-400",
+        tiers: [2000, 10000, 30000, 80000, 200000, 500000] },
+      { id: "minesweeper", name: "マインスイーパー", emoji: "💣", desc: "クリアで得点。難しいほど・速いほど高得点", bg: "from-sky-200 to-blue-400",
+        tiers: [500, 3000, 10000, 30000, 80000, 200000] },
     ];
-    const GAME_SCORE_MAX = 10000000; // 記録できるスコアの上限（firestore.rules と合わせる）
+    // アイコンの枠（users/{id}.frame。firestore.rules の frameEarned と合わせる）
+    const FRAMES = [
+      { id: "red", label: "赤" },
+      { id: "green", label: "緑" },
+      { id: "blue", label: "青" },
+      { id: "gold", label: "金" },
+      { id: "rainbow", label: "レインボー" },
+      { id: "rainbow-anim", label: "動くレインボー" },
+    ];
+    const FRAME_BY_ID = Object.fromEntries(FRAMES.map((f, i) => [f.id, { ...f, tier: i }]));
+    const GAME_SCORE_MAX = 10000000; // 1回で記録できるスコアの上限（firestore.rules と合わせる）
     const gameById = (id) => GAMES.find((g) => g.id === id) || null;
     const gameThumb = (g, cls) => `<div class="${cls} shrink-0 rounded-2xl bg-gradient-to-br ${g.bg} grid place-items-center shadow-sm" aria-hidden="true">${g.emoji}</div>`;
+    // 得点の合計（以前の記録で total が無いものは、少なくとも best はあるので best とみなす。ルールと同じ）
+    const gameTotal = (s) => (s ? (Number.isInteger(s.total) ? s.total : s.best || 0) : 0);
+    // そのゲームで獲得した枠の数（0〜6）
+    const gameTierCount = (g, stats = state.gameStats) => g.tiers.filter((n) => gameTotal(stats.get(g.id)) >= n).length;
+    // 獲得した枠の数（どれか1つのゲームで届けば獲得）
+    const unlockedFrameCount = (stats = state.gameStats) => Math.max(0, ...GAMES.map((g) => gameTierCount(g, stats)));
+    // 枠の見本（自分のアイコンに、その枠を付けたもの）
+    const frameSample = (frame, size = "w-9 h-9 text-sm") => withFrame(avatarBase(state.me.id, state.me.name, size), frame);
+
+    // ゲーム一覧の上の、アイコンの枠の選択
+    function renderFramePicker() {
+      const unlocked = unlockedFrameCount();
+      const cur = userFrame(state.me);
+      const chip = (frame, label, ok) => `
+        <button type="button" data-action="set-frame" data-frame="${frame || ""}" class="relative flex flex-col items-center gap-1.5 pt-2 pb-1.5 rounded-xl transition ${ok ? "hover:bg-white" : "opacity-40"} ${frame === cur ? "bg-white ring-1 ring-indigo-300" : ""}" ${ok ? "" : `aria-disabled="true"`} aria-pressed="${frame === cur}" title="${ok ? `「${label}」にする` : `${label}：まだ獲得していません`}">
+          ${frameSample(frame)}
+          <span class="text-[11px] font-medium text-slate-600 leading-none whitespace-nowrap">${label}</span>
+          ${ok ? "" : `<span class="absolute top-0.5 right-0.5 text-slate-500">${icon("lock", "w-3 h-3")}</span>`}
+        </button>`;
+      return `
+        <div class="mx-2 mb-3 p-3 rounded-2xl bg-amber-50 ring-1 ring-amber-200">
+          <div class="flex items-center gap-2 px-1">
+            <span class="text-amber-500">${icon("gift", "w-4 h-4")}</span>
+            <span class="text-sm font-bold text-slate-800">特典：アイコンの枠</span>
+            <span class="text-xs text-slate-500">${unlocked}/${FRAMES.length} 獲得</span>
+            <button type="button" data-action="frame-info" class="ml-auto text-xs font-semibold text-indigo-600 hover:underline">獲得条件</button>
+          </div>
+          <div class="grid grid-cols-4 gap-1 mt-2">
+            ${chip(null, "なし", true)}
+            ${FRAMES.map((f, i) => chip(f.id, f.label, i < unlocked)).join("")}
+          </div>
+        </div>`;
+    }
 
     function renderGameList() {
-      return `<p class="px-3 pt-1 pb-2 text-xs font-medium text-slate-400">遊ぶゲームを選んでください</p>` +
+      const picker = state.gameStatsLoaded ? renderFramePicker() : "";
+      return picker + `<p class="px-3 pt-1 pb-2 text-xs font-medium text-slate-400">遊ぶゲームを選んでください</p>` +
         GAMES.map((g) => {
           const s = state.gameStats.get(g.id);
+          const tier = gameTierCount(g);
+          const next = FRAMES[tier];
           const record = !state.gameStatsLoaded ? "記録を読み込み中…"
-            : s ? `ベスト <b class="text-amber-600">${s.best.toLocaleString()}</b> ・ ${s.plays.toLocaleString()}回プレイ`
+            : s ? `ベスト <b class="text-amber-600">${s.best.toLocaleString()}</b> ・ 合計 ${gameTotal(s).toLocaleString()} ・ ${s.plays.toLocaleString()}回`
             : "まだ遊んでいません";
+          const goal = !state.gameStatsLoaded ? ""
+            : next ? `次の枠「${next.label}」まで あと ${(g.tiers[tier] - gameTotal(s)).toLocaleString()}点`
+            : "すべての枠を獲得済み 🎉";
           return `
             <button type="button" data-action="open-game" data-id="${esc(g.id)}" class="list-row group ${g.id === state.activeGameId ? "is-active" : ""}">
               ${gameThumb(g, "w-12 h-12 text-2xl")}
@@ -2957,11 +4091,53 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
                 <div class="font-semibold truncate text-slate-800">${esc(g.name)}</div>
                 <div class="text-xs text-slate-500 truncate">${esc(g.desc)}</div>
                 <div class="text-xs text-slate-400 truncate mt-0.5">${record}</div>
+                ${goal ? `<div class="text-[11px] text-amber-700 truncate">${goal}</div>` : ""}
               </div>
               <span class="w-9 h-9 shrink-0 rounded-full grid place-items-center text-slate-300 group-hover:text-indigo-500 group-hover:bg-indigo-50 transition">${icon("chevron", "w-5 h-5")}</span>
             </button>`;
         }).join("") +
         `<p class="px-3 pt-4 text-center text-xs text-slate-400">ゲームは今後も追加予定です</p>`;
+    }
+
+    // 獲得条件の一覧（ゲームごとの得点の合計）
+    function openFrameInfo() {
+      const unlocked = unlockedFrameCount();
+      openModal(`
+        ${modalHead("アイコンの枠の獲得条件", "どれか1つのゲームで、得点の<b>合計</b>（遊んだ回の得点を足したもの）が下の値に届くと、その色の枠が使えるようになります。")}
+        <div class="px-6 pb-6 space-y-2">
+          ${FRAMES.map((f, i) => `
+            <div class="flex items-center gap-3 p-2.5 rounded-2xl ${i < unlocked ? "bg-emerald-50" : "bg-slate-50"}">
+              ${frameSample(f.id)}
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-semibold text-slate-800">${f.label}${i < unlocked ? ` <span class="text-xs text-emerald-600">${icon("check", "w-3.5 h-3.5 inline -mt-0.5")} 獲得済み</span>` : ""}</div>
+                <div class="text-[11px] text-slate-500 leading-relaxed">${GAMES.map((g) => `${g.emoji} ${g.tiers[i].toLocaleString()}`).join(" ／ ")}</div>
+              </div>
+            </div>`).join("")}
+          <p class="text-xs text-slate-500 pt-1">今の合計：${GAMES.map((g) => `${g.emoji} ${gameTotal(state.gameStats.get(g.id)).toLocaleString()}`).join(" ／ ")}</p>
+        </div>`);
+    }
+
+    // アイコンの枠を変える（null で外す）
+    let frameBusy = false;
+    async function setFrame(frame) {
+      if (frameBusy || !state.me || isRestricted(state.me)) return;
+      frame = frame || null;
+      if (frame && (!FRAME_BY_ID[frame] || FRAME_BY_ID[frame].tier >= unlockedFrameCount())) return;
+      if (frame === userFrame(state.me)) return;
+      frameBusy = true;
+      const me = state.me;
+      const prev = me.frame;
+      me.frame = frame; // 先に表示を変える
+      renderSidebar();
+      try {
+        await updateDoc(doc(db, "users", me.id), { frame: frame ?? deleteField() });
+        if (state.me === me && state.activeRoomId) { renderChatHeader(); if (state.messagesLoaded) renderMessages(); }
+      } catch (e) {
+        console.error(e);
+        if (state.me === me) { me.frame = prev; renderSidebar(); toast("アイコンの枠を変更できませんでした", "error"); }
+      } finally {
+        frameBusy = false;
+      }
     }
 
     function renderGameHeader() {
@@ -2972,7 +4148,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
         ${gameThumb(g, "w-10 h-10 text-xl")}
         <div class="min-w-0">
           <div class="font-semibold truncate text-slate-800">${esc(g.name)}</div>
-          <div class="text-xs text-slate-400 truncate">${s ? `${icon("trophy", "w-3.5 h-3.5 inline -mt-0.5 text-amber-500")} ベスト ${s.best.toLocaleString()} ・ ${s.plays.toLocaleString()}回プレイ` : "スコアは自動で記録されます"}</div>
+          <div class="text-xs text-slate-400 truncate">${s ? `${icon("trophy", "w-3.5 h-3.5 inline -mt-0.5 text-amber-500")} ベスト ${s.best.toLocaleString()} ・ 合計 ${gameTotal(s).toLocaleString()} ・ ${s.plays.toLocaleString()}回` : "スコアは自動で記録されます"}</div>
         </div>`;
     }
 
@@ -3016,9 +4192,13 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       renderSidebar();
     }
 
+    // 遊んでいるゲームの、まだ記録していない途中のスコア（ゲームを途中で閉じたときに記録する）
+    let gameProgress = 0;
     // ゲームを閉じる（iframe を外すと、ゲームも止まる）。showEmpty：トークを開いていなければ、ようこそ画面に戻す
     function closeGame(showEmpty = true) {
       if (!state.activeGameId && !gameFrame) return;
+      if (state.activeGameId && gameProgress > 0) saveGameScore(state.activeGameId, gameProgress);
+      gameProgress = 0;
       state.activeGameId = null;
       gameFrame = null;
       $("#game-frame-wrap").replaceChildren();
@@ -3033,10 +4213,13 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 
     // ゲームから届いたメッセージ（遊んでいる iframe からのものだけを受け付ける）
     window.addEventListener("message", (e) => {
-      if (!gameFrame || e.source !== gameFrame.contentWindow) return;
       const d = e.data;
       if (!d || d.source !== "chatter-game") return;
-      if (d.type === "gameover") saveGameScore(state.activeGameId, d.score);
+      if (!gameFrame || e.source !== gameFrame.contentWindow) return;
+      if (d.type === "progress" && Number.isInteger(d.score)) gameProgress = d.score;
+      else if (d.type === "start") gameProgress = 0;
+      else if (d.type === "gameover") { gameProgress = 0; saveGameScore(state.activeGameId, d.score); }
+      else if (d.type === "escape" && $("#modal-root").hidden) exitGame(); // ゲームの中で Esc を押したとき（モーダル表示中は閉じない）
     });
 
     // スコアを記録する：プレイ回数を1増やし、自己ベストを超えていれば更新する
@@ -3046,26 +4229,35 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       score = Math.min(score, GAME_SCORE_MAX);
       const me = state.me;
       const ref = doc(db, "users", me.id, "games", gameId);
+      const unlockedBefore = unlockedFrameCount();
       try {
-        const newBest = await runTransaction(db, async (tx) => {
+        const { newBest, total } = await runTransaction(db, async (tx) => {
           const snap = await tx.get(ref);
           const prev = snap.exists() ? snap.data() : null;
           if (!prev) {
-            tx.set(ref, { best: score, plays: 1, lastScore: score, bestAt: serverTimestamp(), createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-            return score > 0;
+            tx.set(ref, { best: score, plays: 1, lastScore: score, total: score, bestAt: serverTimestamp(), createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+            return { newBest: score > 0, total: score };
           }
           const better = score > prev.best;
+          const total = gameTotal(prev) + score;
           tx.update(ref, {
             best: better ? score : prev.best,
             plays: prev.plays + 1,
             lastScore: score,
+            total,
             ...(better ? { bestAt: serverTimestamp() } : {}),
             updatedAt: serverTimestamp(),
           });
-          return better;
+          return { newBest: better, total };
         });
         if (state.me !== me) return;
-        if (newBest) toast(`自己ベスト更新！ ${score.toLocaleString()}点`);
+        // 新しく獲得したアイコンの枠
+        const stats = new Map(state.gameStats);
+        stats.set(gameId, { ...stats.get(gameId), best: Math.max(stats.get(gameId)?.best ?? 0, score), total });
+        const unlockedAfter = unlockedFrameCount(stats);
+        if (unlockedAfter > unlockedBefore) {
+          toast(`🎁 アイコンの枠「${FRAMES[unlockedAfter - 1].label}」を獲得しました！ ゲームタブの「特典」で設定できます`);
+        } else if (newBest) toast(`自己ベスト更新！ ${score.toLocaleString()}点`);
       } catch (e) {
         console.error(e);
         if (state.me === me) toast("スコアを記録できませんでした", "error");
@@ -8243,6 +9435,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       "tab": (el) => setTab(el.dataset.tab),
       "open-game": (el) => openGame(el.dataset.id),
       "close-game": () => exitGame(),
+      "set-frame": (el) => (el.getAttribute("aria-disabled") === "true" ? openFrameInfo() : setFrame(el.dataset.frame)), // まだ獲得していない枠は、獲得条件を出す
+      "frame-info": () => openFrameInfo(),
       "open-room": (el) => {
         const id = el.dataset.id;
         openRoom(id, state.rooms.find((r) => r.id === id) || null);
