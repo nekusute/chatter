@@ -7,6 +7,8 @@
   <title>Chatter</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%234f46e5'/%3E%3Cpath d='M7 10h10M7 14h6' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
 
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <!-- Tailwind CSS (CDN) -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -27,7 +29,7 @@
       theme: {
         extend: {
           fontFamily: {
-            sans: ['"Inter"', '"Hiragino Sans"', '"Hiragino Kaku Gothic ProN"', '"Noto Sans JP"', '"Yu Gothic UI"', 'Meiryo', 'system-ui', 'sans-serif'],
+            sans: ['var(--app-font, "Inter")', '"Hiragino Sans"', '"Hiragino Kaku Gothic ProN"', '"Noto Sans JP"', '"Yu Gothic UI"', 'Meiryo', 'system-ui', 'sans-serif'],
           },
           boxShadow: {
             soft: '0 20px 50px -20px rgba(30, 41, 59, 0.25)',
@@ -50,6 +52,27 @@
         },
       },
     };
+    // アプリ全体のフォント（Chatter Plus 以上）。Google Fonts から、選んだフォントだけを読み込む
+    // 保存した設定をここで先に当て（読み込み時のちらつきを防ぐ）、ログイン後にプランを確かめて index.html 本体の syncAppFont で直す
+    const APP_FONTS = { cute: 'Hachi Maru Pop', bold: 'Dela Gothic One', dot: 'DotGothic16', mincho: 'Zen Antique' };
+    function loadAppFont(key) {
+      const family = APP_FONTS[key];
+      if (!family || document.getElementById('app-font-' + key)) return;
+      const link = document.createElement('link');
+      link.id = 'app-font-' + key;
+      link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?family=' + family.replace(/ /g, '+') + '&display=swap';
+      document.head.appendChild(link);
+    }
+    function applyAppFont(key) {
+      const root = document.documentElement;
+      if (!APP_FONTS[key]) { root.style.removeProperty('--app-font'); delete root.dataset.font; return; }
+      loadAppFont(key);
+      root.style.setProperty('--app-font', '"' + APP_FONTS[key] + '"');
+      root.dataset.font = key;
+    }
+    try { applyAppFont(localStorage.getItem('chatter:font')); } catch {}
+
     // 描画の前にテーマを決める（保存した設定 → なければ OS の設定）
     try {
       const theme = localStorage.getItem('chatter:theme');
@@ -3053,6 +3076,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       state.uid = auth.currentUser.uid;
       state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null, frame: user.frame ?? null, header: user.header ?? null };
       document.querySelectorAll('#screen-login input[type="password"]').forEach((el) => { el.value = ""; });
+      syncAppFont();
       readMap = store.json(`chatter:read:${user.id}`, {});
       readSentMap = store.json(`chatter:readsent:${user.id}`, {});
       touchPresence(true);
@@ -3270,6 +3294,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             settingRow("ダークモード", "画面を暗い配色にします（このブラウザに保存されます）",
               `<button type="button" id="theme-toggle" data-action="toggle-theme" class="switch" role="switch" aria-checked="false" aria-label="ダークモード"><span class="switch-knob"></span></button>`),
             accentControl(),
+            fontControl(),
           ])}
           ${settingSection("チャット", [
             settingRow("スタンプの候補", "入力欄にスタンプの名前を入れると、名前が部分一致する自分のスタンプを候補に表示します（このブラウザに保存されます）",
@@ -3278,6 +3303,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
         </div>`);
       renderThemeToggle();
       renderAccentControls();
+      renderFontControl();
     }
 
     // ============================================================
@@ -3510,7 +3536,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             return;
           }
           if (mine && mine.uid !== state.uid && !snap.metadata.fromCache) { signOutForReset(); return; } // 管理者がパスワードをリセットした
-          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; state.me.frame = mine.frame ?? null; state.me.header = mine.header ?? null; }
+          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; state.me.frame = mine.frame ?? null; state.me.header = mine.header ?? null; syncAppFont(); }
           state.usersLoaded = true;
           applyRestriction();
           renderSidebar();
@@ -4564,7 +4590,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     // ============================================================
     // 有料プラン（ネタ）：Chatter Plus / Pro / Max（すべて永年無料）
     // users/{id}.plan = "plus" | "pro" | "max"、users/{id}.badge = "blue" | "orange" | "gold"（Max の公式マークの色）
-    // 実際に動くのは Plus の任意の絵文字のリアクションと「入力中」のバリエーション、Pro の AI要約（アニメーションを出すだけで何もしない）、Max の公式マークだけ
+    // 実際に動くのは Plus の任意の絵文字のリアクション・「入力中」のバリエーション・フォントの追加、Pro の AI要約（アニメーションを出すだけで何もしない）、Max の公式マークだけ
     // ============================================================
     const PLAN_RANK = { plus: 1, pro: 2, max: 3 };
     const BADGE_COLORS = { blue: { label: "青", fill: "#1D9BF0" }, orange: { label: "オレンジ", fill: "#F97316" }, gold: { label: "金", fill: "#E0A800" } };
@@ -4576,6 +4602,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
         features: [
           ["リアクション絵文字の追加", "任意の絵文字を追加できるようにします。"],
           ["「入力中...」表示のバリエーション増加", "相手の入力中の表示が、厳選された数十種類の言い回しからランダムに変わります。"],
+          ["フォントの追加", "アプリ全体のフォントをデフォルト・かわいい・太い・ドット・明朝体から選択できるようにします。"],
         ],
       },
       {
@@ -4585,6 +4612,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
           ["Chatter Plus のすべての機能", ""],
           ["ダイナミック・ピクセル・エンハンサー", "アイコンやUIの彩度を1.5%上昇させます。"],
           ["AI要約", "Claude Fable5.5 やGPT-6.5 Astra, Gemini 5 Radon が、トークの内容をわかりやすく要約します。"],
+          ["アダプティブ・アンチエイリアス・レンダリング", "文字の輪郭のシャープネスを1.2%向上させます。"],
+          ["セマンティック・ノイズ・リダクション", "意味論的に冗長な表現を内部的に検出します。"],
         ],
       },
       {
@@ -4596,6 +4625,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
           ["公式マークを名前の横に追加", "青・オレンジ・金のチェックマーク"],
           ["優先アップデート権", "最新のアップデートを、優先的にお届けします。"],
           ["新機能の先行体験", "開発中の新機能を、いち早くお試しいただけます。"],
+          ["ディープ・コンテキスト・トークナイザー", "トークの文脈に沿って大規模言語モデルが最適に理解できるようにします。"],
+          ["ハルシネーション・ガード", "最新AIが虚偽の情報を内部的に検出します。"],
         ],
       },
     ];
@@ -4681,7 +4712,9 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       "表示価格は税込みです。ただし、税込みでない場合を除きます。",
       "「無料」とは料金が発生しないことをいい、料金が発生しないことを意味し、料金が発生しないことを指します。",
       "ダイナミック・ピクセル・エンハンサーの効果には個人差があります。彩度の上昇を実感できない場合でも、彩度は上昇しているものとみなします。",
-      "1.5%とは、100%を100としたときの1.5をいいます。",
+      "1.5%とは、100%を100としたときの1.5をいいます。1.2%についても同様です。",
+      "セマンティック・ノイズ・リダクションは、冗長な表現を検出しますが、検出した冗長な表現を削減するものではなく、また削減しないものでもありません。",
+      "ハルシネーション・ガードの説明に虚偽の情報が含まれている場合は、ハルシネーション・ガードがそれを内部的に検出します。",
       "AI要約の結果は、要約が完了した時点で表示されます。要約が完了する時期については、お答えいたしかねます。",
       "「入力中...」表示のバリエーションは、相手が入力中の場合に限り表示されます。相手が入力中でない場合は、表示されません。",
       "メッセージのハッシュ化保存における「ハッシュ化」とは、ハッシュ化することをいいます。",
@@ -4756,9 +4789,41 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
         </div>`);
     }
 
+    // フォントの追加（Chatter Plus 以上）。選んだフォントはこのブラウザに保存。プランが無いときは既定のフォントに戻す
+    const FONT_KEY = "chatter:font";
+    const FONT_OPTIONS = [["default", "デフォルト"], ["cute", "かわいい"], ["bold", "太い"], ["dot", "ドット"], ["mincho", "明朝体"]];
+    const savedFont = () => (APP_FONTS[store.get(FONT_KEY)] ? store.get(FONT_KEY) : "default");
+    function syncAppFont() {
+      applyAppFont(state.me && myPlanRank() >= PLAN_RANK.plus ? savedFont() : null);
+    }
+    const fontControl = () => `<div id="font-control" class="px-4 py-3"></div>`;
+    function renderFontControl() {
+      const box = $("#font-control");
+      if (!box) return;
+      const can = myPlanRank() >= PLAN_RANK.plus;
+      const cur = can ? savedFont() : "default";
+      if (can) Object.keys(APP_FONTS).forEach(loadAppFont); // ボタンをそれぞれのフォントで見せる
+      box.innerHTML = `
+        <div class="text-sm font-semibold text-slate-800">フォント <span class="ml-1 px-1.5 py-px rounded-md bg-gradient-to-r from-sky-400 to-indigo-500 text-white text-[10px] font-bold align-middle">Plus</span></div>
+        <div class="text-xs text-slate-400 leading-relaxed mt-0.5">${can ? "アプリ全体のフォントを変えます（このブラウザに保存されます）" : `Chatter Plus（無料）に加入すると選べます。<button type="button" data-action="open-plans" class="text-indigo-600 font-semibold hover:underline">プランを見る</button>`}</div>
+        <div class="mt-2 grid grid-cols-3 sm:grid-cols-5 gap-1.5" role="radiogroup" aria-label="フォント">
+          ${FONT_OPTIONS.map(([key, label]) => `
+            <button type="button" data-action="set-font" data-font="${key}" role="radio" aria-checked="${key === cur}" ${can ? "" : "disabled"}
+              class="h-10 px-1 rounded-xl text-[13px] whitespace-nowrap ring-1 transition disabled:opacity-50 disabled:cursor-not-allowed ${key === cur ? "bg-indigo-50 ring-2 ring-indigo-400 text-indigo-700 font-semibold" : "bg-white ring-slate-200 text-slate-600 hover:bg-slate-50"}"
+              style="font-family: ${APP_FONTS[key] ? `'${APP_FONTS[key]}', ` : "Inter, "}'Hiragino Sans', 'Yu Gothic UI', Meiryo, sans-serif">${label}</button>`).join("")}
+        </div>`;
+    }
+    function setAppFont(key) {
+      if (myPlanRank() < PLAN_RANK.plus) { openPlans(); return; }
+      if (key === "default" || !APP_FONTS[key]) store.remove(FONT_KEY); else store.set(FONT_KEY, key);
+      syncAppFont();
+      renderFontControl();
+    }
+
     async function updatePlan(fields) {
       await updateDoc(doc(db, "users", state.me.id), fields);
       Object.entries(fields).forEach(([k, v]) => { state.me[k] = typeof v === "string" ? v : null; });
+      syncAppFont();
       renderSidebar();
       if (state.activeRoomId) { renderChatHeader(); if (state.messagesLoaded) renderMessages(); }
     }
@@ -9696,6 +9761,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       "toggle-notify": () => toggleNotify(),
       "settings": () => openSettings(),
       "toggle-theme": () => toggleTheme(),
+      "set-font": (el) => setAppFont(el.dataset.font),
       "toggle-sticker-suggest": () => toggleStickerSuggest(),
       "accent-preset": (el) => setAccent(el.dataset.color),
       "reset-accent": () => setAccent(ACCENT_DEFAULT),
