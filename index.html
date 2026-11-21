@@ -563,6 +563,7 @@ const firebaseConfig = {
           <header class="flex items-center gap-1 px-2 sm:px-4 h-16 border-b border-slate-100 bg-white shrink-0">
             <button type="button" data-action="back" class="icon-btn md:hidden" aria-label="戻る"><span data-icon="back"></span></button>
             <div id="game-header-main" class="flex items-center gap-3 min-w-0 flex-1 pl-1"></div>
+            <button type="button" data-action="open-ranking" class="icon-btn text-amber-500" aria-label="ランキング" title="ランキング"><span data-icon="trophy"></span></button>
             <button type="button" data-action="close-game" class="icon-btn hidden md:grid" aria-label="ゲームを閉じる" title="ゲームを閉じる"><span data-icon="x"></span></button>
           </header>
           <div id="game-frame-wrap" class="flex-1 min-h-0 bg-[#fdf6e3]"></div>
@@ -3050,7 +3051,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 
     async function enterApp(user) {
       state.uid = auth.currentUser.uid;
-      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null, frame: user.frame ?? null };
+      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null, frame: user.frame ?? null, header: user.header ?? null };
       document.querySelectorAll('#screen-login input[type="password"]').forEach((el) => { el.value = ""; });
       readMap = store.json(`chatter:read:${user.id}`, {});
       readSentMap = store.json(`chatter:readsent:${user.id}`, {});
@@ -3509,7 +3510,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             return;
           }
           if (mine && mine.uid !== state.uid && !snap.metadata.fromCache) { signOutForReset(); return; } // 管理者がパスワードをリセットした
-          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; state.me.frame = mine.frame ?? null; }
+          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; state.me.frame = mine.frame ?? null; state.me.header = mine.header ?? null; }
           state.usersLoaded = true;
           applyRestriction();
           renderSidebar();
@@ -4073,7 +4074,11 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 
     function renderGameList() {
       const picker = state.gameStatsLoaded ? renderFramePicker() : "";
-      return picker + `<p class="px-3 pt-1 pb-2 text-xs font-medium text-slate-400">遊ぶゲームを選んでください</p>` +
+      return picker + `
+        <div class="flex items-center px-3 pt-1 pb-2">
+          <p class="text-xs font-medium text-slate-400">遊ぶゲームを選んでください</p>
+          <button type="button" data-action="open-ranking" class="ml-auto btn-chip py-1 text-xs bg-amber-50 text-amber-700 ring-1 ring-amber-200 hover:bg-amber-100">${icon("trophy", "w-3.5 h-3.5")}ランキング</button>
+        </div>` +
         GAMES.map((g) => {
           const s = state.gameStats.get(g.id);
           const tier = gameTierCount(g);
@@ -4138,6 +4143,190 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       } finally {
         frameBusy = false;
       }
+    }
+
+    // ゲームごとの限定ヘッダー（users/{id}.header。プロフィールとユーザー情報の上に出す）。
+    // そのゲームの得点の合計が、そのゲームの tiers[tier] に届くと使える（firestore.rules の headerEarned と合わせる）
+    // deco：飾り [文字, 左(%), 上(%), 大きさ(px), 色, 回転(deg), 文字の背景]
+    const HEADERS = [
+      { id: "suika-1", game: "suika", tier: 0, name: "フルーツ畑", bg: "linear-gradient(135deg, #dcfce7, #bbf7d0 60%, #fef9c3)",
+        deco: [["🍒", 6, 18, 26, 0, -12], ["🍓", 22, 55, 30, 0, 8], ["🍇", 40, 12, 28], ["🍊", 58, 52, 32, 0, -6], ["🍎", 76, 14, 30, 0, 10], ["🍑", 90, 55, 28]] },
+      { id: "suika-2", game: "suika", tier: 2, name: "スイカの縞", bg: "repeating-linear-gradient(100deg, #14532d 0 16px, #22c55e 16px 42px)",
+        deco: [["🍉", 78, 18, 52, 0, -10]] },
+      { id: "suika-3", game: "suika", tier: 4, name: "スイカの断面", bg: "linear-gradient(#f43f5e 0 72%, #fecdd3 72% 78%, #fef9c3 78% 84%, #15803d 84%)",
+        deco: [["●", 12, 22, 11, "#1f2937", 20], ["●", 26, 46, 11, "#1f2937", -20], ["●", 40, 16, 11, "#1f2937", 10], ["●", 54, 42, 11, "#1f2937", -10], ["●", 68, 18, 11, "#1f2937", 25], ["●", 82, 44, 11, "#1f2937", -25], ["●", 92, 14, 11, "#1f2937"]] },
+      { id: "2048-1", game: "2048", tier: 0, name: "タイル", bg: "repeating-linear-gradient(0deg, transparent 0 30px, #bbada0 30px 36px), repeating-linear-gradient(90deg, #cdc1b4 0 30px, #bbada0 30px 36px)",
+        deco: [["2", 9, 18, 18, "#776e65", 0, "#eee4da"], ["4", 33, 52, 18, "#776e65", 0, "#ede0c8"], ["8", 57, 18, 18, "#fff", 0, "#f2b179"], ["16", 81, 52, 16, "#fff", 0, "#f59563"]] },
+      { id: "2048-2", game: "2048", tier: 2, name: "2048", bg: "linear-gradient(135deg, #edc22e, #f59563)",
+        deco: [["2048", 50, 22, 44, "#fff"]] },
+      { id: "2048-3", game: "2048", tier: 4, name: "その先へ", bg: "linear-gradient(135deg, #3c3a32, #1c1b17)",
+        deco: [["4096", 15, 18, 18, "#3c3a32", 0, "#edc22e"], ["8192", 44, 50, 18, "#3c3a32", 0, "#edcc61"], ["16384", 73, 16, 16, "#3c3a32", 0, "#edc53f"], ["✦", 93, 58, 18, "#edc22e"]] },
+      { id: "balloon-1", game: "balloon", tier: 0, name: "青空", bg: "linear-gradient(#7dd3fc, #e0f2fe)",
+        deco: [["☁️", 8, 14, 30], ["☁️", 46, 52, 24], ["☁️", 70, 10, 28], ["🎈", 86, 40, 34, 0, 8]] },
+      { id: "balloon-2", game: "balloon", tier: 2, name: "ドット絵", bg: "radial-gradient(#535353 1px, transparent 1.6px) 0 0 / 8px 8px, #ffffff",
+        deco: [["HI 99999", 50, 34, 22, "#535353"]] },
+      { id: "balloon-3", game: "balloon", tier: 4, name: "夕焼けフライト", bg: "linear-gradient(#f97316, #ec4899 55%, #6d28d9)",
+        deco: [["✨", 10, 18, 20], ["🎈", 30, 42, 30, 0, -8], ["🎈", 58, 14, 36, 0, 6], ["🎈", 82, 46, 28, 0, -4], ["✨", 92, 12, 18]] },
+      { id: "minesweeper-1", game: "minesweeper", tier: 0, name: "マス目", bg: "repeating-linear-gradient(0deg, transparent 0 26px, #8c959f 26px 28px), repeating-linear-gradient(90deg, #f6f8fa 0 26px, #8c959f 26px 28px)",
+        deco: [["1", 12, 20, 20, "#0969da"], ["2", 36, 52, 20, "#1a7f37"], ["3", 60, 20, 20, "#cf222e"], ["🚩", 84, 48, 20]] },
+      { id: "minesweeper-2", game: "minesweeper", tier: 2, name: "旗だらけ", bg: "linear-gradient(135deg, #0969da, #54aeff)",
+        deco: [["🚩", 8, 20, 28, 0, -10], ["🚩", 30, 52, 26, 0, 6], ["🚩", 52, 16, 30], ["🚩", 74, 50, 26, 0, -6], ["🚩", 92, 14, 24, 0, 10]] },
+      { id: "minesweeper-3", game: "minesweeper", tier: 4, name: "大爆発", bg: "radial-gradient(circle at 72% 50%, #fde047, #f97316 22%, #b91c1c 48%, #1f2937 80%)",
+        deco: [["💣", 14, 34, 36, 0, -15], ["💥", 66, 18, 48]] },
+    ];
+    const HEADER_BY_ID = Object.fromEntries(HEADERS.map((h) => [h.id, h]));
+    function userHeader(u) { return u && !u.deleted && HEADER_BY_ID[u.header] ? u.header : null; }
+    const headerNeed = (h) => gameById(h.game).tiers[h.tier]; // 獲得に必要な、そのゲームの得点の合計
+    const headerUnlocked = (h) => gameTotal(state.gameStats.get(h.game)) >= headerNeed(h);
+    // ヘッダーの画像（id が無ければ空）
+    function headerBanner(id, cls = "h-24") {
+      const h = HEADER_BY_ID[id];
+      if (!h) return "";
+      const deco = h.deco.map(([t, x, y, size, color, rot = 0, bg]) => `<span class="absolute font-black leading-none whitespace-nowrap select-none" style="left:${x}%;top:${y}%;font-size:${size}px;transform:translateX(-50%) rotate(${rot}deg);${color ? `color:${color};` : ""}${bg ? `background:${bg};padding:4px 7px;border-radius:5px;` : ""}">${esc(t)}</span>`).join("");
+      return `<div class="relative overflow-hidden ${cls} rounded-2xl ring-1 ring-black/5" style="background:${h.bg}" aria-hidden="true">${deco}</div>`;
+    }
+
+    // ヘッダーを選ぶ画面（プロフィールから開く）
+    function openHeaderPicker() {
+      const cur = userHeader(state.me);
+      const card = (h) => {
+        const ok = headerUnlocked(h);
+        const g = gameById(h.game);
+        return `
+          <button type="button" data-action="set-header" data-header="${h.id}" class="relative text-left rounded-2xl p-1.5 transition ${h.id === cur ? "ring-2 ring-indigo-500 bg-indigo-50" : "ring-1 ring-slate-200 hover:bg-slate-50"} ${ok ? "" : "opacity-50"}" ${ok ? "" : `aria-disabled="true"`} aria-pressed="${h.id === cur}">
+            ${headerBanner(h.id, "h-14")}
+            <div class="px-1 pt-1.5 text-xs font-semibold text-slate-800 truncate">${esc(h.name)}</div>
+            <div class="px-1 text-[11px] truncate ${ok ? "text-emerald-600" : "text-slate-400"}">${ok ? "獲得済み" : `${g.emoji} 合計 ${headerNeed(h).toLocaleString()}点で獲得`}</div>
+            ${ok ? "" : `<span class="absolute top-2.5 right-2.5 w-6 h-6 rounded-full bg-black/50 text-white grid place-items-center">${icon("lock", "w-3.5 h-3.5")}</span>`}
+          </button>`;
+      };
+      openModal(`
+        ${modalHead("ヘッダーを選ぶ", "ゲームの得点の合計に応じて、ゲームごとの限定ヘッダーが使えるようになります。ヘッダーはプロフィールと、ほかの人が見るユーザー情報に表示されます。")}
+        <div class="px-6 pb-6 space-y-4">
+          <button type="button" data-action="set-header" data-header="" class="w-full text-left rounded-2xl px-4 py-3 text-sm font-semibold transition ${cur ? "ring-1 ring-slate-200 hover:bg-slate-50 text-slate-700" : "ring-2 ring-indigo-500 bg-indigo-50 text-indigo-700"}" aria-pressed="${!cur}">ヘッダーなし</button>
+          ${GAMES.map((g) => `
+            <div>
+              <div class="flex items-center gap-2 mb-2">
+                ${gameThumb(g, "w-7 h-7 text-base rounded-lg")}
+                <span class="text-sm font-bold text-slate-800">${esc(g.name)}</span>
+                <span class="ml-auto text-xs text-slate-400">合計 ${gameTotal(state.gameStats.get(g.id)).toLocaleString()}点</span>
+              </div>
+              <div class="grid grid-cols-3 gap-2">${HEADERS.filter((h) => h.game === g.id).map(card).join("")}</div>
+            </div>`).join("")}
+        </div>`);
+    }
+
+    let headerBusy = false;
+    async function setHeader(id) {
+      if (headerBusy || !state.me || isRestricted(state.me)) return;
+      id = id || null;
+      const h = id && HEADER_BY_ID[id];
+      if (id && (!h || !headerUnlocked(h))) return;
+      if (id === userHeader(state.me)) return;
+      headerBusy = true;
+      const me = state.me;
+      const prev = me.header;
+      me.header = id;
+      try {
+        await updateDoc(doc(db, "users", me.id), { header: id ?? deleteField() });
+        if (state.me === me) { openProfile(); toast(id ? `ヘッダーを「${h.name}」にしました` : "ヘッダーを外しました"); }
+      } catch (e) {
+        console.error(e);
+        if (state.me === me) { me.header = prev; toast("ヘッダーを変更できませんでした", "error"); }
+      } finally {
+        headerBusy = false;
+      }
+    }
+
+    // ============================================================
+    // ゲームのランキング（rankings/{gameId}/scores/{userId} = { best, bestAt }。ログイン中のだれでも読める）。
+    // スコアを記録するときに、同じトランザクションで自分の分を更新する（ランキングの自己ベストを超えたときだけ）。
+    // 管理者は、管理者メニューの「管理者のスコアをランキングに記録」がオフの間に遊んだスコアは載らない
+    // ============================================================
+    const RANKING_LIMIT = 50;
+    const rankingEnabledForMe = () => !isAdmin() || adminSettings.adminScores;
+    let rankingView = null; // { gameId, rows, myRank, loading, error }
+
+    function openRanking(gameId = state.activeGameId || GAMES[0].id) {
+      if (!gameById(gameId)) gameId = GAMES[0].id;
+      rankingView = { gameId, rows: null, myRank: null, error: false };
+      openModal(`
+        ${modalHead(`${icon("trophy", "w-5 h-5 inline -mt-1 text-amber-500")} ランキング`, "各ゲームの自己ベストの順位です（上位" + RANKING_LIMIT + "人）")}
+        <div class="px-6 pb-6">
+          <div id="ranking-tabs" class="grid grid-cols-4 gap-1 p-1 bg-slate-100 rounded-2xl mb-3" role="tablist"></div>
+          <div id="ranking-body"></div>
+        </div>`, () => { rankingView = null; });
+      renderRanking();
+      loadRanking(gameId);
+    }
+
+    function renderRanking() {
+      const v = rankingView;
+      const tabs = $("#ranking-tabs");
+      const body = $("#ranking-body");
+      if (!v || !tabs || !body) return;
+      tabs.innerHTML = GAMES.map((g) => `
+        <button type="button" data-action="ranking-game" data-id="${esc(g.id)}" class="tab-btn flex-col gap-0.5 py-1.5 text-[11px] ${g.id === v.gameId ? "is-active" : ""}" role="tab" aria-selected="${g.id === v.gameId}">
+          <span class="text-lg leading-none">${g.emoji}</span><span class="truncate max-w-full">${esc(g.name.replace(/ パズル$|風パズル$/, ""))}</span>
+        </button>`).join("");
+      if (v.error) { body.innerHTML = emptyList("alert", "ランキングを読み込めませんでした", "時間をおいて、もう一度開いてください。"); return; }
+      if (!v.rows) { body.innerHTML = skeleton(); return; }
+      const note = isAdmin() && !adminSettings.adminScores
+        ? `<p class="mb-2 rounded-xl bg-amber-50 text-amber-800 text-xs px-3 py-2">管理者のスコアは今ランキングに記録されない設定です（管理者メニューで変更できます）</p>` : "";
+      if (!v.rows.length) { body.innerHTML = note + emptyList("trophy", "まだだれも記録していません", "遊んでスコアを記録すると、ここに載ります。"); return; }
+      const medal = ["🥇", "🥈", "🥉"];
+      const row = (r) => `
+        <div class="flex items-center gap-3 px-2 py-2 rounded-2xl ${r.id === state.me.id ? "bg-indigo-50 ring-1 ring-indigo-200" : ""}">
+          <div class="w-8 shrink-0 text-center font-bold ${r.rank <= 3 ? "text-xl" : "text-sm text-slate-500"}">${r.rank <= 3 ? medal[r.rank - 1] : r.rank}</div>
+          ${avatar(r.id, userName(r.id), "w-9 h-9 text-sm")}
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1 min-w-0"><span class="font-semibold text-sm truncate text-slate-800">${esc(userName(r.id))}</span>${officialBadge(r.id)}</div>
+            <div class="text-[11px] text-slate-400 truncate">@${esc(r.id)}${r.bestAt ? ` ・ ${esc(relTime(r.bestAt))}` : ""}</div>
+          </div>
+          <div class="shrink-0 font-bold tabular-nums text-amber-600">${r.best.toLocaleString()}</div>
+        </div>`;
+      const meIn = v.rows.some((r) => r.id === state.me.id);
+      const mine = !meIn && v.myRank ? `
+        <div class="mt-2 pt-2 border-t border-slate-100">${row(v.myRank)}</div>` : "";
+      body.innerHTML = note + `<div class="space-y-0.5">${v.rows.map(row).join("")}</div>` + mine;
+    }
+
+    async function loadRanking(gameId) {
+      const me = state.me;
+      try {
+        const col = collection(db, "rankings", gameId, "scores");
+        const snap = await getDocs(query(col, orderBy("best", "desc"), limit(RANKING_LIMIT + 10)));
+        let rows = snap.docs.map(withId).filter((r) => Number.isInteger(r.best) && !state.users.get(r.id)?.deleted);
+        // 同じスコアは先に出した人が上。同じスコアは同じ順位にする
+        rows.sort((a, b) => b.best - a.best || ms(a.bestAt) - ms(b.bestAt));
+        rows = rows.slice(0, RANKING_LIMIT);
+        rows.forEach((r, i) => { r.rank = i > 0 && rows[i - 1].best === r.best ? rows[i - 1].rank : i + 1; });
+        // 上位に入っていなければ、自分の順位を数える（自分より高いスコアの人数 + 1）
+        let myRank = null;
+        if (!rows.some((r) => r.id === me.id)) {
+          const mineSnap = await getDoc(doc(col, me.id));
+          if (mineSnap.exists()) {
+            const m = withId(mineSnap);
+            const higher = await getCountFromServer(query(col, where("best", ">", m.best)));
+            myRank = { ...m, rank: higher.data().count + 1 };
+          }
+        }
+        if (state.me !== me || rankingView?.gameId !== gameId) return;
+        rankingView.rows = rows;
+        rankingView.myRank = myRank;
+      } catch (e) {
+        console.error(e);
+        if (rankingView?.gameId !== gameId) return;
+        rankingView.error = true;
+      }
+      renderRanking();
+    }
+
+    function setRankingGame(gameId) {
+      if (!rankingView || rankingView.gameId === gameId || !gameById(gameId)) return;
+      rankingView = { gameId, rows: null, myRank: null, error: false };
+      renderRanking();
+      loadRanking(gameId);
     }
 
     function renderGameHeader() {
@@ -4229,15 +4418,19 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       score = Math.min(score, GAME_SCORE_MAX);
       const me = state.me;
       const ref = doc(db, "users", me.id, "games", gameId);
+      const rankRef = doc(db, "rankings", gameId, "scores", me.id);
+      const prevTotal = gameTotal(state.gameStats.get(gameId));
       const unlockedBefore = unlockedFrameCount();
-      try {
-        const { newBest, total } = await runTransaction(db, async (tx) => {
-          const snap = await tx.get(ref);
-          const prev = snap.exists() ? snap.data() : null;
-          if (!prev) {
-            tx.set(ref, { best: score, plays: 1, lastScore: score, total: score, bestAt: serverTimestamp(), createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-            return { newBest: score > 0, total: score };
-          }
+      // withRanking：ランキングも同じトランザクションで更新する（ランキングの自己ベストを超えたときだけ）
+      const run = (withRanking) => runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const rank = withRanking ? await tx.get(rankRef) : null;
+        const prev = snap.exists() ? snap.data() : null;
+        let result;
+        if (!prev) {
+          tx.set(ref, { best: score, plays: 1, lastScore: score, total: score, bestAt: serverTimestamp(), createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+          result = { newBest: score > 0, total: score };
+        } else {
           const better = score > prev.best;
           const total = gameTotal(prev) + score;
           tx.update(ref, {
@@ -4248,16 +4441,36 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             ...(better ? { bestAt: serverTimestamp() } : {}),
             updatedAt: serverTimestamp(),
           });
-          return { newBest: better, total };
-        });
+          result = { newBest: better, total };
+        }
+        if (withRanking && score > 0 && (!rank.exists() || score > rank.data().best)) {
+          tx.set(rankRef, { best: score, bestAt: serverTimestamp() });
+        }
+        return result;
+      });
+      try {
+        let res;
+        try {
+          res = await run(rankingEnabledForMe());
+        } catch (e) {
+          // 管理者の設定が切り替わった直後などでランキングに書けなかったときは、自分の記録だけ残す
+          if (e.code !== "permission-denied" || !rankingEnabledForMe()) throw e;
+          res = await run(false);
+        }
+        const { newBest, total } = res;
         if (state.me !== me) return;
-        // 新しく獲得したアイコンの枠
+        // 新しく獲得したアイコンの枠・限定ヘッダー
         const stats = new Map(state.gameStats);
         stats.set(gameId, { ...stats.get(gameId), best: Math.max(stats.get(gameId)?.best ?? 0, score), total });
         const unlockedAfter = unlockedFrameCount(stats);
+        const newHeaders = HEADERS.filter((h) => h.game === gameId && prevTotal < headerNeed(h) && total >= headerNeed(h));
         if (unlockedAfter > unlockedBefore) {
           toast(`🎁 アイコンの枠「${FRAMES[unlockedAfter - 1].label}」を獲得しました！ ゲームタブの「特典」で設定できます`);
-        } else if (newBest) toast(`自己ベスト更新！ ${score.toLocaleString()}点`);
+        }
+        if (newHeaders.length) {
+          toast(`🎁 限定ヘッダー「${newHeaders.map((h) => h.name).join("」「")}」を獲得しました！ プロフィールで設定できます`);
+        }
+        if (unlockedAfter <= unlockedBefore && !newHeaders.length && newBest) toast(`自己ベスト更新！ ${score.toLocaleString()}点`);
       } catch (e) {
         console.error(e);
         if (state.me === me) toast("スコアを記録できませんでした", "error");
@@ -8555,8 +8768,12 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       openModal(`
         ${modalHead("プロフィール")}
         <div class="px-6 pb-6">
-          <div class="flex flex-col items-center text-center">
-            <div id="profile-icon" class="flex flex-col items-center">${profileIconBlock()}</div>
+          <div class="relative">
+            ${userHeader(state.me) ? headerBanner(userHeader(state.me), "h-24") : `<div class="h-16 rounded-2xl border-2 border-dashed border-slate-200"></div>`}
+            <button type="button" data-action="pick-header" class="absolute right-2 bottom-2 btn-chip py-1 text-xs bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50 shadow-sm">${icon("sparkles", "w-3.5 h-3.5")}ヘッダー</button>
+          </div>
+          <div class="flex flex-col items-center text-center ${userHeader(state.me) ? "-mt-8" : "-mt-6"}">
+            <div id="profile-icon" class="relative flex flex-col items-center">${profileIconBlock()}</div>
             <div class="mt-3 font-bold text-lg text-slate-900">${esc(state.me.name)}${officialBadge(state.me.id, "w-5 h-5 inline-block align-[-0.2em] ml-1")}</div>
           </div>
           <div class="mt-5 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
@@ -8617,7 +8834,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     // hideOnline：管理者のオンライン状態と入力中を全員から隠す（文書に無ければオフ）
     // longText：長文の送信。全ユーザーの1メッセージの最大文字数を切り替える（文書に無ければオン）
     // rawImage：画像ファイルのまま送る機能（Storage にアップロードする画像）。全ユーザーに効く（文書に無ければオン）
-    let adminSettings = { signupOpen: true, readReceipts: true, hideOnline: false, longText: true, rawImage: true };
+    // adminScores：管理者のゲームのスコアをランキングに記録する（文書に無ければオン）。オフの間に遊んだスコアはランキングに載らない
+    let adminSettings = { signupOpen: true, readReceipts: true, hideOnline: false, longText: true, rawImage: true, adminScores: true };
     const maxText = () => (adminSettings.longText ? MAX_TEXT_LONG : MAX_TEXT_SHORT);
     // 管理者メニューのパスワードのハッシュ。メニューを開いている間だけ持ち、閉じたら消す
     let adminKey = null;
@@ -8633,7 +8851,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
         doc(db, "admin", "settings"),
         (snap) => {
           const d = snap.data();
-          applySettings({ signupOpen: d?.signupOpen !== false, readReceipts: d?.readReceipts !== false, hideOnline: d?.hideOnline === true, longText: d?.longText !== false, rawImage: d?.rawImage !== false });
+          applySettings({ signupOpen: d?.signupOpen !== false, readReceipts: d?.readReceipts !== false, hideOnline: d?.hideOnline === true, longText: d?.longText !== false, rawImage: d?.rawImage !== false, adminScores: d?.adminScores !== false });
         },
         (e) => console.warn(e), // 読めないときは既定の設定（募集中・既読を表示）のまま
       );
@@ -8742,6 +8960,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
           ${adminSwitch("hideOnline", "オンにしている間は、あなたのオンライン状態（緑の点・「オンライン」）と DM の「入力中...」が、全員から見えなくなります。最終アクティブの時刻も更新されません。")}
           ${adminSwitch("longText", `全ユーザーの、1回に送信できる文字数を切り替えます。オンで最大${MAX_TEXT_LONG}文字、オフで最大${MAX_TEXT_SHORT}文字です（メッセージの編集も同じです）。送信済みのメッセージはそのまま残ります。`)}
           ${adminSwitch("rawImage", "オフにすると、全ユーザーが画像を送るときの「元の画像ファイルのまま送る」が使えなくなり、画像ファイルのままの画像の転送もできなくなります（SVG に埋め込んで送る方法はこれまでどおり使えます）。送信済みの画像はそのまま表示されます。")}
+          ${adminSwitch("adminScores", "オフの間にあなたが遊んだゲームのスコアは、ランキングに載りません（オンに戻しても、オフの間のスコアは載りません）。自己ベスト・得点の合計など、あなた自身の記録と特典の獲得には、これまでどおり反映されます。")}
           <button type="button" data-action="admin-restrict" class="btn-secondary w-full !mt-5">${icon("alert", "w-5 h-5")}アカウントの制限</button>
           <button type="button" data-action="admin-reset" class="btn-secondary w-full">${icon("key", "w-5 h-5")}パスワードのリセット</button>
           <button type="button" data-action="admin-plans" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}プランの加入状況</button>
@@ -8820,6 +9039,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       hideOnline: { label: "オンラインを隠す", on: "隠している", off: "隠していない", toastOn: "オンライン状態と入力中を隠しました", toastOff: "オンライン状態と入力中を表示するようにしました" },
       longText: { label: "長文の送信", on: `オン（最大${MAX_TEXT_LONG}文字）`, off: `オフ（最大${MAX_TEXT_SHORT}文字）`, toastOn: `1回に送信できる文字数を最大${MAX_TEXT_LONG}文字にしました`, toastOff: `1回に送信できる文字数を最大${MAX_TEXT_SHORT}文字にしました` },
       rawImage: { label: "画像ファイルのまま送る", on: "使える", off: "使えない", toastOn: "画像ファイルのまま送れるようにしました", toastOff: "画像ファイルのまま送れないようにしました" },
+      adminScores: { label: `管理者（@${ADMIN_ID}）のスコアをランキングに記録`, on: "記録する", off: "記録しない", toastOn: "管理者のスコアをランキングに記録するようにしました", toastOff: "管理者のスコアをランキングに記録しないようにしました" },
     };
     const adminSwitch = (key, note) => `
       <div class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4">
@@ -9352,7 +9572,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
         openModal(`
           ${modalHead("ユーザー情報")}
           <div class="px-6 pb-6 text-center">
-            <div class="flex justify-center">${withPresence(avatar(pid, roomTitle(room), "w-20 h-20 text-3xl"), isOnline(u))}</div>
+            ${userHeader(u) ? headerBanner(userHeader(u), "h-24") : ""}
+            <div class="relative flex justify-center ${userHeader(u) ? "-mt-10" : ""}">${withPresence(avatar(pid, roomTitle(room), "w-20 h-20 text-3xl"), isOnline(u))}</div>
             <div class="mt-3 font-bold text-lg text-slate-900">${esc(roomTitle(room))}${officialBadge(pid, "w-5 h-5 inline-block align-[-0.2em] ml-1")}</div>
             <div class="text-sm text-slate-500">@${esc(pid)}</div>
             <div class="text-xs mt-1 ${isOnline(u) ? "text-emerald-600" : "text-slate-400"}">${u?.deleted ? "退会済み" : isRestricted(u) ? RESTRICTED_LABEL : isOnline(u) ? "オンライン" : u ? `最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}</div>
@@ -9437,6 +9658,10 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       "close-game": () => exitGame(),
       "set-frame": (el) => (el.getAttribute("aria-disabled") === "true" ? openFrameInfo() : setFrame(el.dataset.frame)), // まだ獲得していない枠は、獲得条件を出す
       "frame-info": () => openFrameInfo(),
+      "open-ranking": (el) => openRanking(el.dataset.id || undefined),
+      "ranking-game": (el) => setRankingGame(el.dataset.id),
+      "pick-header": () => openHeaderPicker(),
+      "set-header": (el) => { if (el.getAttribute("aria-disabled") !== "true") setHeader(el.dataset.header); },
       "open-room": (el) => {
         const id = el.dataset.id;
         openRoom(id, state.rooms.find((r) => r.id === id) || null);
