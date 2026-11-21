@@ -586,10 +586,11 @@ const firebaseConfig = {
           <header class="flex items-center gap-1 px-2 sm:px-4 h-16 border-b border-slate-100 bg-white shrink-0">
             <button type="button" data-action="back" class="icon-btn md:hidden" aria-label="戻る"><span data-icon="back"></span></button>
             <div id="game-header-main" class="flex items-center gap-3 min-w-0 flex-1 pl-1"></div>
+            <button type="button" data-action="restart-game" class="icon-btn" aria-label="最初から" title="最初から"><span data-icon="refresh"></span></button>
             <button type="button" data-action="open-ranking" class="icon-btn text-amber-500" aria-label="ランキング" title="ランキング"><span data-icon="trophy"></span></button>
             <button type="button" data-action="close-game" class="icon-btn hidden md:grid" aria-label="ゲームを閉じる" title="ゲームを閉じる"><span data-icon="x"></span></button>
           </header>
-          <div id="game-frame-wrap" class="flex-1 min-h-0 bg-[#fdf6e3]"></div>
+          <div id="game-frame-wrap" class="flex-1 min-h-0 bg-white"></div>
         </div>
       </main>
     </div>
@@ -614,7 +615,10 @@ const firebaseConfig = {
        中身はそのまま iframe（sandbox）の <body> に入れて動かすので、アプリのスタイルや変数とは干渉しない。
        ゲームからアプリへは parent.postMessage({ source: "chatter-game", type: "gameover", score }) でスコアを送る
        （Esc を押したときは type: "escape" を送ると、アプリがゲームを閉じる。type: "progress" で途中のスコアを送っておくと、
-       途中でゲームを閉じたときにアプリがそのスコアを記録する。type: "start" で新しいゲームを始めたことを知らせる）。
+       「最初から」でゲームを消すときにアプリがそのスコアを記録する。type: "start" で新しいゲームを始めたことを知らせる）。
+       アプリからは、ゲームの画面を隠すときに { type: "pause" }、もう一度開いたときに { type: "resume" } を送るので、
+       ゲームはその間止まっている（タイマー・動きを止める）ようにする。
+       ダークモード：作るときに <html class="dark"> を付け、切り替えたときは { type: "theme", dark } を送る（ゲームは html の dark クラスを付け外しする）
        アプリからゲームへは { source: "chatter", type: "best", best } で自己ベストを送る -->
   <template id="game-src-suika">
 <style>
@@ -661,6 +665,17 @@ const firebaseConfig = {
     box-shadow: 0 4px 0 #d84315; transition: transform 0.1s; margin-top: 8px;
   }
   button:active { transform: translateY(3px); box-shadow: 0 1px 0 #d84315; }
+  /* ダークモード */
+  html.dark { color-scheme: dark; }
+  html.dark body { background-color: #1c1714; color: #e7d9cf; }
+  html.dark .canvas-container { background: #2a221d; border-color: #6d5548; box-shadow: 0 10px 25px rgba(0,0,0,0.45); }
+  html.dark .card { background: #2a221d; border-color: #4a3b33; box-shadow: none; }
+  html.dark .card h2, html.dark .best-val { color: #c9ab98; }
+  html.dark .score-val { color: #ff9d5c; }
+  html.dark .best-val { color: #c9ab98; }
+  html.dark .evo-item { background: #1c1714; border-color: #5a4630; }
+  html.dark .controls-info { color: #d6c3b6; }
+  html.dark .controls-info kbd { background: #3a302b; border-color: #6d5548; }
   /* 高さが低いときは、説明を隠してスクロールせずに収める */
   @media (max-height: 640px) { .card.info { display: none; } }
   /* 幅が狭いとき（スマホ・狭いウィンドウ）：スコアなどを上に横並びにし、説明は隠す */
@@ -763,6 +778,7 @@ let dropCooldown = 0;
 let isGameOver = false;
 let dangerTimer = 0;
 let bestScore = null; // アプリから届く自己ベスト（届くまでは null）
+let paused = false;   // アプリで別の画面を開いている間は止める
 
 // ---- アプリとのやりとり ----
 function sendToApp(msg) {
@@ -777,6 +793,14 @@ window.addEventListener('message', (e) => {
   if (d.type === 'best' && Number.isInteger(d.best)) {
     bestScore = Math.max(bestScore || 0, d.best);
     showBest();
+  } else if (d.type === 'pause') {
+    paused = true;
+    keys.left = keys.right = false;
+    pointerActive = false;
+  } else if (d.type === 'resume') {
+    paused = false;
+  } else if (d.type === 'theme') {
+    document.documentElement.classList.toggle('dark', !!d.dark);
   }
 });
 
@@ -1297,7 +1321,8 @@ function draw() {
 let lastTime = performance.now();
 let acc = 0;
 function loop(t) {
-  acc += Math.min(100, t - lastTime);
+  if (paused) acc = 0; // 止めている間は進めない（再開したときに、止めていた時間の分をまとめて進めない）
+  else acc += Math.min(100, t - lastTime);
   lastTime = t;
   while (acc >= 1000 / 60) { update(); acc -= 1000 / 60; }
   draw();
@@ -1368,6 +1393,21 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   .overlay-sub { font-size: 15px; font-weight: 700; }
   .overlay-btns { display: flex; gap: 8px; }
   .hint { margin-top: 12px; font-size: 12px; color: #776e65; text-align: center; width: var(--w); }
+  /* ダークモード */
+  html.dark { color-scheme: dark; }
+  html.dark body { background: #1c1a17; color: #cfc6bc; }
+  html.dark h1 { color: #ece4da; }
+  html.dark .score-box { background: #4a433b; }
+  html.dark .score-label { color: #c2b8ac; }
+  html.dark button { background: #6b5a4b; }
+  html.dark button:hover { background: #7b6957; }
+  html.dark .grid-container { background: #3b352e; }
+  html.dark .tile { background: rgba(255, 255, 255, 0.06); }
+  html.dark .t-2 { background: #d9cfc4; }
+  html.dark .t-4 { background: #d8c9ae; }
+  html.dark .overlay { background: rgba(28, 26, 23, 0.86); }
+  html.dark .overlay-title { color: #ece4da; }
+  html.dark .hint { color: #a39a90; }
   @media (max-width: 380px) { h1 { font-size: 30px; } .score-box { min-width: 60px; padding: 5px 8px; } .tile { font-size: 24px; } .t-128, .t-256, .t-512 { font-size: 20px; } .t-1024, .t-2048 { font-size: 16px; } .t-super { font-size: 14px; } }
 </style>
 <div class="wrap">
@@ -1392,7 +1432,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       </div>
     </div>
   </div>
-  <div class="hint">PC: 矢印キー（↑↓←→）または WASD ｜ スマホ: 盤面をスワイプ<br>ゲームオーバー・ニューゲーム・ゲームを閉じたときにスコアを記録します</div>
+  <div class="hint">PC: 矢印キー（↑↓←→）または WASD ｜ スマホ: 盤面をスワイプ<br>ゲームオーバー・ニューゲーム・「最初から」でスコアを記録します（別の画面を開いても途中から続けられます）</div>
 </div>
 
 <script>
@@ -1421,6 +1461,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     const d = e.data;
     if (e.source !== parent || !d || d.source !== 'chatter') return;
     if (d.type === 'best' && Number.isInteger(d.best)) { best = Math.max(best || 0, d.best); showBest(); }
+    else if (d.type === 'pause') swiping = false; // 手番制なので、ほかに止めるものはない
+    else if (d.type === 'theme') document.documentElement.classList.toggle('dark', !!d.dark);
   });
   // このゲームのスコアを1回だけ送る（ゲームオーバー、または途中でニューゲームにしたとき）
   function reportScore() {
@@ -1627,6 +1669,14 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   button { background: #535353; color: #ffffff; border: none; padding: 10px 22px; font-family: "Courier New", Courier, monospace; font-size: 16px; font-weight: bold; cursor: pointer; letter-spacing: 1px; }
   button:active { background: #222222; }
   .hidden { display: none !important; }
+  /* ダークモード（白黒を反転したドット絵） */
+  html.dark { color-scheme: dark; }
+  html.dark body { background-color: #121212; color: #c8c8c8; }
+  html.dark #game-wrapper { background-color: #202124; border-color: #c8c8c8; }
+  html.dark #score-bar { color: #c8c8c8; }
+  html.dark #message-box { background: rgba(32, 33, 36, 0.94); border-color: #c8c8c8; }
+  html.dark button { background: #c8c8c8; color: #202124; }
+  html.dark button:active { background: #ffffff; }
 </style>
 <div id="game-wrapper">
   <canvas id="gameCanvas"></canvas>
@@ -1660,10 +1710,16 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
 
-  // モノクロパレット
-  const COLOR_BG = '#ffffff';
-  const COLOR_DARK = '#535353';
-  const COLOR_MID = '#888888';
+  // モノクロパレット（ダークモードでは白黒を反転する）
+  let COLOR_BG, COLOR_DARK, COLOR_MID, COLOR_DOT;
+  function applyPalette() {
+    const dark = document.documentElement.classList.contains('dark');
+    COLOR_BG = dark ? '#202124' : '#ffffff';
+    COLOR_DARK = dark ? '#c8c8c8' : '#535353';
+    COLOR_MID = dark ? '#8a8a8a' : '#888888';
+    COLOR_DOT = dark ? '#33353a' : '#eeeeee';
+  }
+  applyPalette();
 
   // ドット絵スプライト定義 (1 = #535353, 2 = #888888, 3 = #ffffff, 0 = 透明)
   const SPRITE_BALLOON = [
@@ -1771,7 +1827,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   }
 
   // ゲーム状態
-  let state = 'START'; // START, PLAYING, GAMEOVER
+  let state = 'START'; // START, PLAYING, PAUSED, GAMEOVER
   let score = 0;
   let hiScore = null; // アプリから届く自己ベスト（届くまでは null）
   let speed = 1.6;
@@ -1785,6 +1841,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     const d = e.data;
     if (e.source !== parent || !d || d.source !== 'chatter') return;
     if (d.type === 'best' && Number.isInteger(d.best)) { hiScore = Math.max(hiScore || 0, d.best); updateScoreDisplay(); }
+    else if (d.type === 'pause') pauseGame();
+    else if (d.type === 'theme') { document.documentElement.classList.toggle('dark', !!d.dark); applyPalette(); draw(); }
   });
 
   // プレイヤー
@@ -1836,6 +1894,22 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     sendToApp({ type: 'start' });
   }
 
+  // アプリで別の画面を開いたら一時停止する。戻ったら「RESUME」（Space / Enter / タップ）で再開
+  function pauseGame() {
+    isPointerDown = false;
+    keys.ArrowLeft = keys.ArrowRight = keys.a = keys.d = false;
+    if (state !== 'PLAYING') return;
+    state = 'PAUSED';
+    msgTitle.textContent = 'PAUSE';
+    msgDesc.innerHTML = 'SCORE: ' + Math.floor(score) + '<br>準備ができたら再開しよう';
+    startBtn.textContent = 'RESUME';
+    msgBox.classList.remove('hidden');
+  }
+  function resumeGame() {
+    state = 'PLAYING';
+    msgBox.classList.add('hidden');
+  }
+
   function gameOver() {
     state = 'GAMEOVER';
     keys.ArrowLeft = keys.ArrowRight = keys.a = keys.d = false;
@@ -1880,7 +1954,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     if (k in keys) { keys[k] = true; e.preventDefault(); }
     if ((e.key === ' ' || e.key === 'Enter') && state !== 'PLAYING') {
       e.preventDefault();
-      resetGame();
+      if (state === 'PAUSED') resumeGame(); else resetGame();
     }
   });
   window.addEventListener('keyup', (e) => {
@@ -1888,7 +1962,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     if (k in keys) keys[k] = false;
   });
 
-  startBtn.addEventListener('click', resetGame);
+  startBtn.addEventListener('click', () => { if (state === 'PAUSED') resumeGame(); else resetGame(); });
 
   function spawnEntity() {
     const rand = Math.random();
@@ -1909,6 +1983,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 
   function update() {
     for (let c of clouds) {
+      if (state === 'PAUSED') break;
       c.y += c.speed * (state === 'PLAYING' ? 1.2 : 0.5);
       if (c.y > HEIGHT + 10) { c.y = -15; c.x = Math.random() * (WIDTH - 20); }
     }
@@ -1997,7 +2072,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     ctx.fillStyle = COLOR_BG;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-    ctx.fillStyle = '#eeeeee';
+    ctx.fillStyle = COLOR_DOT;
     for (let y = (frame * Math.floor(speed)) % 24; y < HEIGHT; y += 24) {
       for (let x = 12; x < WIDTH; x += 24) ctx.fillRect(x, y, 1, 1);
     }
@@ -2107,6 +2182,36 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   .n8 { color: #57606a; }
   #message { margin-top: 10px; font-size: 17px; font-weight: 700; min-height: 25px; text-align: center; }
   .hint { margin-top: 6px; font-size: 12px; color: #57606a; text-align: center; line-height: 1.6; }
+  /* ダークモード */
+  html.dark {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --cell-closed: #30363d;
+    --cell-hover: #3d444d;
+    --cell-open: #0d1117;
+    --text: #e6edf3;
+    --accent: #2f81f7;
+  }
+  html.dark select, html.dark button { background: #21262d; }
+  html.dark button:hover, html.dark select:hover { background: #30363d; }
+  html.dark button.active { background: var(--accent); }
+  html.dark .status-bar, html.dark .controls, html.dark .board-wrapper { box-shadow: none; border: 1px solid var(--border); }
+  html.dark #board { background: #484f58; border-color: #484f58; }
+  html.dark .cell.mine { background: #4a1f22; }
+  html.dark .cell.exploded { background: #da3633; }
+  html.dark .n1 { color: #58a6ff; }
+  html.dark .n2 { color: #3fb950; }
+  html.dark .n3 { color: #f85149; }
+  html.dark .n4 { color: #bc8cff; }
+  html.dark .n5 { color: #d29922; }
+  html.dark .n6 { color: #39c5cf; }
+  html.dark .n7 { color: #e6edf3; }
+  html.dark .n8 { color: #8b949e; }
+  html.dark .hint { color: #8b949e; }
+  html.dark #message.win { color: #3fb950 !important; }
+  html.dark #message.lose { color: #f85149 !important; }
 </style>
   <div class="controls">
     <select id="difficulty">
@@ -2165,6 +2270,9 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     const d = e.data;
     if (e.source !== parent || !d || d.source !== 'chatter') return;
     if (d.type === 'best' && Number.isInteger(d.best)) { best = Math.max(best || 0, d.best); showBest(); }
+    else if (d.type === 'pause') { clearInterval(timerInterval); timerInterval = null; clearTimeout(pressTimer); } // 別の画面を開いている間は時間を止める
+    else if (d.type === 'resume') startTimer();
+    else if (d.type === 'theme') document.documentElement.classList.toggle('dark', !!d.dark);
   });
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); }
@@ -2186,6 +2294,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     timerEl.textContent = '0';
     minesLeftEl.textContent = totalMines;
     messageEl.textContent = '';
+    messageEl.className = '';
 
     boardEl.style.gridTemplateColumns = `repeat(${cols}, 30px)`;
     boardEl.innerHTML = '';
@@ -2222,6 +2331,12 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   }
   let pressTimer = null;
   let longPressed = false;
+
+  // 時間を数える（遊んでいる途中だけ）
+  function startTimer() {
+    if (timerInterval || firstClick || gameOver) return;
+    timerInterval = setInterval(() => { timer++; timerEl.textContent = timer; }, 1000);
+  }
 
   function placeMines(excludeR, excludeC) {
     let placed = 0;
@@ -2264,7 +2379,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     if (firstClick) {
       firstClick = false;
       placeMines(r, c);
-      timerInterval = setInterval(() => { timer++; timerEl.textContent = timer; }, 1000);
+      startTimer();
       sendToApp({ type: 'start' });
     }
 
@@ -2332,6 +2447,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       if (best !== null) { best = Math.max(best, score); showBest(); }
       messageEl.textContent = `🎉 クリア！ タイム ${timer}秒 ・ ${score}点` + (isNewBest ? '（自己ベスト更新！）' : '');
       messageEl.style.color = '#1a7f37';
+      messageEl.className = 'win';
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
           if (grid[r][c].mine && !grid[r][c].flag) grid[r][c].el.textContent = '🚩';
@@ -2342,6 +2458,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     } else {
       messageEl.textContent = '💥 ゲームオーバー！リセットして再挑戦しよう';
       messageEl.style.color = '#cf222e';
+      messageEl.className = 'lose';
       sendToApp({ type: 'gameover', score: 0 }); // プレイ回数だけ数える
     }
   }
@@ -3129,6 +3246,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
         unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null, games: null },
       });
       closeGame();
+      destroyAllGames();
       adminKey = null;
       adminUnlock = null;
       signOut(auth).catch((e) => console.warn(e));
@@ -3203,6 +3321,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       document.documentElement.classList.toggle("dark", dark);
       store.set(THEME_KEY, dark ? "dark" : "light");
       renderThemeToggle();
+      for (const id of gameFrames.keys()) postToGame(id, { type: "theme", dark }); // ゲームにもダークモードを伝える
     }
 
     // 設定の1行（項目名・説明・右端の操作）
@@ -4119,7 +4238,10 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             <button type="button" data-action="open-game" data-id="${esc(g.id)}" class="list-row group ${g.id === state.activeGameId ? "is-active" : ""}">
               ${gameThumb(g, "w-12 h-12 text-2xl")}
               <div class="min-w-0 flex-1">
-                <div class="font-semibold truncate text-slate-800">${esc(g.name)}</div>
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="font-semibold truncate text-slate-800">${esc(g.name)}</span>
+                  ${isGameSuspended(g.id) ? `<span class="shrink-0 px-1.5 py-px rounded-md bg-indigo-50 text-indigo-600 text-[10px] font-semibold" title="開くと途中から再開します">中断中</span>` : ""}
+                </div>
                 <div class="text-xs text-slate-500 truncate">${esc(g.desc)}</div>
                 <div class="text-xs text-slate-400 truncate mt-0.5">${record}</div>
                 ${goal ? `<div class="text-[11px] text-amber-700 truncate">${goal}</div>` : ""}
@@ -4367,11 +4489,33 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
         </div>`;
     }
 
-    let gameFrame = null;
+    // 遊んだゲームの iframe（ゲームID -> { frame, progress }）。トークなど別の画面を開いても消さずに隠して一時停止し、
+    // もう一度開くと途中から再開する。消すのは「最初から」を押したときとログアウトのときだけ。
+    // progress：まだ記録していない途中のスコア（「最初から」で消すときに記録する）
+    const gameFrames = new Map();
+    const postToGame = (id, msg) => gameFrames.get(id)?.frame.contentWindow?.postMessage({ source: "chatter", ...msg }, "*");
+    // 自己ベストを、開いているすべてのゲームに知らせる
     function sendBestToGame() {
-      const s = state.gameStats.get(state.activeGameId);
-      if (!gameFrame?.contentWindow || !state.gameStatsLoaded) return;
-      gameFrame.contentWindow.postMessage({ source: "chatter", type: "best", best: s?.best ?? 0 }, "*");
+      if (!state.gameStatsLoaded) return;
+      for (const id of gameFrames.keys()) postToGame(id, { type: "best", best: state.gameStats.get(id)?.best ?? 0 });
+    }
+    const isGameSuspended = (id) => gameFrames.has(id) && state.activeGameId !== id;
+
+    function createGameFrame(g, src) {
+      // ゲームは sandbox の iframe（アプリとは別の origin）で動かし、postMessage でだけやりとりする
+      const frame = document.createElement("iframe");
+      frame.className = "block w-full h-full border-0";
+      frame.title = g.name;
+      frame.setAttribute("sandbox", "allow-scripts");
+      frame.srcdoc = `<!DOCTYPE html><html lang="ja"${isDark() ? ` class="dark"` : ""}><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${esc(g.name)}</title></head><body>${src.innerHTML}</body></html>`;
+      frame.addEventListener("load", () => {
+        if (!state.gameStatsLoaded) return;
+        postToGame(g.id, { type: "best", best: state.gameStats.get(g.id)?.best ?? 0 });
+        if (state.activeGameId === g.id && !isCoarse()) frame.focus(); // キーボードで操作できるように
+      });
+      gameFrames.set(g.id, { frame, progress: 0 });
+      $("#game-frame-wrap").appendChild(frame);
+      return frame;
     }
 
     function openGame(id) {
@@ -4380,20 +4524,16 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       if (!g || !src || isRestricted(state.me)) return;
       if (state.activeRoomId) closeRoom();
       if (state.activeGameId !== id) {
-        closeGame(false);
+        if (state.activeGameId) pauseGame(state.activeGameId);
         state.activeGameId = id;
-        // ゲームは sandbox の iframe（アプリとは別の origin）で動かし、postMessage でだけやりとりする
-        const frame = document.createElement("iframe");
-        frame.className = "block w-full h-full border-0";
-        frame.title = g.name;
-        frame.setAttribute("sandbox", "allow-scripts");
-        frame.srcdoc = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${esc(g.name)}</title></head><body>${src.innerHTML}</body></html>`;
-        frame.addEventListener("load", () => {
-          sendBestToGame();
-          if (!isCoarse()) frame.focus(); // キーボードで操作できるように
-        });
-        gameFrame = frame;
-        $("#game-frame-wrap").replaceChildren(frame);
+        const entry = gameFrames.get(id);
+        if (entry) {
+          entry.frame.hidden = false;
+          postToGame(id, { type: "resume" });
+          if (!isCoarse()) entry.frame.focus();
+        } else {
+          createGameFrame(g, src);
+        }
         renderGameHeader();
       }
       $("#chat-empty").hidden = true;
@@ -4407,18 +4547,53 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       renderSidebar();
     }
 
-    // 遊んでいるゲームの、まだ記録していない途中のスコア（ゲームを途中で閉じたときに記録する）
-    let gameProgress = 0;
-    // ゲームを閉じる（iframe を外すと、ゲームも止まる）。showEmpty：トークを開いていなければ、ようこそ画面に戻す
+    // ゲームを隠して一時停止する（iframe は残すので、次に開いたときに途中から再開できる）
+    function pauseGame(id) {
+      const entry = gameFrames.get(id);
+      if (!entry) return;
+      postToGame(id, { type: "pause" });
+      entry.frame.hidden = true;
+      entry.frame.blur();
+    }
+
+    // ゲームの画面を閉じる（ゲームは一時停止して残す）。showEmpty：トークを開いていなければ、ようこそ画面に戻す
     function closeGame(showEmpty = true) {
-      if (!state.activeGameId && !gameFrame) return;
-      if (state.activeGameId && gameProgress > 0) saveGameScore(state.activeGameId, gameProgress);
-      gameProgress = 0;
+      if (!state.activeGameId) return;
+      pauseGame(state.activeGameId);
       state.activeGameId = null;
-      gameFrame = null;
-      $("#game-frame-wrap").replaceChildren();
       $("#game-pane").hidden = true;
       if (showEmpty && !state.activeRoomId) $("#chat-empty").hidden = false;
+      renderSidebar();
+    }
+
+    // ゲームを消す（途中のスコアがあれば記録する）。record：途中のスコアを記録するか
+    function destroyGame(id, record = true) {
+      const entry = gameFrames.get(id);
+      if (!entry) return;
+      if (record && entry.progress > 0) saveGameScore(id, entry.progress);
+      entry.frame.remove();
+      gameFrames.delete(id);
+    }
+    // ログアウトのとき：すべてのゲームを消す（ログアウト後は記録できないので、途中のスコアは記録しない）
+    function destroyAllGames() {
+      for (const id of [...gameFrames.keys()]) destroyGame(id, false);
+    }
+
+    // 遊んでいるゲームを最初からやり直す（途中のスコアは記録する）
+    async function restartGame() {
+      const id = state.activeGameId;
+      const g = gameById(id);
+      if (!g) return;
+      const progress = gameFrames.get(id)?.progress ?? 0;
+      const ok = await confirmDialog({
+        title: "最初からやり直しますか？",
+        message: progress > 0 ? `今のゲームは終了して、途中のスコア（${progress.toLocaleString()}点）を記録します。` : "今のゲームは終了します。",
+        ok: "最初から",
+      });
+      if (!ok || state.activeGameId !== id) return;
+      destroyGame(id);
+      createGameFrame(g, document.getElementById(`game-src-${id}`));
+      renderSidebar();
     }
 
     function exitGame() {
@@ -4426,15 +4601,17 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       else { closeGame(); $("#app").dataset.view = "list"; renderSidebar(); }
     }
 
-    // ゲームから届いたメッセージ（遊んでいる iframe からのものだけを受け付ける）
+    // ゲームから届いたメッセージ（このアプリが作った iframe からのものだけを受け付ける）
     window.addEventListener("message", (e) => {
       const d = e.data;
       if (!d || d.source !== "chatter-game") return;
-      if (!gameFrame || e.source !== gameFrame.contentWindow) return;
-      if (d.type === "progress" && Number.isInteger(d.score)) gameProgress = d.score;
-      else if (d.type === "start") gameProgress = 0;
-      else if (d.type === "gameover") { gameProgress = 0; saveGameScore(state.activeGameId, d.score); }
-      else if (d.type === "escape" && $("#modal-root").hidden) exitGame(); // ゲームの中で Esc を押したとき（モーダル表示中は閉じない）
+      const id = [...gameFrames].find(([, v]) => v.frame.contentWindow === e.source)?.[0];
+      if (!id) return;
+      const entry = gameFrames.get(id);
+      if (d.type === "progress" && Number.isInteger(d.score)) entry.progress = d.score;
+      else if (d.type === "start") entry.progress = 0;
+      else if (d.type === "gameover") { entry.progress = 0; saveGameScore(id, d.score); }
+      else if (d.type === "escape" && id === state.activeGameId && $("#modal-root").hidden) exitGame(); // ゲームの中で Esc を押したとき（モーダル表示中は閉じない）
     });
 
     // スコアを記録する：プレイ回数を1増やし、自己ベストを超えていれば更新する
@@ -9724,6 +9901,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       "set-frame": (el) => (el.getAttribute("aria-disabled") === "true" ? openFrameInfo() : setFrame(el.dataset.frame)), // まだ獲得していない枠は、獲得条件を出す
       "frame-info": () => openFrameInfo(),
       "open-ranking": (el) => openRanking(el.dataset.id || undefined),
+      "restart-game": () => restartGame(),
       "ranking-game": (el) => setRankingGame(el.dataset.id),
       "pick-header": () => openHeaderPicker(),
       "set-header": (el) => { if (el.getAttribute("aria-disabled") !== "true") setHeader(el.dataset.header); },
