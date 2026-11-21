@@ -659,6 +659,7 @@ const firebaseConfig = {
   #game-over-overlay h2 { font-size: 32px; color: #ffcc80; margin-bottom: 10px; }
   #game-over-overlay p { font-size: 18px; margin-bottom: 12px; }
   #new-best { color: #ffe082; font-weight: bold; }
+  #game-over-overlay p.overlay-key { font-size: 12px; opacity: 0.75; margin: 12px 0 0; }
   button {
     background: #ff7043; color: #fff; border: none; border-radius: 25px;
     padding: 10px 24px; font-size: 16px; font-weight: bold; cursor: pointer;
@@ -701,6 +702,7 @@ const firebaseConfig = {
       <p>スコア: <span id="final-score">0</span></p>
       <p id="new-best" hidden>🎉 自己ベスト更新！</p>
       <button id="restart-btn">もう一度遊ぶ</button>
+      <p class="overlay-key">↓・S・スペースでもう一度</p>
     </div>
   </div>
 
@@ -810,7 +812,14 @@ const keys = { left: false, right: false };
 window.addEventListener('keydown', (e) => {
   // Esc はアプリに伝えてゲームを閉じてもらう（iframe の中のキー入力はアプリに届かないため）
   if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
-  if (isGameOver) return;
+  // ゲームオーバーの後は ↓・S・スペース（落とすキー）でもう一度始める（押しっぱなしや、終わった直後のキーでは始めない）
+  if (isGameOver) {
+    if (['ArrowDown', 's', 'S', ' '].includes(e.key)) {
+      e.preventDefault();
+      if (!e.repeat && performance.now() - gameOverAt > 400) initGame();
+    }
+    return;
+  }
   if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
     keys.left = true;
   } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
@@ -886,8 +895,10 @@ function updateScore(add) {
   if (add > 0 && !isGameOver) sendToApp({ type: 'progress', score });
 }
 
+let gameOverAt = 0; // ゲームオーバーの画面を出した時刻（直後のキーで、うっかり始め直さないため）
 function endGame() {
   isGameOver = true;
+  gameOverAt = performance.now();
   keys.left = keys.right = false;
   const isNewBest = bestScore !== null && score > bestScore;
   document.getElementById('final-score').textContent = score;
