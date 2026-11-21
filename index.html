@@ -3007,10 +3007,12 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 
     let modalCloseCb = null;
     let modalLocked = false; // true なら × ボタンでしか閉じない（背景・Esc・スマホの「戻る」では閉じない）
-    function openModal(html, onClose = null, { locked = false } = {}) {
+    // wide：PC で広げるときの幅のクラス（例 "lg:max-w-4xl"。省略時はスマホ・PC とも sm:max-w-md）
+    function openModal(html, onClose = null, { locked = false, wide = "" } = {}) {
       const prevCb = modalCloseCb; modalCloseCb = null; prevCb?.();
       modalLocked = locked;
       const host = $("#modal-host");
+      host.className = `relative w-full sm:max-w-md ${wide}`;
       host.innerHTML = `<div class="modal-panel bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[88vh] overflow-y-auto scroll-thin safe-bottom">
         <div class="sm:hidden mx-auto mt-2.5 w-10 h-1.5 rounded-full bg-slate-200"></div>${html}</div>`;
       $("#modal-root").hidden = false;
@@ -9393,10 +9395,14 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     }
 
     // 管理者メニューのモーダル（メニュー内で画面を切り替えても、閉じるまではパスワードを入れ直さなくてよい）
-    function openAdminModal(html) {
+    // wide：PC（lg 以上）で広げる幅のクラス（省略時はスマホと同じ幅）
+    function openAdminModal(html, wide = "") {
       modalCloseCb = null; // 前の画面を閉じたときの処理（パスワードを消す）を呼ばない
-      openModal(html, () => { adminKey = null; });
+      openModal(html, () => { adminKey = null; }, { wide });
     }
+    // PC で管理者画面のユーザー一覧を 2 列にするときのクラス
+    const ADMIN_LIST_WIDE = "lg:max-w-3xl";
+    const ADMIN_LIST_CLS = "mt-2 px-3 max-h-80 lg:max-h-[56vh] overflow-y-auto scroll-thin lg:grid lg:grid-cols-2 lg:gap-x-2 lg:content-start";
 
     // パスワードを入れた後に開く画面（Ctrl+Shift+K の制限画面など。無ければ管理者メニュー）
     let adminAfterUnlock = null;
@@ -9437,20 +9443,24 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
       openAdminModal(`
         ${modalHead("管理者メニュー", `管理者（@${esc(ADMIN_ID)}）だけが使える設定です`)}
-        <div class="px-6 pb-6 space-y-3">
-          ${adminSwitch("signupOpen", "停止すると、ログイン画面の「新規登録」から新しいアカウントを作れなくなります。登録済みのユーザーは、これまでどおりログインできます。")}
+        <div class="px-6 pb-6 space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3">
+          ${adminSwitch("signupOpen","停止すると、ログイン画面の「新規登録」から新しいアカウントを作れなくなります。登録済みのユーザーは、これまでどおりログインできます。")}
           ${adminSwitch("readReceipts", "オンにすると、あなたが送ったメッセージの横に、相手が読むと「既読」（グループは読んだ人数。タップでだれが読んだか）が表示されます。この表示は管理者にだけ見えます。オフの間も既読は記録されるので、オンに戻すとすぐに表示されます。")}
           ${adminSwitch("hideOnline", "オンにしている間は、あなたのオンライン状態（緑の点・「オンライン」）と DM の「入力中...」が、全員から見えなくなります。最終アクティブの時刻も更新されません。")}
           ${adminSwitch("longText", `全ユーザーの、1回に送信できる文字数を切り替えます。オンで最大${MAX_TEXT_LONG}文字、オフで最大${MAX_TEXT_SHORT}文字です（メッセージの編集も同じです）。送信済みのメッセージはそのまま残ります。`)}
           ${adminSwitch("rawImage", "オフにすると、全ユーザーが画像を送るときの「元の画像ファイルのまま送る」が使えなくなり、画像ファイルのままの画像の転送もできなくなります（SVG に埋め込んで送る方法はこれまでどおり使えます）。送信済みの画像はそのまま表示されます。")}
           ${adminSwitch("adminScores", "オフの間にあなたが遊んだゲームのスコアは、ランキングに載りません（オンに戻しても、オフの間のスコアは載りません）。自己ベスト・得点の合計など、あなた自身の記録と特典の獲得には、これまでどおり反映されます。")}
-          <button type="button" data-action="admin-restrict" class="btn-secondary w-full !mt-5">${icon("alert", "w-5 h-5")}アカウントの制限</button>
-          <button type="button" data-action="admin-reset" class="btn-secondary w-full">${icon("key", "w-5 h-5")}パスワードのリセット</button>
-          <button type="button" data-action="admin-plans" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}プランの加入状況</button>
-          <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
-          <div id="admin-lock-box"></div>
-          <button type="button" data-close class="btn-primary w-full">閉じる</button>
-        </div>`);
+          <div class="!mt-5 space-y-3 lg:space-y-0 lg:!mt-2 lg:col-span-2 lg:grid lg:grid-cols-2 lg:gap-3">
+            <button type="button" data-action="admin-restrict" class="btn-secondary w-full">${icon("alert", "w-5 h-5")}アカウントの制限</button>
+            <button type="button" data-action="admin-reset" class="btn-secondary w-full">${icon("key", "w-5 h-5")}パスワードのリセット</button>
+            <button type="button" data-action="admin-plans" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}プランの加入状況</button>
+            <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
+          </div>
+          <div id="admin-lock-box" class="lg:col-span-2"></div>
+          <div class="lg:col-span-2 lg:flex lg:justify-end">
+            <button type="button" data-close class="btn-primary w-full lg:w-48">閉じる</button>
+          </div>
+        </div>`, "lg:max-w-4xl");
       renderAdminSettings();
       renderAdminLock();
     }
@@ -9684,10 +9694,10 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             <input id="ar-search" type="search" class="input pl-10 py-2.5 bg-slate-50 border-transparent" placeholder="ユーザーを検索" autocomplete="off" />
           </div>
         </div>
-        <div id="ar-list" class="mt-2 px-3 max-h-80 overflow-y-auto scroll-thin"></div>
-        <div class="px-6 pt-3 pb-6">
-          <button type="button" data-action="admin-menu" class="btn-secondary w-full">戻る</button>
-        </div>`);
+        <div id="ar-list" class="${ADMIN_LIST_CLS}"></div>
+        <div class="px-6 pt-3 pb-6 lg:flex lg:justify-end">
+          <button type="button" data-action="admin-menu" class="btn-secondary w-full lg:w-48">戻る</button>
+        </div>`, ADMIN_LIST_WIDE);
       renderRestrictList();
     }
     function renderRestrictList() {
@@ -9704,7 +9714,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             <div class="font-medium text-slate-800 truncate">${esc(u.name)}</div>
             <div class="text-xs text-slate-400 truncate">@${esc(u.id)}${isRestricted(u) ? ` ・ ${RESTRICTED_LABEL} あと${remainSpan(ms(u.restrictedUntil))}` : ""}</div>
           </div>
-        </button>`).join("") || `<p class="text-sm text-slate-400 text-center py-6">${q ? "該当するユーザーはいません" : "他のユーザーはまだいません"}</p>`;
+        </button>`).join("") || `<p class="text-sm text-slate-400 text-center py-6 col-span-full">${q ? "該当するユーザーはいません" : "他のユーザーはまだいません"}</p>`;
     }
 
     // 管理者メニュー：ユーザーごとのプラン（Chatter Plus / Pro / Max）の加入状況。見るだけ（変更は本人のプラン画面から）
@@ -9721,10 +9731,10 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             <input id="ap-search" type="search" class="input pl-10 py-2.5 bg-slate-50 border-transparent" placeholder="ユーザーを検索" autocomplete="off" />
           </div>
         </div>
-        <div id="ap-list" class="mt-2 px-3 max-h-80 overflow-y-auto scroll-thin"></div>
-        <div class="px-6 pt-3 pb-6">
-          <button type="button" data-action="admin-menu" class="btn-secondary w-full">戻る</button>
-        </div>`);
+        <div id="ap-list" class="${ADMIN_LIST_CLS}"></div>
+        <div class="px-6 pt-3 pb-6 lg:flex lg:justify-end">
+          <button type="button" data-action="admin-menu" class="btn-secondary w-full lg:w-48">戻る</button>
+        </div>`, ADMIN_LIST_WIDE);
       renderAdminPlanList();
     }
     function renderAdminPlanList() {
@@ -9768,7 +9778,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             <div class="text-xs text-slate-400 truncate">@${esc(u.id)}${badgeNote(u)}</div>
           </div>
           ${tag(u)}
-        </div>`).join("") || `<p class="text-sm text-slate-400 text-center py-6">該当するユーザーはいません</p>`;
+        </div>`).join("") || `<p class="text-sm text-slate-400 text-center py-6 col-span-full">該当するユーザーはいません</p>`;
     }
 
     // 前回制限した時間（次に制限画面を開いたときの初期値。この端末に保存）
@@ -9870,10 +9880,10 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             <input id="apr-search" type="search" class="input pl-10 py-2.5 bg-slate-50 border-transparent" placeholder="ユーザーを検索" autocomplete="off" />
           </div>
         </div>
-        <div id="apr-list" class="mt-2 px-3 max-h-80 overflow-y-auto scroll-thin"></div>
-        <div class="px-6 pt-3 pb-6">
-          <button type="button" data-action="admin-menu" class="btn-secondary w-full">戻る</button>
-        </div>`);
+        <div id="apr-list" class="${ADMIN_LIST_CLS}"></div>
+        <div class="px-6 pt-3 pb-6 lg:flex lg:justify-end">
+          <button type="button" data-action="admin-menu" class="btn-secondary w-full lg:w-48">戻る</button>
+        </div>`, ADMIN_LIST_WIDE);
       renderResetList();
     }
     function renderResetList() {
@@ -9890,7 +9900,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             <div class="font-medium text-slate-800 truncate">${esc(u.name)}</div>
             <div class="text-xs text-slate-400 truncate">@${esc(u.id)}${u.pwReset ? ` ・ <span class="text-amber-600 font-semibold">リセット待ち</span>` : ""}</div>
           </div>
-        </button>`).join("") || `<p class="text-sm text-slate-400 text-center py-6">${q ? "該当するユーザーはいません" : "他のユーザーはまだいません"}</p>`;
+        </button>`).join("") || `<p class="text-sm text-slate-400 text-center py-6 col-span-full">${q ? "該当するユーザーはいません" : "他のユーザーはまだいません"}</p>`;
     }
 
     // 選んだユーザーのリセットの確認
