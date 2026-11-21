@@ -1408,6 +1408,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   .overlay-title { font-size: 30px; font-weight: 800; color: #776e65; }
   .overlay-sub { font-size: 15px; font-weight: 700; }
   .overlay-btns { display: flex; gap: 8px; }
+  .overlay-key { font-size: 12px; opacity: 0.75; }
   .hint { margin-top: 12px; font-size: 12px; color: #776e65; text-align: center; width: var(--w); }
   @media (prefers-reduced-motion: reduce) { .tile { transition: none; } .tile-inner.appear, .tile-inner.pop { animation: none; } }
   /* ダークモード */
@@ -1444,6 +1445,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     <div class="overlay" id="overlay">
       <div class="overlay-title" id="overlayTitle">Game Over!</div>
       <div class="overlay-sub" id="overlaySub"></div>
+      <div class="overlay-key" id="overlayKey" hidden>S・↓・スペースでもう一度</div>
       <div class="overlay-btns">
         <button id="continueBtn" hidden>続ける</button>
         <button id="retryBtn">もう一度遊ぶ</button>
@@ -1463,6 +1465,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   let wonShown = false;
   let reported = false;  // このゲームのスコアをアプリに送ったか
   let moves = 0;
+  let gameOverAt = 0;    // ゲームオーバーの画面を出した時刻（直後のキーで、うっかり始め直さないため）
 
   const gridEl = document.getElementById('grid');
   const tilesEl = document.getElementById('tiles');
@@ -1649,11 +1652,14 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
         overlaySubEl.textContent = 'スコア: ' + score + (isNewBest ? '　🎉 自己ベスト更新！' : '');
         continueBtn.hidden = true;
         overlayEl.classList.add('show');
+        gameOverAt = performance.now();
+        document.getElementById('overlayKey').hidden = false;
         showBest();
       } else if (reached2048) {
         overlayTitleEl.textContent = '🎉 2048 達成！';
         overlaySubEl.textContent = 'このまま続けてスコアを伸ばせます';
         continueBtn.hidden = false;
+        document.getElementById('overlayKey').hidden = true;
         overlayEl.classList.add('show');
       }
     });
@@ -1671,6 +1677,14 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
+    // ゲームオーバーの後は S・↓・スペースでもう一度始める（押しっぱなしや、最後の一手の直後のキーでは始めない）
+    const isGameOverShown = overlayEl.classList.contains('show') && continueBtn.hidden;
+    if (isGameOverShown && ['s', 'S', 'ArrowDown', ' '].includes(e.key)) {
+      e.preventDefault();
+      if (!e.repeat && performance.now() - gameOverAt > 400) init();
+      return;
+    }
+    if (e.key === ' ') e.preventDefault(); // スペースでページがスクロールしないように
     const map = {
       ArrowLeft: 0, a: 0, A: 0,
       ArrowUp: 1, w: 1, W: 1,
