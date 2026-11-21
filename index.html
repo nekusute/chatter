@@ -9253,9 +9253,10 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       openModal(`
         ${modalHead("プロフィール")}
         <div class="px-6 pb-6">
+          <!-- ヘッダーの「ヘッダー」ボタンは、下に重ねて表示するアイコンの欄に隠れないよう、右上に置いて前面に出す -->
           <div class="relative">
             ${userHeader(state.me) ? headerBanner(userHeader(state.me), "h-24") : `<div class="h-16 rounded-2xl border-2 border-dashed border-slate-200"></div>`}
-            <button type="button" data-action="pick-header" class="absolute right-2 bottom-2 btn-chip py-1 text-xs bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50 shadow-sm">${icon("sparkles", "w-3.5 h-3.5")}ヘッダー</button>
+            <button type="button" data-action="pick-header" class="absolute right-2 top-2 z-10 btn-chip py-1 text-xs bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50 shadow-sm">${icon("sparkles", "w-3.5 h-3.5")}ヘッダー</button>
           </div>
           <div class="flex flex-col items-center text-center ${userHeader(state.me) ? "-mt-8" : "-mt-6"}">
             <div id="profile-icon" class="relative flex flex-col items-center">${profileIconBlock()}</div>
