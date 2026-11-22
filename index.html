@@ -203,20 +203,38 @@
       background-size: 18px 18px;
     }
 
-    /* チャットの背景（ゲームの特典）。.chat-bg の後に書いて上書きする */
-    .chatbg-sakura { background: radial-gradient(circle at 25% 30%, rgb(244 114 182 / .22) 0 5px, transparent 6px) 0 0 / 64px 64px, radial-gradient(circle at 70% 75%, rgb(251 207 232 / .9) 0 4px, transparent 5px) 0 0 / 48px 48px, linear-gradient(180deg, #fff1f5, #fdf2f8); }
-    .chatbg-ocean { background: radial-gradient(circle at 30% 40%, rgb(255 255 255 / .7) 0 3px, transparent 4px) 0 0 / 52px 52px, repeating-linear-gradient(170deg, transparent 0 34px, rgb(56 189 248 / .10) 34px 40px), linear-gradient(180deg, #e0f2fe, #bae6fd); }
-    .chatbg-forest { background: radial-gradient(ellipse 6px 3px at 30% 30%, rgb(34 197 94 / .28) 98%, transparent) 0 0 / 56px 56px, radial-gradient(ellipse 5px 3px at 75% 70%, rgb(22 163 74 / .22) 98%, transparent) 0 0 / 44px 44px, linear-gradient(180deg, #f0fdf4, #dcfce7); }
-    .chatbg-sunset { background: radial-gradient(circle at 80% 18%, rgb(253 186 116 / .55), transparent 28%), linear-gradient(180deg, #fff7ed, #fde2e4 55%, #ede9fe); background-attachment: local; }
-    .chatbg-starry { background: radial-gradient(circle, rgb(99 102 241 / .35) 0 1px, transparent 1.5px) 0 0 / 22px 22px, radial-gradient(circle, rgb(255 255 255 / .9) 0 1.2px, transparent 2px) 11px 7px / 37px 37px, linear-gradient(180deg, #e0e7ff, #ede9fe); }
-    .chatbg-aurora { background: linear-gradient(120deg, #d1fae5, #e0f2fe, #ede9fe, #fce7f3, #d1fae5); background-size: 400% 400%; animation: auroraFlow 18s ease-in-out infinite; }
-    @keyframes auroraFlow { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
-    html.dark .chatbg-sakura { background: radial-gradient(circle at 25% 30%, rgb(244 114 182 / .25) 0 5px, transparent 6px) 0 0 / 64px 64px, radial-gradient(circle at 70% 75%, rgb(244 114 182 / .14) 0 4px, transparent 5px) 0 0 / 48px 48px, linear-gradient(180deg, #2a1220, #1f0f1a); }
-    html.dark .chatbg-ocean { background: radial-gradient(circle at 30% 40%, rgb(125 211 252 / .25) 0 3px, transparent 4px) 0 0 / 52px 52px, repeating-linear-gradient(170deg, transparent 0 34px, rgb(56 189 248 / .08) 34px 40px), linear-gradient(180deg, #082f49, #0c1e36); }
-    html.dark .chatbg-forest { background: radial-gradient(ellipse 6px 3px at 30% 30%, rgb(74 222 128 / .25) 98%, transparent) 0 0 / 56px 56px, radial-gradient(ellipse 5px 3px at 75% 70%, rgb(34 197 94 / .2) 98%, transparent) 0 0 / 44px 44px, linear-gradient(180deg, #052e1c, #0a1f16); }
-    html.dark .chatbg-sunset { background: radial-gradient(circle at 80% 18%, rgb(251 146 60 / .25), transparent 28%), linear-gradient(180deg, #2a1608, #2a1027 55%, #1b1636); }
-    html.dark .chatbg-starry { background: radial-gradient(circle, rgb(165 180 252 / .35) 0 1px, transparent 1.5px) 0 0 / 22px 22px, radial-gradient(circle, rgb(255 255 255 / .85) 0 1.2px, transparent 2px) 11px 7px / 37px 37px, linear-gradient(180deg, #0b1026, #1a1240); }
-    html.dark .chatbg-aurora { background: linear-gradient(120deg, #052e2b, #0b2540, #1e1b4b, #3b0d2e, #052e2b); background-size: 400% 400%; }
+    /* チャットの背景（ゲームの特典）。繰り返さない1枚の絵（::before の SVG）を、グラデーションの上に重ねる。
+       海・森・夕焼けは下の方の絵を画面の形に合わせて引き伸ばし、星空・オーロラは上を基準にする（横長の画面でも大事な部分が切れないように）。
+       .chat-bg の後に書いて上書きする（メッセージ一覧は ::before より後ろの要素なので、絵の上に表示される） */
+    [class*=" chatbg-"], [class^="chatbg-"] { position: relative; overflow: hidden; }
+    [class*=" chatbg-"]::before, [class^="chatbg-"]::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-position: center; background-size: cover; background-repeat: no-repeat; }
+    .chatbg-sakura { background: radial-gradient(ellipse at 15% 8%, #ffd6e7, transparent 45%), radial-gradient(ellipse at 90% 85%, #fbcfe8, transparent 50%), linear-gradient(170deg, #fff7fa, #fdf2f8 55%, #fce7f3); }
+    .chatbg-sakura::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='xMidYMid slice'%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.27' transform='translate(46 92) rotate(20) scale(1.3)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.40' transform='translate(318 64) rotate(-30) scale(1.0)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.34' transform='translate(205 170) rotate(45) scale(0.8)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.29' transform='translate(84 330) rotate(10) scale(1.5)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.41' transform='translate(352 300) rotate(70) scale(0.9)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.36' transform='translate(150 470) rotate(-20) scale(1.2)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.31' transform='translate(300 560) rotate(30) scale(1.4)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.43' transform='translate(58 650) rotate(60) scale(0.9)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.38' transform='translate(240 724) rotate(-45) scale(1.3)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.32' transform='translate(372 772) rotate(15) scale(1.0)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.27' transform='translate(126 22) rotate(80) scale(0.7)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.40' transform='translate(262 396) rotate(0) scale(0.6)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f472b6' opacity='0.34' transform='translate(20 520) rotate(-60) scale(0.7)'/%3E%3C/svg%3E"); }
+    html.dark .chatbg-sakura { background: radial-gradient(ellipse at 15% 8%, rgb(244 114 182 / .22), transparent 45%), radial-gradient(ellipse at 90% 85%, rgb(190 24 93 / .25), transparent 50%), linear-gradient(170deg, #26121d, #1c0f18 55%, #170c14); }
+    html.dark .chatbg-sakura::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='xMidYMid slice'%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.17' transform='translate(46 92) rotate(20) scale(1.3)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.25' transform='translate(318 64) rotate(-30) scale(1.0)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.21' transform='translate(205 170) rotate(45) scale(0.8)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.18' transform='translate(84 330) rotate(10) scale(1.5)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.26' transform='translate(352 300) rotate(70) scale(0.9)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.22' transform='translate(150 470) rotate(-20) scale(1.2)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.19' transform='translate(300 560) rotate(30) scale(1.4)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.27' transform='translate(58 650) rotate(60) scale(0.9)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.24' transform='translate(240 724) rotate(-45) scale(1.3)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.20' transform='translate(372 772) rotate(15) scale(1.0)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.17' transform='translate(126 22) rotate(80) scale(0.7)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.25' transform='translate(262 396) rotate(0) scale(0.6)'/%3E%3Cpath d='M0 -11 C7 -7 8 5 0 11 C-8 5 -7 -7 0 -11 Z M0 -11 L-2 -8 L0 -9 L2 -8 Z' fill='%23f9a8d4' opacity='0.21' transform='translate(20 520) rotate(-60) scale(0.7)'/%3E%3C/svg%3E"); }
+    .chatbg-ocean { background: radial-gradient(ellipse at 50% -10%, rgb(255 255 255 / .9), transparent 55%), linear-gradient(180deg, #f0f9ff, #e0f2fe 50%, #bae6fd); }
+    .chatbg-ocean::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='none'%3E%3Cpath d='M0 600 C70 575 140 630 210 605 S340 575 400 598 V800 H0Z' fill='rgb(125 211 252 / .35)'/%3E%3Cpath d='M0 655 C80 630 150 690 230 660 S350 630 400 652 V800 H0Z' fill='rgb(56 189 248 / .28)'/%3E%3Cpath d='M0 715 C90 690 170 745 250 718 S360 694 400 712 V800 H0Z' fill='rgb(14 165 233 / .25)'/%3E%3C/svg%3E"); background-size: 100% 100%; }
+    html.dark .chatbg-ocean { background: radial-gradient(ellipse at 50% -10%, rgb(56 189 248 / .18), transparent 55%), linear-gradient(180deg, #0b1a2e, #0a2540 60%, #072a45); }
+    html.dark .chatbg-ocean::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='none'%3E%3Cpath d='M0 600 C70 575 140 630 210 605 S340 575 400 598 V800 H0Z' fill='rgb(3 105 161 / .28)'/%3E%3Cpath d='M0 655 C80 630 150 690 230 660 S350 630 400 652 V800 H0Z' fill='rgb(7 89 133 / .35)'/%3E%3Cpath d='M0 715 C90 690 170 745 250 718 S360 694 400 712 V800 H0Z' fill='rgb(12 74 110 / .55)'/%3E%3C/svg%3E"); background-size: 100% 100%; }
+    .chatbg-forest { background: radial-gradient(ellipse at 10% 0%, rgb(254 249 195 / .9), transparent 45%), linear-gradient(180deg, #f7fee7, #ecfdf5 55%, #d1fae5); }
+    .chatbg-forest::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='none'%3E%3Cpath d='M0 600 C60 565 120 585 170 560 C230 530 300 575 400 545 V800 H0Z' fill='rgb(134 239 172 / .45)'/%3E%3Cpath d='M0 660 C70 625 130 648 200 618 C270 592 330 635 400 612 V800 H0Z' fill='rgb(74 222 128 / .35)'/%3E%3Cpath d='M0 725 C90 695 160 718 240 690 C310 668 360 702 400 692 V800 H0Z' fill='rgb(34 197 94 / .3)'/%3E%3C/svg%3E"); background-size: 100% 100%; }
+    html.dark .chatbg-forest { background: radial-gradient(ellipse at 10% 0%, rgb(250 204 21 / .08), transparent 45%), linear-gradient(180deg, #0a1a14, #0b2219 60%, #052e1c); }
+    html.dark .chatbg-forest::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='none'%3E%3Cpath d='M0 600 C60 565 120 585 170 560 C230 530 300 575 400 545 V800 H0Z' fill='rgb(20 83 45 / .45)'/%3E%3Cpath d='M0 660 C70 625 130 648 200 618 C270 592 330 635 400 612 V800 H0Z' fill='rgb(22 101 52 / .45)'/%3E%3Cpath d='M0 725 C90 695 160 718 240 690 C310 668 360 702 400 692 V800 H0Z' fill='rgb(20 83 45 / .7)'/%3E%3C/svg%3E"); background-size: 100% 100%; }
+    .chatbg-sunset { background: radial-gradient(circle at 74% 72%, #fb923c 0 50px, rgb(251 146 60 / 0) 52px), radial-gradient(circle at 74% 72%, rgb(251 146 60 / .35), rgb(251 146 60 / 0) 220px), linear-gradient(180deg, #fde2e4 0%, #fecdd3 30%, #fed7aa 62%, #fff1e6 100%); }
+    .chatbg-sunset::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='none'%3E%3Crect x='0' y='590' width='400' height='210' fill='rgb(251 146 60 / .14)'/%3E%3Crect x='255' y='612' width='80' height='2.5' rx='1.25' fill='%23ffffff' opacity='0.8'/%3E%3Crect x='235' y='636' width='120' height='2.5' rx='1.25' fill='%23ffffff' opacity='0.8'/%3E%3Crect x='268' y='664' width='60' height='2.5' rx='1.25' fill='%23ffffff' opacity='0.8'/%3E%3Crect x='220' y='698' width='150' height='2.5' rx='1.25' fill='%23ffffff' opacity='0.8'/%3E%3Crect x='282' y='735' width='40' height='2.5' rx='1.25' fill='%23ffffff' opacity='0.8'/%3E%3Cellipse cx='90' cy='150' rx='70' ry='10' fill='%23ffffff' opacity='0.55'/%3E%3Cellipse cx='130' cy='142' rx='40' ry='9' fill='%23ffffff' opacity='0.55'/%3E%3Cellipse cx='300' cy='240' rx='80' ry='9' fill='%23ffffff' opacity='0.55'/%3E%3Cellipse cx='60' cy='350' rx='55' ry='7' fill='%23ffffff' opacity='0.55'/%3E%3C/svg%3E"); background-size: 100% 100%; }
+    html.dark .chatbg-sunset { background: radial-gradient(circle at 74% 72%, rgb(249 115 22 / .7) 0 50px, rgb(249 115 22 / 0) 52px), radial-gradient(circle at 74% 72%, rgb(249 115 22 / .2), rgb(249 115 22 / 0) 220px), linear-gradient(180deg, #1b1636 0%, #2a1030 40%, #3a1a14 70%, #1f1410 100%); }
+    html.dark .chatbg-sunset::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='none'%3E%3Crect x='0' y='590' width='400' height='210' fill='rgb(124 45 18 / .28)'/%3E%3Crect x='255' y='612' width='80' height='2.5' rx='1.25' fill='%23fdba74' opacity='0.35'/%3E%3Crect x='235' y='636' width='120' height='2.5' rx='1.25' fill='%23fdba74' opacity='0.35'/%3E%3Crect x='268' y='664' width='60' height='2.5' rx='1.25' fill='%23fdba74' opacity='0.35'/%3E%3Crect x='220' y='698' width='150' height='2.5' rx='1.25' fill='%23fdba74' opacity='0.35'/%3E%3Crect x='282' y='735' width='40' height='2.5' rx='1.25' fill='%23fdba74' opacity='0.35'/%3E%3Cellipse cx='90' cy='150' rx='70' ry='10' fill='%236d28d9' opacity='0.25'/%3E%3Cellipse cx='130' cy='142' rx='40' ry='9' fill='%236d28d9' opacity='0.25'/%3E%3Cellipse cx='300' cy='240' rx='80' ry='9' fill='%236d28d9' opacity='0.25'/%3E%3Cellipse cx='60' cy='350' rx='55' ry='7' fill='%236d28d9' opacity='0.25'/%3E%3C/svg%3E"); background-size: 100% 100%; }
+    .chatbg-starry { background: radial-gradient(ellipse at 80% 5%, rgb(255 255 255 / .8), transparent 40%), linear-gradient(180deg, #e0e7ff, #ede9fe 55%, #fae8ff); }
+    .chatbg-starry::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='xMidYMin slice'%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.75' transform='translate(40 60) scale(1.30)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.60' transform='translate(120 140) scale(0.78)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.68' transform='translate(210 50) scale(1.04)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.64' transform='translate(370 180) scale(0.91)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.56' transform='translate(60 260) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.71' transform='translate(180 300) scale(1.17)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.56' transform='translate(330 360) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.68' transform='translate(90 430) scale(1.04)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.60' transform='translate(260 470) scale(0.78)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.64' transform='translate(30 560) scale(0.91)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.71' transform='translate(360 560) scale(1.17)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.56' transform='translate(150 640) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.68' transform='translate(300 700) scale(1.04)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.60' transform='translate(70 760) scale(0.78)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.56' transform='translate(230 760) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.56' transform='translate(390 440) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.52' transform='translate(280 120) scale(0.52)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.56' transform='translate(20 180) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.52' transform='translate(160 220) scale(0.52)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.60' transform='translate(240 250) scale(0.78)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23818cf8' opacity='0.56' transform='translate(110 30) scale(0.65)'/%3E%3Cpath d='M332 70 a28 28 0 1 0 25 43 a23 23 0 1 1 -25 -43 Z' fill='%23a5b4fc' opacity='0.75'/%3E%3C/svg%3E"); background-position: center top; }
+    html.dark .chatbg-starry { background: radial-gradient(ellipse at 80% 5%, rgb(165 180 252 / .15), transparent 40%), linear-gradient(180deg, #080c22, #12133a 55%, #1d1240); }
+    html.dark .chatbg-starry::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='xMidYMin slice'%3E%3Cellipse cx='200' cy='300' rx='320' ry='60' fill='%23a78bfa' opacity='.08' transform='rotate(-28 200 300)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.90' transform='translate(40 60) scale(1.30)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.72' transform='translate(120 140) scale(0.78)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.81' transform='translate(210 50) scale(1.04)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.77' transform='translate(370 180) scale(0.91)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.68' transform='translate(60 260) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.85' transform='translate(180 300) scale(1.17)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.68' transform='translate(330 360) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.81' transform='translate(90 430) scale(1.04)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.72' transform='translate(260 470) scale(0.78)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.77' transform='translate(30 560) scale(0.91)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.85' transform='translate(360 560) scale(1.17)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.68' transform='translate(150 640) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.81' transform='translate(300 700) scale(1.04)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.72' transform='translate(70 760) scale(0.78)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.68' transform='translate(230 760) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.68' transform='translate(390 440) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.63' transform='translate(280 120) scale(0.52)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.68' transform='translate(20 180) scale(0.65)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.63' transform='translate(160 220) scale(0.52)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.72' transform='translate(240 250) scale(0.78)'/%3E%3Cpath d='M0 -6 L1.4 -1.4 L6 0 L1.4 1.4 L0 6 L-1.4 1.4 L-6 0 L-1.4 -1.4 Z' fill='%23ffffff' opacity='0.68' transform='translate(110 30) scale(0.65)'/%3E%3Cpath d='M332 70 a28 28 0 1 0 25 43 a23 23 0 1 1 -25 -43 Z' fill='%23fef9c3' opacity='0.9'/%3E%3C/svg%3E"); background-position: center top; }
+    .chatbg-aurora { background: linear-gradient(180deg, #ecfeff, #f0fdf4 50%, #faf5ff); }
+    .chatbg-aurora::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='xMidYMin slice'%3E%3Cdefs%3E%3Cfilter id='b' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='22'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23b)' opacity='0.7'%3E%3Cpath d='M-40 230 C60 150 140 280 230 200 S360 120 440 190 L440 260 C360 200 300 300 220 270 S70 240 -40 320 Z' fill='%236ee7b7'/%3E%3Cpath d='M-40 360 C80 300 150 400 250 340 S380 300 440 340 L440 400 C370 360 290 440 200 410 S60 400 -40 450 Z' fill='%2367e8f9'/%3E%3Cpath d='M-40 120 C70 80 160 160 260 110 S390 70 440 100 L440 150 C360 120 280 190 190 160 S60 140 -40 190 Z' fill='%23c4b5fd'/%3E%3C/g%3E%3C/svg%3E"); background-position: center top; }
+    html.dark .chatbg-aurora { background: linear-gradient(180deg, #020617, #04111d 50%, #0b1026); }
+    html.dark .chatbg-aurora::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 800' preserveAspectRatio='xMidYMin slice'%3E%3Cdefs%3E%3Cfilter id='b' x='-20%25' y='-20%25' width='140%25' height='140%25'%3E%3CfeGaussianBlur stdDeviation='22'/%3E%3C/filter%3E%3C/defs%3E%3Cg filter='url(%23b)' opacity='0.5'%3E%3Cpath d='M-40 230 C60 150 140 280 230 200 S360 120 440 190 L440 260 C360 200 300 300 220 270 S70 240 -40 320 Z' fill='%2334d399'/%3E%3Cpath d='M-40 360 C80 300 150 400 250 340 S380 300 440 340 L440 400 C370 360 290 440 200 410 S60 400 -40 450 Z' fill='%2322d3ee'/%3E%3Cpath d='M-40 120 C70 80 160 160 260 110 S390 70 440 100 L440 150 C360 120 280 190 190 160 S60 140 -40 190 Z' fill='%23a78bfa'/%3E%3C/g%3E%3C/svg%3E"); background-position: center top; }
+    /* オーロラは光の帯がゆっくりゆらめく */
+    .chatbg-aurora::before { inset: -8%; animation: auroraDrift 16s ease-in-out infinite; }
+    @keyframes auroraDrift { 0%, 100% { transform: translateX(0) scaleY(1); } 50% { transform: translateX(-5%) scaleY(1.08); } }
 
     /* AI要約（Chatter Pro）の「要約中...」のきらめき */
     .ai-shimmer { background: linear-gradient(90deg, #D97757 0%, #D97757 35%, #f6d2c3 50%, #D97757 65%, #D97757 100%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: aiShimmer 2s linear infinite; }
@@ -256,6 +274,31 @@
     .av-crowned { position: relative; display: inline-flex; flex-shrink: 0; }
     .av-crown { position: absolute; left: 50%; top: 0; width: 58%; transform: translate(-50%, -58%) rotate(-8deg); pointer-events: none; z-index: 2; filter: drop-shadow(0 1px 1px rgb(0 0 0 / .25)); }
     .av-crown svg { display: block; width: 100%; height: auto; }
+    /* デコレーション（ガチャで集める）。アイコンの角や上にのせる */
+    .av-decorated { position: relative; display: inline-flex; flex-shrink: 0; }
+    .av-deco { position: absolute; width: 48%; pointer-events: none; z-index: 3; filter: drop-shadow(0 1px 1px rgb(0 0 0 / .3)); }
+    .av-deco svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .av-deco-tr { right: -16%; top: -16%; transform: rotate(12deg); }
+    .av-deco-tl { left: -16%; top: -16%; transform: rotate(-12deg); }
+    .av-deco-br { right: -16%; bottom: -14%; }
+    .av-deco-top { left: 50%; top: 0; width: 58%; transform: translate(-50%, -58%); }
+    /* ★5：天使の輪（金色に光ってふわふわ浮かぶ） */
+    .av-deco-halo { left: 50%; top: 0; width: 84%; transform: translate(-50%, -72%); filter: drop-shadow(0 0 3px #fde68a) drop-shadow(0 0 7px #f59e0b); animation: haloBob 2.4s ease-in-out infinite; }
+    @keyframes haloBob { 0%, 100% { transform: translate(-50%, -72%); } 50% { transform: translate(-50%, -90%); } }
+    /* ★5：星のオーラ（色の変わる星がまわりを回る） */
+    .av-deco-orbit { position: absolute; inset: -22%; pointer-events: none; z-index: 3; animation: orbitSpin 5s linear infinite, hueCycle 3s linear infinite; }
+    .av-deco-orbit svg { display: block; width: 100%; height: 100%; overflow: visible; }
+    @keyframes orbitSpin { to { transform: rotate(360deg); } }
+    @keyframes hueCycle { from { filter: hue-rotate(0deg) drop-shadow(0 0 2px #fff); } to { filter: hue-rotate(360deg) drop-shadow(0 0 2px #fff); } }
+    /* ★5：七色ハート（色が変わりながら脈打つ） */
+    .av-deco-prism { animation: prismPulse 1.6s ease-in-out infinite; }
+    @keyframes prismPulse { 0%, 100% { transform: rotate(12deg) scale(1); filter: hue-rotate(0deg) drop-shadow(0 0 3px #f0abfc); } 50% { transform: rotate(12deg) scale(1.22); filter: hue-rotate(180deg) drop-shadow(0 0 8px #f0abfc); } }
+    /* ガチャの結果のカード */
+    .gacha-card { animation: gachaPop .5s cubic-bezier(.2, .9, .3, 1.35) both; }
+    @keyframes gachaPop { from { opacity: 0; transform: translateY(12px) scale(.6); } to { opacity: 1; transform: none; } }
+    .gacha-epic { box-shadow: 0 0 0 2px #a78bfa, 0 0 14px rgb(167 139 250 / .55) !important; }
+    .gacha-legend { border: 2px solid transparent !important; box-shadow: 0 0 18px rgb(251 191 36 / .55) !important;
+      background: linear-gradient(rgb(var(--c-bg-white, 255 255 255)), rgb(var(--c-bg-white, 255 255 255))) padding-box, conic-gradient(from var(--gacha-a, 0deg), #ef4444, #f97316, #facc15, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444) border-box !important; }
 
     /* メッセージ内のリンクはダブルタップで開くので、ダブルタップでの拡大をさせない（2 回目がリンクの少し外に当たることもあるので一覧全体） */
     #messages { touch-action: manipulation; }
@@ -1828,6 +1871,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   button { background: #535353; color: #ffffff; border: none; padding: 10px 22px; font-family: "Courier New", Courier, monospace; font-size: 16px; font-weight: bold; cursor: pointer; letter-spacing: 1px; }
   button:active { background: #222222; }
   .hidden { display: none !important; }
+  #game-wrapper.playing canvas { cursor: none; }
   /* ダークモード（白黒を反転したドット絵） */
   html.dark { color-scheme: dark; }
   html.dark body { background-color: #121212; color: #c8c8c8; }
@@ -1847,7 +1891,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     </div>
     <div id="message-box">
       <h1 id="msg-title">HOT AIR BALLOON</h1>
-      <p id="msg-desc">タップ / ドラッグ / 左右キーで気球を操作<br>トゲを避けて泡やアイテムを集めよう<br>★を取ると15秒間無敵！</p>
+      <p id="msg-desc">マウスを動かす / タップ・ドラッグ / 左右キーで気球を操作<br>トゲを避けて泡やアイテムを集めよう<br>★を取ると15秒間無敵！</p>
       <button id="start-btn">START</button>
     </div>
   </div>
@@ -1858,6 +1902,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
   const msgBox = document.getElementById('message-box');
+  const gameWrapper = document.getElementById('game-wrapper');
   const msgTitle = document.getElementById('msg-title');
   const msgDesc = document.getElementById('msg-desc');
   const startBtn = document.getElementById('start-btn');
@@ -2083,6 +2128,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     entities = [];
     particles = [];
     state = 'PLAYING';
+    gameWrapper.classList.add('playing');
     msgBox.classList.add('hidden');
     updateScoreDisplay();
     sendToApp({ type: 'start' });
@@ -2094,6 +2140,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     keys.ArrowLeft = keys.ArrowRight = keys.a = keys.d = false;
     if (state !== 'PLAYING') return;
     state = 'PAUSED';
+    gameWrapper.classList.remove('playing');
     msgTitle.textContent = 'PAUSE';
     msgDesc.innerHTML = 'SCORE: ' + Math.floor(score) + '<br>準備ができたら再開しよう';
     startBtn.textContent = 'RESUME';
@@ -2101,11 +2148,13 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   }
   function resumeGame() {
     state = 'PLAYING';
+    gameWrapper.classList.add('playing');
     msgBox.classList.add('hidden');
   }
 
   function gameOver() {
     state = 'GAMEOVER';
+    gameWrapper.classList.remove('playing');
     keys.ArrowLeft = keys.ArrowRight = keys.a = keys.d = false;
     spawnParticles(player.x + 8, player.y + 8, 16);
     const final = Math.floor(score);
@@ -2136,7 +2185,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     setTargetFromClientX(e.clientX);
   });
   window.addEventListener('pointermove', (e) => {
-    if (!isPointerDown || state !== 'PLAYING') return;
+    if (state !== 'PLAYING') return;
+    if (!isPointerDown && e.pointerType !== 'mouse') return;
     setTargetFromClientX(e.clientX);
   });
   window.addEventListener('pointerup', () => { isPointerDown = false; });
@@ -6211,8 +6261,158 @@ function mergePiece() {
   }
 }
 
+// ---- 左右移動（押しっぱなし） ----
+// キーボードの自動連打（端末ごとに速さが違う）は使わず、押した瞬間に1マス、
+// MOVE_DELAY だけ待ってから MOVE_INTERVAL ごとに1マスずつ、一定の速さで動かす
+const MOVE_DELAY = 150;   // 連続移動が始まるまで（ミリ秒）
+const MOVE_INTERVAL = 50; // 連続移動の間隔（ミリ秒）
+const heldDirs = [];      // 押している向き（あとから押したほうを優先）
+let holdDir = 0;
+let holdNext = 0;         // 次に動かす時刻
+function pressMove(dir) {
+  if (heldDirs.includes(dir)) return;
+  heldDirs.push(dir);
+  holdDir = dir;
+  moveHorizontal(dir);
+  holdNext = performance.now() + MOVE_DELAY;
+}
+function releaseMove(dir) {
+  const i = heldDirs.indexOf(dir);
+  if (i < 0) return;
+  heldDirs.splice(i, 1);
+  const next = heldDirs[heldDirs.length - 1] || 0;
+  if (next !== holdDir) {
+    holdDir = next;
+    holdNext = performance.now() + MOVE_DELAY; // 反対の向きに切り替えたときも、少し待ってから連続移動
+  }
+}
+function releaseAllMoves() {
+  heldDirs.length = 0;
+  holdDir = 0;
+}
+// update から毎フレーム呼ぶ
+function stepHeldMove(now) {
+  if (!holdDir) return;
+  let n = 0;
+  while (now >= holdNext && n < 10) {
+    moveHorizontal(holdDir);
+    holdNext += MOVE_INTERVAL;
+    n++;
+  }
+  if (now >= holdNext) holdNext = now + MOVE_INTERVAL; // 長く止まっていたときに、まとめて動きすぎないように
+}
+window.addEventListener('blur', releaseAllMoves);
+
+// ---- 列を消したときのエフェクト ----
+const fx = { rows: [], particles: [], texts: [], shakeUntil: 0, shakePower: 0 };
+const LINE_LABELS = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', '4 LINES!!'];
+function spawnLineEffects(rows, points, perfect) {
+  const now = performance.now();
+  for (const { r, cells } of rows) {
+    fx.rows.push({ y: r, t0: now });
+    cells.forEach((type, c) => {
+      const color = COLORS[type] || '#ffffff';
+      for (let k = 0; k < 3; k++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = 0.12 + Math.random() * 0.28;
+        fx.particles.push({
+          x: c * BLOCK_SIZE + BLOCK_SIZE / 2, y: r * BLOCK_SIZE + BLOCK_SIZE / 2,
+          vx: Math.cos(ang) * spd + (c - COLS / 2) * 0.015, vy: Math.sin(ang) * spd - 0.25,
+          size: 3 + Math.random() * 5, color, t0: now, life: 650 + Math.random() * 450,
+        });
+      }
+    });
+  }
+  const n = rows.length;
+  // 文字は盤面の内側に収める（一番下の列を消したときに、はみ出さないように）
+  const midY = Math.min(boardCanvas.height - 60, Math.max(70, rows.reduce((sum, x) => sum + x.r, 0) / n * BLOCK_SIZE + BLOCK_SIZE / 2));
+  fx.texts.push({ text: LINE_LABELS[n] || `${n} LINES`, sub: `+${points}`, y: midY, t0: now, big: n >= 4 });
+  if (perfect) fx.texts.push({ text: 'PERFECT CLEAR!', sub: '', y: midY - 60, t0: now + 120, big: true });
+  if (n >= 2) { fx.shakeUntil = now + 120 + n * 70; fx.shakePower = n * 2.2; }
+}
+function drawLineEffects() {
+  const now = performance.now();
+  const W = boardCanvas.width;
+  // 消えた列の光（白く光って、上下に広がりながら消える）
+  fx.rows = fx.rows.filter((e) => now - e.t0 < 380);
+  for (const e of fx.rows) {
+    const t = (now - e.t0) / 380;
+    const grow = BLOCK_SIZE * 0.7 * t;
+    ctx.save();
+    ctx.globalAlpha = (1 - t) * 0.9;
+    ctx.shadowColor = '#7dd3fc';
+    ctx.shadowBlur = 24;
+    const g = ctx.createLinearGradient(0, 0, W, 0);
+    g.addColorStop(0, 'rgba(125, 211, 252, 0.6)');
+    g.addColorStop(0.5, '#ffffff');
+    g.addColorStop(1, 'rgba(125, 211, 252, 0.6)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, e.y * BLOCK_SIZE - grow / 2, W, BLOCK_SIZE + grow);
+    ctx.restore();
+  }
+  // 飛び散るかけら（ブロックの色。重力で落ちながら小さくなる）
+  fx.particles = fx.particles.filter((p) => now - p.t0 < p.life);
+  for (const p of fx.particles) {
+    const age = now - p.t0;
+    const k = age / p.life;
+    const x = p.x + p.vx * age;
+    const y = p.y + p.vy * age + 0.0006 * age * age;
+    const size = p.size * (1 - k * 0.7);
+    ctx.save();
+    ctx.globalAlpha = 1 - k;
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.fillRect(x - size / 2, y - size / 2, size, size);
+    ctx.restore();
+  }
+  // 文字（ぽんと大きく出て、上に浮かびながら消える）
+  fx.texts = fx.texts.filter((tx) => now - tx.t0 < 1000);
+  for (const tx of fx.texts) {
+    const age = now - tx.t0;
+    if (age < 0) continue;
+    const t = age / 1000;
+    const pop = age < 160 ? 0.6 + 0.6 * (age / 160) : 1.2 - Math.min(0.2, (age - 160) / 400);
+    ctx.save();
+    ctx.translate(W / 2, tx.y - t * 40);
+    ctx.scale(pop, pop);
+    ctx.globalAlpha = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `900 ${tx.big ? 34 : 26}px 'Segoe UI', Meiryo, sans-serif`;
+    const g = ctx.createLinearGradient(-110, 0, 110, 0);
+    if (tx.big) {
+      // 4列消し・パーフェクトは虹色が流れる
+      for (let i = 0; i <= 6; i++) g.addColorStop(i / 6, `hsl(${(i * 60 + age * 0.4) % 360}, 95%, 65%)`);
+    } else {
+      g.addColorStop(0, '#7dd3fc');
+      g.addColorStop(0.5, '#ffffff');
+      g.addColorStop(1, '#7dd3fc');
+    }
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.85)';
+    ctx.shadowColor = tx.big ? '#f0abfc' : '#38bdf8';
+    ctx.shadowBlur = 18;
+    ctx.strokeText(tx.text, 0, 0);
+    ctx.fillStyle = g;
+    ctx.fillText(tx.text, 0, 0);
+    if (tx.sub) {
+      ctx.font = `800 16px 'Segoe UI', Meiryo, sans-serif`;
+      ctx.lineWidth = 4;
+      ctx.strokeText(tx.sub, 0, 28);
+      ctx.fillStyle = '#facc15';
+      ctx.fillText(tx.sub, 0, 28);
+    }
+    ctx.restore();
+  }
+}
+const hasLineEffects = () => fx.rows.length || fx.particles.length || fx.texts.length || performance.now() < fx.shakeUntil;
+
 function clearLines() {
   let cleared = 0;
+  // エフェクト用：消える列の、もとの位置とブロックの色
+  const fullRows = [];
+  board.forEach((row, r) => { if (row.every(cell => cell !== null)) fullRows.push({ r, cells: [...row] }); });
   for (let r = ROWS - 1; r >= 0; r--) {
     if (board[r].every(cell => cell !== null)) {
       board.splice(r, 1);
@@ -6223,7 +6423,9 @@ function clearLines() {
   }
   if (cleared > 0) {
     const lineScores = [0, 100, 300, 500, 800];
-    score += lineScores[cleared] * level;
+    const points = lineScores[cleared] * level;
+    score += points;
+    spawnLineEffects(fullRows, points, board.every(row => row.every(cell => cell === null)));
     lines += cleared;
     level = Math.floor(lines / 10) + 1;
     if (cleared >= 4) achieve('blocks-4lines');
@@ -6375,6 +6577,13 @@ function drawMini(context, type) {
 
 function draw() {
   ctx.clearRect(0, 0, boardCanvas.width, boardCanvas.height);
+  // 2列以上消したときは、盤面を少しゆらす
+  ctx.save();
+  const shakeLeft = fx.shakeUntil - performance.now();
+  if (shakeLeft > 0) {
+    const p = fx.shakePower * Math.min(1, shakeLeft / 200);
+    ctx.translate((Math.random() * 2 - 1) * p, (Math.random() * 2 - 1) * p);
+  }
 
   // グリッド線
   ctx.strokeStyle = 'rgba(51, 65, 85, 0.35)';
@@ -6423,16 +6632,35 @@ function draw() {
       }
     }
   }
+  drawLineEffects();
+  ctx.restore();
 }
 
 function getDropInterval() {
   return Math.max(90, 800 - (level - 1) * 70);
 }
 
+// 描画のループ：いつも1本だけ動かす（始め直したときに古いループが残って、二重に進まないように）
+let loopGen = 0;
+function runLoop() {
+  const gen = ++loopGen;
+  const tick = (t) => {
+    if (gen !== loopGen) return;
+    if (update(t) !== false) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+// 1フレーム分進める。ループを止めるときは false を返す
 function update(time = 0) {
-  if (gameState !== 'PLAYING') return;
+  if (gameState !== 'PLAYING') {
+    // 遊んでいないとき（ゲームオーバー直後など）も、残っているエフェクトだけは最後まで描く
+    if (gameState === 'GAMEOVER' && hasLineEffects()) { draw(); return true; }
+    return false;
+  }
   const deltaTime = time - lastTime;
   lastTime = time;
+  stepHeldMove(performance.now());
 
   if (current) {
     const groundedNow = checkGrounded();
@@ -6461,11 +6689,13 @@ function update(time = 0) {
   }
 
   draw();
-  requestAnimationFrame(update);
+  return true;
 }
 
 function startGame() {
   lastSentScore = 0;
+  releaseAllMoves();
+  fx.rows = []; fx.particles = []; fx.texts = []; fx.shakeUntil = 0;
   sendToApp({ type: 'start' });
   board = createBoard();
   bag = [];
@@ -6483,11 +6713,12 @@ function startGame() {
   overlay.classList.add('hidden');
   spawnPiece();
   lastTime = performance.now();
-  requestAnimationFrame(update);
+  runLoop();
 }
 
 function togglePause() {
   if (gameState === 'PLAYING') {
+    releaseAllMoves();
     gameState = 'PAUSED';
     overlayTitle.textContent = 'PAUSED';
     overlayDesc.textContent = 'Pキー または ボタンで再開';
@@ -6497,11 +6728,12 @@ function togglePause() {
     gameState = 'PLAYING';
     overlay.classList.add('hidden');
     lastTime = performance.now();
-    requestAnimationFrame(update);
+    runLoop();
   }
 }
 
 function gameOver() {
+  releaseAllMoves();
   gameState = 'GAMEOVER';
   gameOverAt = performance.now();
   sendToApp({ type: 'gameover', score });
@@ -6547,11 +6779,11 @@ document.addEventListener('keydown', (e) => {
 
   if (gameState !== 'PLAYING') return;
 
-  // ← と → で左右移動
+  // ← と → で左右移動（押しっぱなしは stepHeldMove が一定の速さで動かす）
   if (code === 'ArrowLeft') {
-    moveHorizontal(-1);
+    if (!e.repeat) pressMove(-1);
   } else if (code === 'ArrowRight') {
-    moveHorizontal(1);
+    if (!e.repeat) pressMove(1);
   }
   // A で左回転
   else if (key === 'a') {
@@ -6575,6 +6807,23 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'ArrowLeft') releaseMove(-1);
+  else if (e.code === 'ArrowRight') releaseMove(1);
+});
+
+// タッチの ← → も、押しているあいだ一定の速さで動く
+document.querySelectorAll('.t-btn[data-action="left"], .t-btn[data-action="right"]').forEach(btn => {
+  const dir = btn.dataset.action === 'left' ? -1 : 1;
+  btn.addEventListener('pointerdown', (e) => {
+    if (gameState !== 'PLAYING') return;
+    e.preventDefault();
+    try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+    pressMove(dir);
+  });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => btn.addEventListener(ev, () => releaseMove(dir)));
+});
+
 document.querySelectorAll('.t-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const action = btn.dataset.action;
@@ -6583,8 +6832,7 @@ document.querySelectorAll('.t-btn').forEach(btn => {
       return;
     }
     if (gameState !== 'PLAYING') return;
-    if (action === 'left') moveHorizontal(-1);
-    if (action === 'right') moveHorizontal(1);
+    // ← → は押したとき（pointerdown）に動かすので、ここでは何もしない
     if (action === 'down') softDrop();
     if (action === 'rotL') tryRotate(-1);
     if (action === 'rotR') tryRotate(1);
@@ -6781,7 +7029,9 @@ draw();
       activeGameId: null,     // 遊んでいるゲーム（GAMES の id）
       achievements: new Map(), // 自分の実績：実績ID -> { at }
       achievementsLoaded: false,
-      unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null, games: null, achievements: null, champions: null },
+      wallet: null,           // Chatterコインとデコレーション { coins, pulls, decos }
+      walletLoaded: false,
+      unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null, games: null, achievements: null, champions: null, wallet: null },
     };
     let readMap = {};
     let readSentMap = {};     // 既読を記録した、管理者の最新メッセージの時刻（roomId -> ms）
@@ -6893,7 +7143,7 @@ draw();
       return `<div class="${size} shrink-0 rounded-full bg-gradient-to-br ${gradientOf(id)} text-white font-semibold grid place-items-center select-none shadow-sm">${esc(ch)}</div>`;
     }
     // アイコン（設定していれば枠を付ける）
-    function avatar(id, name, size) { return withCrown(withFrame(avatarBase(id, name, size), frameOf(id)), crownOf(id)); }
+    function avatar(id, name, size) { return withDeco(withCrown(withFrame(avatarBase(id, name, size), frameOf(id)), crownOf(id)), decoOf(id)); }
     // アイコンの枠（ゲームの特典）。users/{id}.frame。退会したユーザー・オープンチャットの匿名の送信者には付けない
     function userFrame(u) { return u && !u.deleted && FRAME_BY_ID[u.frame] ? u.frame : null; }
     function frameOf(id) { return userFrame(id === state.me?.id ? state.me : state.users.get(id)); }
@@ -7316,7 +7566,7 @@ draw();
 
     async function enterApp(user) {
       state.uid = auth.currentUser.uid;
-      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null, frame: user.frame ?? null, header: user.header ?? null, crown: user.crown ?? null, chatBg: user.chatBg ?? null };
+      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null, frame: user.frame ?? null, header: user.header ?? null, crown: user.crown ?? null, chatBg: user.chatBg ?? null, deco: user.deco ?? null };
       document.querySelectorAll('#screen-login input[type="password"]').forEach((el) => { el.value = ""; });
       syncAppFont();
       readMap = store.json(`chatter:read:${user.id}`, {});
@@ -7367,8 +7617,8 @@ draw();
         stickers: [], stickersLoaded: false, reads: new Map(), readsLoaded: false,
         stickerView: "mine", publicStickers: [], publicStickersLoaded: false, publicStickersError: false,
         publicLimit: PUBLIC_STICKER_PAGE, publicHasMore: false, publicSearch: "", partnerTyping: null,
-        gameStats: new Map(), gameStatsLoaded: false, achievements: new Map(), achievementsLoaded: false,
-        unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null, games: null, achievements: null, champions: null },
+        gameStats: new Map(), gameStatsLoaded: false, achievements: new Map(), achievementsLoaded: false, wallet: null, walletLoaded: false,
+        unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null, games: null, achievements: null, champions: null, wallet: null },
       });
       closeGame();
       destroyAllGames();
@@ -7769,9 +8019,9 @@ draw();
       state.unsub.users = onSnapshot(
         query(collection(db, "users"), orderBy("lastSeen", "desc"), limit(300)),
         (snap) => {
-          const prevIcons = new Map([...state.users].map(([id, u]) => [id, `${u.icon}|${badgeKey(u)}|${userFrame(u)}|${u.crown}`]));
+          const prevIcons = new Map([...state.users].map(([id, u]) => [id, `${u.icon}|${badgeKey(u)}|${userFrame(u)}|${u.crown}|${u.deco}`]));
           state.users = new Map(snap.docs.map((d) => [d.id, withId(d)]));
-          const iconChanged = [...state.users].some(([id, u]) => `${u.icon}|${badgeKey(u)}|${userFrame(u)}|${u.crown}` !== prevIcons.get(id)); // 公式マーク・アイコンの枠の変化も含める
+          const iconChanged = [...state.users].some(([id, u]) => `${u.icon}|${badgeKey(u)}|${userFrame(u)}|${u.crown}|${u.deco}` !== prevIcons.get(id)); // 公式マーク・アイコンの枠の変化も含める
           const mine = state.users.get(state.me.id);
           if (mine?.deleted && !state.accountDeleting) {
             // 別の端末でアカウントが削除された
@@ -7780,7 +8030,7 @@ draw();
             return;
           }
           if (mine && mine.uid !== state.uid && !snap.metadata.fromCache) { signOutForReset(); return; } // 管理者がパスワードをリセットした
-          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; state.me.frame = mine.frame ?? null; state.me.header = mine.header ?? null; state.me.crown = mine.crown ?? null; state.me.chatBg = mine.chatBg ?? null; applyChatBg(); syncAppFont(); }
+          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; state.me.frame = mine.frame ?? null; state.me.header = mine.header ?? null; state.me.crown = mine.crown ?? null; state.me.chatBg = mine.chatBg ?? null; state.me.deco = mine.deco ?? null; applyChatBg(); syncAppFont(); }
           state.usersLoaded = true;
           applyRestriction();
           renderSidebar();
@@ -7855,6 +8105,7 @@ draw();
         },
       );
       subscribeAchievements(); // 自分の実績
+      subscribeWallet();       // Chatterコインとデコレーション
       subscribeChampions();    // 各ゲームのランキング1位（王冠の表示）
     }
 
@@ -8045,6 +8296,7 @@ draw();
 
     function renderSidebar() {
       if (!state.me) return;
+      renderRewards();
       $("#me-avatar").innerHTML = avatar(state.me.id, state.me.name, "w-9 h-9 text-sm");
       $("#me-name").textContent = state.me.name;
       $("#me-id").textContent = "@" + state.me.id;
@@ -8289,21 +8541,21 @@ draw();
     // tiers：アイコンの枠（FRAMES の順）を獲得できる、そのゲームの得点の合計（firestore.rules の frameEarned と合わせる）
     const GAMES = [
       { id: "suika", name: "スイカゲーム風パズル", emoji: "🍉", desc: "同じフルーツをくっつけて大きくしよう。スイカを目指せ！", bg: "from-lime-300 to-emerald-500",
-        tiers: [1000, 5000, 15000, 40000, 100000, 250000] },
+        coinUnit: 500, tiers: [1000, 5000, 15000, 40000, 100000, 250000] },
       { id: "2048", name: "2048 パズル", emoji: "🔢", desc: "同じ数字を合体させて 2048 を作ろう", bg: "from-amber-200 to-orange-400",
-        tiers: [5000, 30000, 100000, 300000, 800000, 2000000] },
+        coinUnit: 2000, tiers: [5000, 30000, 100000, 300000, 800000, 2000000] },
       { id: "balloon", name: "熱気球", emoji: "🎈", desc: "トゲをよけて泡やアイテムを集めよう", bg: "from-slate-200 to-slate-400",
-        tiers: [2000, 10000, 30000, 80000, 200000, 500000] },
+        coinUnit: 500, tiers: [2000, 10000, 30000, 80000, 200000, 500000] },
       { id: "minesweeper", name: "マインスイーパー", emoji: "💣", desc: "クリアで得点。難しいほど・速いほど高得点", bg: "from-sky-200 to-blue-400",
-        tiers: [500, 3000, 10000, 30000, 80000, 200000] },
+        coinUnit: 200, tiers: [500, 3000, 10000, 30000, 80000, 200000] },
       { id: "breakout", name: "ブロック崩し", emoji: "🧱", desc: "パドルでボールを打ち返してブロックを全部壊そう", bg: "from-sky-300 to-indigo-500",
-        tiers: [2000, 10000, 30000, 80000, 200000, 500000] },
+        coinUnit: 1000, tiers: [2000, 10000, 30000, 80000, 200000, 500000] },
       { id: "snake", name: "ヘビゲーム", emoji: "🐍", desc: "りんごを食べて長く伸びよう。壁と自分にぶつかったら終わり", bg: "from-green-300 to-emerald-600",
-        tiers: [300, 1500, 5000, 12000, 30000, 80000] },
+        coinUnit: 100, tiers: [300, 1500, 5000, 12000, 30000, 80000] },
       { id: "puyo", name: "ぷにぷにパズル", emoji: "🍓", desc: "同じ色を4つつなげて消そう。れんさで高得点", bg: "from-pink-200 to-rose-400",
-        tiers: [3000, 15000, 50000, 120000, 300000, 800000] },
+        coinUnit: 2000, tiers: [3000, 15000, 50000, 120000, 300000, 800000] },
       { id: "blocks", name: "落ちものパズル", emoji: "🟦", desc: "落ちてくるブロックを並べて、横一列そろえて消そう", bg: "from-cyan-300 to-blue-600",
-        tiers: [3000, 15000, 50000, 120000, 300000, 800000] },
+        coinUnit: 2000, tiers: [3000, 15000, 50000, 120000, 300000, 800000] },
     ];
     // アイコンの枠（users/{id}.frame。firestore.rules の frameEarned と合わせる）
     const FRAMES = [
@@ -8627,8 +8879,319 @@ draw();
       }).join("")}</div>`;
     }
 
+    // ============================================================
+    // Chatterコイン（users/{id}/wallet/main = { coins, pulls, decos: { デコID: 持っている数 }, lastGame, updatedAt }。本人だけが読める）。
+    // ゲームを1回遊び終えるたびに、そのゲームの coinUnit 点ごとに100コイン（1回で最大 COIN_MAX_STEPS 回分）。
+    // スコアの記録と同じ書き込みで足す（firestore.rules の coinsFor と合わせる）
+    // ============================================================
+    const COIN_PER_STEP = 100;
+    const COIN_MAX_STEPS = 50;
+    const coinAward = (gameId, score) => COIN_PER_STEP * Math.min(Math.floor(score / (gameById(gameId)?.coinUnit || Infinity)), COIN_MAX_STEPS);
+    const walletCoins = () => state.wallet?.coins || 0;
+    const walletDecos = () => state.wallet?.decos || {};
+    function subscribeWallet() {
+      state.unsub.wallet = onSnapshot(
+        doc(db, "users", state.me.id, "wallet", "main"),
+        (snap) => {
+          state.wallet = snap.exists() ? snap.data() : { coins: 0, pulls: 0, decos: {} };
+          state.walletLoaded = true;
+          if (state.tab === "games") renderSidebar();
+          if (gachaView) renderGacha();
+        },
+        (e) => { console.warn(e); state.walletLoaded = true; },
+      );
+    }
+
+    // ============================================================
+    // ガチャで集めるデコレーション（users/{id}.deco に1つだけつけられる。ほかの人のアイコンにも表示される）。
+    // pos：アイコンのどこに付けるか（tr 右上 / tl 左上 / top 上 / br 右下）。special：★5 の動くデザイン
+    // ID は firestore.rules の decoIds と合わせる
+    // ============================================================
+    const DECOS = [
+      // ★1
+      { id: "clover", name: "四つ葉", emoji: "🍀", rarity: 1, pos: "tr" },
+      { id: "sakura", name: "さくら", emoji: "🌸", rarity: 1, pos: "tr" },
+      { id: "strawberry", name: "いちご", emoji: "🍓", rarity: 1, pos: "tr" },
+      { id: "star", name: "おほしさま", emoji: "⭐", rarity: 1, pos: "tr" },
+      { id: "balloon", name: "ふうせん", emoji: "🎈", rarity: 1, pos: "tr" },
+      { id: "donut", name: "ドーナツ", emoji: "🍩", rarity: 1, pos: "br" },
+      { id: "candy", name: "キャンディ", emoji: "🍭", rarity: 1, pos: "tr" },
+      { id: "daisy", name: "デイジー", emoji: "🌼", rarity: 1, pos: "tl" },
+      { id: "chick", name: "ひよこ", emoji: "🐣", rarity: 1, pos: "br" },
+      { id: "mushroom", name: "きのこ", emoji: "🍄", rarity: 1, pos: "br" },
+      { id: "moon", name: "おつきさま", emoji: "🌙", rarity: 1, pos: "tr" },
+      { id: "flame", name: "ほのお", emoji: "🔥", rarity: 1, pos: "tr" },
+      // ★2
+      { id: "ribbon", name: "リボン", emoji: "🎀", rarity: 2, pos: "tr" },
+      { id: "tophat", name: "シルクハット", emoji: "🎩", rarity: 2, pos: "top" },
+      { id: "cap", name: "キャップ", emoji: "🧢", rarity: 2, pos: "top" },
+      { id: "headphones", name: "ヘッドホン", emoji: "🎧", rarity: 2, pos: "top" },
+      { id: "rainbow", name: "にじ", emoji: "🌈", rarity: 2, pos: "top" },
+      { id: "snow", name: "ゆきのけっしょう", emoji: "❄️", rarity: 2, pos: "tr" },
+      { id: "butterfly", name: "ちょうちょ", emoji: "🦋", rarity: 2, pos: "tl" },
+      { id: "paw", name: "あしあと", emoji: "🐾", rarity: 2, pos: "br" },
+      { id: "note", name: "おんぷ", emoji: "🎵", rarity: 2, pos: "tr" },
+      { id: "cloud", name: "くも", emoji: "☁️", rarity: 2, pos: "tr" },
+      { id: "sunflower", name: "ひまわり", emoji: "🌻", rarity: 2, pos: "tr" },
+      { id: "cherry", name: "さくらんぼ", emoji: "🍒", rarity: 2, pos: "tr" },
+      // ★3
+      { id: "strawhat", name: "むぎわら帽子", emoji: "👒", rarity: 3, pos: "top" },
+      { id: "wand", name: "まほうのつえ", emoji: "🪄", rarity: 3, pos: "tr" },
+      { id: "rabbit", name: "うさぎ", emoji: "🐰", rarity: 3, pos: "br" },
+      { id: "dog", name: "いぬ", emoji: "🐶", rarity: 3, pos: "br" },
+      { id: "cat", name: "ねこ", emoji: "🐱", rarity: 3, pos: "br" },
+      { id: "fox", name: "きつね", emoji: "🦊", rarity: 3, pos: "br" },
+      { id: "panda", name: "パンダ", emoji: "🐼", rarity: 3, pos: "br" },
+      { id: "unicorn", name: "ユニコーン", emoji: "🦄", rarity: 3, pos: "br" },
+      { id: "sparkle", name: "きらぼし", emoji: "🌟", rarity: 3, pos: "tr" },
+      { id: "gem", name: "ほうせき", emoji: "💎", rarity: 3, pos: "tr" },
+      // ★4
+      { id: "dragon", name: "ドラゴン", emoji: "🐉", rarity: 4, pos: "br" },
+      { id: "planet", name: "わくせい", emoji: "🪐", rarity: 4, pos: "tr" },
+      { id: "crystal", name: "すいしょうだま", emoji: "🔮", rarity: 4, pos: "tr" },
+      { id: "trophy", name: "トロフィー", emoji: "🏆", rarity: 4, pos: "tr" },
+      { id: "pumpkin", name: "かぼちゃ", emoji: "🎃", rarity: 4, pos: "br" },
+      { id: "alien", name: "エイリアン", emoji: "👾", rarity: 4, pos: "tr" },
+      // ★5（激レア。動く特別なデザイン）
+      { id: "halo", name: "天使の輪", rarity: 5, special: "halo", desc: "金色に光る輪が、ふわふわ浮かぶ" },
+      { id: "orbit", name: "星のオーラ", rarity: 5, special: "orbit", desc: "色の変わる星が、アイコンのまわりを回る" },
+      { id: "prism", name: "七色ハート", emoji: "💖", rarity: 5, special: "prism", desc: "色が変わりながら、どきどき脈打つ" },
+    ];
+    const DECO_BY_ID = Object.fromEntries(DECOS.map((d) => [d.id, d]));
+    // レア度ごとの出る確率（％）
+    // ★5（激レア）はほとんど出ない（500回に1回くらい）
+    const GACHA_RATES = { 1: 42, 2: 31, 3: 18, 4: 8.8, 5: 0.2 };
+    const GACHA_COST = { 1: 1000, 11: 10000 };
+    const rarityStars = (r) => "★".repeat(r) + "☆".repeat(5 - r);
+    const RARITY_COLOR = { 1: "text-slate-500", 2: "text-emerald-600", 3: "text-sky-600", 4: "text-violet-600", 5: "text-amber-500" };
+
+    // デコレーションの表示
+    const emojiSvg = (e) => `<svg viewBox="0 0 100 100" aria-hidden="true"><text x="50" y="56" font-size="80" text-anchor="middle" dominant-baseline="middle">${e}</text></svg>`;
+    const HALO_SVG = `<svg viewBox="0 0 100 40" aria-hidden="true"><ellipse cx="50" cy="20" rx="38" ry="11" fill="none" stroke="#fbbf24" stroke-width="8"/><ellipse cx="50" cy="20" rx="38" ry="11" fill="none" stroke="#fff7cc" stroke-width="2.5"/></svg>`;
+    const ORBIT_SVG = `<svg viewBox="0 0 100 100" aria-hidden="true">${[["#f472b6", 0], ["#22d3ee", 120], ["#facc15", 240]].map(([c, a]) =>
+      `<path transform="rotate(${a} 50 50) translate(50 6)" d="M0 -7 L1.8 -1.8 L7 0 L1.8 1.8 L0 7 L-1.8 1.8 L-7 0 L-1.8 -1.8 Z" fill="${c}"/>`).join("")}</svg>`;
+    function decoMarkup(d) {
+      if (d.special === "halo") return `<span class="av-deco av-deco-halo">${HALO_SVG}</span>`;
+      if (d.special === "orbit") return `<span class="av-deco-orbit">${ORBIT_SVG}</span>`;
+      if (d.special === "prism") return `<span class="av-deco av-deco-tr av-deco-prism">${emojiSvg(d.emoji)}</span>`;
+      return `<span class="av-deco av-deco-${d.pos}">${emojiSvg(d.emoji)}</span>`;
+    }
+    function withDeco(html, decoId) {
+      const d = DECO_BY_ID[decoId];
+      return d ? `<span class="av-decorated" title="${esc(d.name)}">${html}${decoMarkup(d)}</span>` : html;
+    }
+    function userDeco(u) { return u && !u.deleted && DECO_BY_ID[u.deco] ? u.deco : null; }
+    function decoOf(id) { return userDeco(id === state.me?.id ? state.me : state.users.get(id)); }
+    // デコの見本（自分のアイコンに付けたもの）
+    const decoSample = (id, size = "w-12 h-12 text-base") => withDeco(avatarBase(state.me.id, state.me.name, size), id);
+
+    // ============================================================
+    // 「特典をゲット！」：アイコンの枠・チャットの背景・王冠をまとめて選ぶ画面
+    // ============================================================
+    let rewardsOpen = false;
+    function openRewards() {
+      rewardsOpen = true;
+      openModal(`
+        ${modalHead("🎁 特典をゲット！", "ゲームの得点の合計やランキングで手に入る特典です。")}
+        <div id="rewards-body" class="pb-4"></div>`, () => { rewardsOpen = false; });
+      renderRewards();
+    }
+    function renderRewards() {
+      const body = $("#rewards-body");
+      if (!rewardsOpen || !body) return;
+      body.innerHTML = state.gameStatsLoaded ? renderFramePicker() + renderChatBgPicker() + renderCrownRow() : skeleton();
+    }
+
+    // ============================================================
+    // ガチャ（1回 1,000 コイン / 11連 10,000 コイン。持っているものも出る）
+    // ============================================================
+    let gachaView = null; // { tab: "gacha" | "collection", results: [{ id, isNew }] | null, busy }
+    function openGacha(tab = "gacha") {
+      gachaView = { tab, results: null, busy: false };
+      openModal(`
+        ${modalHead("🎰 ガチャを引く！", "Chatterコインで、アイコンに付けるデコレーションを集めよう")}
+        <div id="gacha-body" class="px-6 pb-6"></div>`, () => { gachaView = null; });
+      renderGacha();
+    }
+    function pickDeco() {
+      let r = Math.random() * 100;
+      let rarity = 1;
+      for (const k of [5, 4, 3, 2, 1]) { if (r < GACHA_RATES[k]) { rarity = k; break; } r -= GACHA_RATES[k]; }
+      const pool = DECOS.filter((d) => d.rarity === rarity);
+      return pool[Math.floor(Math.random() * pool.length)].id;
+    }
+    async function pullGacha(count) {
+      const cost = GACHA_COST[count];
+      if (!gachaView || gachaView.busy || !cost || !state.me || isRestricted(state.me)) return;
+      if (walletCoins() < cost) { toast("Chatterコインが足りません", "error"); return; }
+      gachaView.busy = true;
+      renderGacha();
+      const me = state.me;
+      const picks = Array.from({ length: count }, pickDeco);
+      try {
+        const results = await runTransaction(db, async (tx) => {
+          const ref = doc(db, "users", me.id, "wallet", "main");
+          const snap = await tx.get(ref);
+          const w = snap.exists() ? snap.data() : {};
+          if ((w.coins || 0) < cost) throw new Error("Chatterコインが足りません");
+          const decos = { ...(w.decos || {}) };
+          const res = picks.map((id) => {
+            const isNew = !(decos[id] > 0);
+            decos[id] = (decos[id] || 0) + 1;
+            return { id, isNew };
+          });
+          tx.update(ref, { coins: w.coins - cost, pulls: (w.pulls || 0) + count, decos, updatedAt: serverTimestamp() });
+          return res;
+        });
+        if (state.me !== me || !gachaView) return;
+        gachaView.results = results;
+        gachaView.tab = "gacha";
+        const best = Math.max(...results.map((r) => DECO_BY_ID[r.id].rarity));
+        if (best >= 5) toast("🌈 激レア ★★★★★ が出ました！");
+      } catch (e) {
+        console.error(e);
+        if (state.me === me) toast(e.message === "Chatterコインが足りません" ? e.message : "ガチャを引けませんでした", "error");
+      } finally {
+        if (gachaView) { gachaView.busy = false; renderGacha(); }
+      }
+    }
+
+    let decoBusy = false;
+    async function setDeco(id) {
+      if (decoBusy || !state.me || isRestricted(state.me)) return;
+      id = id || null;
+      if (id && !(walletDecos()[id] > 0)) return;
+      if (id === userDeco(state.me)) id = null; // つけているものをもう一度押すと外す
+      decoBusy = true;
+      const me = state.me;
+      const prev = me.deco;
+      me.deco = id;
+      renderSidebar();
+      renderGacha();
+      try {
+        await updateDoc(doc(db, "users", me.id), { deco: id ?? deleteField() });
+        if (state.me === me) {
+          toast(id ? `デコレーション「${DECO_BY_ID[id].name}」をつけました` : "デコレーションを外しました");
+          if (state.activeRoomId) { renderChatHeader(); if (state.messagesLoaded) renderMessages(); }
+        }
+      } catch (e) {
+        console.error(e);
+        if (state.me === me) { me.deco = prev; renderSidebar(); renderGacha(); toast("デコレーションを変更できませんでした", "error"); }
+      } finally {
+        decoBusy = false;
+      }
+    }
+
+    function renderGacha() {
+      const body = $("#gacha-body");
+      if (!gachaView || !body) return;
+      const owned = walletDecos();
+      const ownedCount = DECOS.filter((d) => owned[d.id] > 0).length;
+      const coins = walletCoins();
+      const tabBtn = (tab, label) => `<button type="button" data-action="gacha-tab" data-tab="${tab}" class="tab-btn py-1.5 text-sm ${gachaView.tab === tab ? "is-active" : ""}" role="tab" aria-selected="${gachaView.tab === tab}">${label}</button>`;
+      const head = `
+        <div class="flex items-center gap-2 mb-3 rounded-2xl bg-amber-50 ring-1 ring-amber-200 px-4 py-2.5">
+          <span class="text-xl">🪙</span>
+          <span class="text-xs text-slate-500">Chatterコイン</span>
+          <span class="ml-auto text-lg font-bold text-amber-700 tabular-nums">${coins.toLocaleString()}</span>
+        </div>
+        <div class="grid grid-cols-2 gap-1 p-1 bg-slate-100 rounded-xl mb-4" role="tablist">
+          ${tabBtn("gacha", "🎰 ガチャ")}${tabBtn("collection", `📦 コレクション ${ownedCount}/${DECOS.length}`)}
+        </div>`;
+      if (gachaView.tab === "collection") {
+        const cur = userDeco(state.me);
+        const cards = [...DECOS].sort((a, b) => b.rarity - a.rarity).map((d) => {
+          const n = owned[d.id] || 0;
+          if (!n) {
+            return `
+              <div class="flex flex-col items-center gap-1 rounded-2xl bg-slate-50 p-2 text-center">
+                <div class="w-12 h-12 rounded-full bg-slate-200 grid place-items-center text-xl text-slate-400 font-bold">？</div>
+                <div class="text-[11px] text-slate-400">？？？</div>
+                <div class="text-[10px] ${RARITY_COLOR[d.rarity]}">${rarityStars(d.rarity)}</div>
+              </div>`;
+          }
+          return `
+            <button type="button" data-action="set-deco" data-id="${d.id}" class="relative flex flex-col items-center gap-1 rounded-2xl p-2 text-center transition ${d.id === cur ? "bg-indigo-50 ring-2 ring-indigo-400" : "bg-white ring-1 ring-slate-200 hover:bg-slate-50"} ${d.rarity >= 5 ? "gacha-legend" : ""}" aria-pressed="${d.id === cur}" title="${d.id === cur ? "押すと外す" : "押すとつける"}">
+              <div class="pt-5 pr-2">${decoSample(d.id)}</div>
+              <div class="text-[11px] font-semibold text-slate-700 leading-tight">${esc(d.name)}</div>
+              <div class="text-[10px] ${RARITY_COLOR[d.rarity]}">${rarityStars(d.rarity)}</div>
+              <span class="absolute top-1 left-1.5 text-[10px] text-slate-400">×${n}</span>
+              ${d.id === cur ? `<div class="text-[10px] font-bold text-indigo-600 leading-none">つけ中</div>` : ""}
+            </button>`;
+        }).join("");
+        body.innerHTML = head + `
+          <p class="text-xs text-slate-500 mb-2">持っているデコレーションを押すと、アイコンにつけられます（つけているものをもう一度押すと外れます）。</p>
+          <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">${cards}</div>`;
+        return;
+      }
+      const legends = DECOS.filter((d) => d.rarity === 5);
+      const results = gachaView.results ? `
+        <div class="mb-4">
+          <div class="text-sm font-bold text-slate-800 mb-2">結果</div>
+          <div class="grid ${gachaView.results.length > 1 ? "grid-cols-3 sm:grid-cols-4" : "grid-cols-1 max-w-[160px] mx-auto"} gap-2">
+            ${gachaView.results.map((r, i) => {
+              const d = DECO_BY_ID[r.id];
+              return `
+                <div class="gacha-card relative flex flex-col items-center gap-1 rounded-2xl p-2 text-center bg-white ring-1 ring-slate-200 ${d.rarity >= 5 ? "gacha-legend" : d.rarity === 4 ? "gacha-epic" : ""}" style="animation-delay:${i * 90}ms">
+                  <div class="pt-5 pr-2">${decoSample(d.id)}</div>
+                  <div class="text-[11px] font-semibold text-slate-700 leading-tight">${esc(d.name)}</div>
+                  <div class="text-[10px] ${RARITY_COLOR[d.rarity]}">${rarityStars(d.rarity)}</div>
+                  ${r.isNew ? `<span class="absolute top-1 left-1 px-1.5 rounded-md bg-rose-500 text-white text-[9px] font-bold">NEW</span>` : ""}
+                </div>`;
+            }).join("")}
+          </div>
+        </div>` : "";
+      const pullBtn = (count, label) => {
+        const cost = GACHA_COST[count];
+        const ok = coins >= cost && !gachaView.busy;
+        return `<button type="button" data-action="pull-gacha" data-count="${count}" class="flex-1 rounded-2xl py-3 font-bold text-white shadow-md transition active:scale-95 ${count === 11 ? "bg-gradient-to-r from-fuchsia-500 via-rose-500 to-amber-500" : "bg-gradient-to-r from-indigo-500 to-violet-500"} ${ok ? "hover:brightness-110" : "opacity-40 cursor-not-allowed"}" ${ok ? "" : "disabled"}>
+          <div class="text-sm">${gachaView.busy ? "引いています…" : label}</div>
+          <div class="text-[11px] opacity-90">🪙 ${cost.toLocaleString()}</div>
+        </button>`;
+      };
+      body.innerHTML = head + results + `
+        <div class="rounded-2xl bg-gradient-to-br from-indigo-50 via-fuchsia-50 to-amber-50 ring-1 ring-fuchsia-200 p-4 mb-4">
+          <div class="text-sm font-bold text-slate-800">激レア ${rarityStars(5)}</div>
+          <div class="grid grid-cols-3 gap-2 mt-3">
+            ${legends.map((d) => `
+              <div class="flex flex-col items-center gap-1 text-center">
+                <div class="pt-3 pr-2">${decoSample(d.id, "w-14 h-14 text-lg")}</div>
+                <div class="text-xs font-bold text-slate-700">${esc(d.name)}</div>
+                <div class="text-[10px] text-slate-500 leading-tight">${esc(d.desc)}</div>
+              </div>`).join("")}
+          </div>
+        </div>
+        <div class="flex gap-2">${pullBtn(1, "1回引く")}${pullBtn(11, "11連ガチャ")}</div>
+        <details class="mt-4 text-xs text-slate-500">
+          <summary class="cursor-pointer font-semibold">出る確率</summary>
+          <div class="mt-2 space-y-1">
+            ${[5, 4, 3, 2, 1].map((r) => `<div class="flex"><span class="${RARITY_COLOR[r]}">${rarityStars(r)}</span><span class="ml-auto">${GACHA_RATES[r]}%（${DECOS.filter((d) => d.rarity === r).length}種類）</span></div>`).join("")}
+            <p class="pt-1">すでに持っているデコレーションも出ます。11連は 10,000 コインで11回引けます。</p>
+          </div>
+        </details>`;
+    }
+
+    // ゲーム一覧の上：コインの数と「特典をゲット！」「ガチャを引く！」
+    function renderCoinBar() {
+      return `
+        <div class="mx-2 mb-3 p-3 rounded-2xl bg-gradient-to-br from-amber-50 to-rose-50 ring-1 ring-amber-200">
+          <div class="flex items-center gap-2 px-1">
+            <span class="text-2xl leading-none">🪙</span>
+            <div class="min-w-0">
+              <div class="text-[11px] text-slate-500 leading-tight">Chatterコイン</div>
+              <div class="text-lg font-bold text-amber-700 tabular-nums leading-tight">${state.walletLoaded ? walletCoins().toLocaleString() : "…"}</div>
+            </div>
+            <span class="ml-auto text-[11px] text-slate-500 text-right leading-tight">ゲームで遊ぶと<br>たまります</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2 mt-2.5">
+            <button type="button" data-action="open-rewards" class="btn-chip justify-center py-2.5 text-sm text-white bg-gradient-to-r from-amber-400 to-orange-500 shadow-md shadow-orange-500/20 hover:brightness-110">🎁 特典をゲット！</button>
+            <button type="button" data-action="open-gacha" class="btn-chip justify-center py-2.5 text-sm text-white bg-gradient-to-r from-fuchsia-500 to-violet-500 shadow-md shadow-fuchsia-500/20 hover:brightness-110">🎰 ガチャを引く！</button>
+          </div>
+        </div>`;
+    }
+
     function renderGameList() {
-      const picker = state.gameStatsLoaded ? renderFramePicker() + renderChatBgPicker() + renderCrownRow() : "";
+      const picker = renderCoinBar();
       return picker + `
         <div class="flex items-center px-3 pt-1 pb-2">
           <p class="text-xs font-medium text-slate-400">遊ぶゲームを選んでください</p>
@@ -8643,8 +9206,7 @@ draw();
             : s ? `ベスト <b class="text-amber-600">${s.best.toLocaleString()}</b> ・ 合計 ${gameTotal(s).toLocaleString()} ・ ${s.plays.toLocaleString()}回`
             : "まだ遊んでいません";
           const goal = !state.gameStatsLoaded ? ""
-            : next ? `次の枠「${next.label}」まで あと ${(g.tiers[tier] - gameTotal(s)).toLocaleString()}点`
-            : "すべての枠を獲得済み 🎉";
+            : (next ? `次の枠「${next.label}」まで あと ${(g.tiers[tier] - gameTotal(s)).toLocaleString()}点` : "すべての枠を獲得済み 🎉");
           return `
             <button type="button" data-action="open-game" data-id="${esc(g.id)}" class="list-row group ${g.id === state.activeGameId ? "is-active" : ""}">
               ${gameThumb(g, "w-12 h-12 text-2xl")}
@@ -8656,6 +9218,7 @@ draw();
                 <div class="text-xs text-slate-500 truncate">${esc(g.desc)}</div>
                 <div class="text-xs text-slate-400 truncate mt-0.5">${record}</div>
                 ${goal ? `<div class="text-[11px] text-amber-700 truncate">${goal}</div>` : ""}
+                <div class="text-[11px] text-slate-400 truncate">🪙 ${g.coinUnit.toLocaleString()}点ごとに Chatterコイン ${COIN_PER_STEP}枚</div>
               </div>
               <span class="w-9 h-9 shrink-0 rounded-full grid place-items-center text-slate-300 group-hover:text-indigo-500 group-hover:bg-indigo-50 transition">${icon("chevron", "w-5 h-5")}</span>
             </button>`;
@@ -9062,10 +9625,13 @@ draw();
       const rankRef = doc(db, "rankings", gameId, "scores", me.id);
       const prevTotal = gameTotal(state.gameStats.get(gameId));
       const unlockedBefore = unlockedFrameCount();
+      const walletRef = doc(db, "users", me.id, "wallet", "main");
+      const coins = coinAward(gameId, score); // 今回もらえる Chatterコイン
       // withRanking：ランキングも同じトランザクションで更新する（ランキングの自己ベストを超えたときだけ）
       const run = (withRanking) => runTransaction(db, async (tx) => {
         const snap = await tx.get(ref);
         const rank = withRanking ? await tx.get(rankRef) : null;
+        const wallet = coins > 0 ? await tx.get(walletRef) : null;
         const prev = snap.exists() ? snap.data() : null;
         let result;
         if (!prev) {
@@ -9087,6 +9653,10 @@ draw();
         if (withRanking && score > 0 && (!rank.exists() || score > rank.data().best)) {
           tx.set(rankRef, { best: score, bestAt: serverTimestamp() });
         }
+        if (coins > 0) {
+          if (wallet.exists()) tx.update(walletRef, { coins: (wallet.data().coins || 0) + coins, lastGame: gameId, updatedAt: serverTimestamp() });
+          else tx.set(walletRef, { coins, lastGame: gameId, updatedAt: serverTimestamp() });
+        }
         return result;
       });
       try {
@@ -9100,13 +9670,14 @@ draw();
         }
         const { newBest, total } = res;
         if (state.me !== me) return;
+        if (coins > 0) toast(`🪙 Chatterコインを ${coins.toLocaleString()} 枚ゲット！（${gameById(gameId).coinUnit.toLocaleString()}点ごとに${COIN_PER_STEP}枚）`);
         // 新しく獲得したアイコンの枠・限定ヘッダー
         const stats = new Map(state.gameStats);
         stats.set(gameId, { ...stats.get(gameId), best: Math.max(stats.get(gameId)?.best ?? 0, score), total });
         const unlockedAfter = unlockedFrameCount(stats);
         const newHeaders = HEADERS.filter((h) => h.game === gameId && prevTotal < headerNeed(h) && total >= headerNeed(h));
         if (unlockedAfter > unlockedBefore) {
-          toast(`🎁 アイコンの枠「${FRAMES[unlockedAfter - 1].label}」を獲得しました！ ゲームタブの「特典」で設定できます`);
+          toast(`🎁 アイコンの枠「${FRAMES[unlockedAfter - 1].label}」を獲得しました！ ゲームタブの「特典をゲット！」から設定できます`);
         }
         if (newHeaders.length) {
           toast(`🎁 限定ヘッダー「${newHeaders.map((h) => h.name).join("」「")}」を獲得しました！ プロフィールで設定できます`);
@@ -14489,6 +15060,11 @@ draw();
       "close-game": () => exitGame(),
       "set-frame": (el) => (el.getAttribute("aria-disabled") === "true" ? openFrameInfo() : setFrame(el.dataset.frame)), // まだ獲得していない枠は、獲得条件を出す
       "frame-info": () => openFrameInfo(),
+      "open-rewards": () => openRewards(),
+      "open-gacha": () => openGacha(),
+      "gacha-tab": (el) => { if (gachaView) { gachaView.tab = el.dataset.tab; renderGacha(); } },
+      "pull-gacha": (el) => pullGacha(Number(el.dataset.count)),
+      "set-deco": (el) => setDeco(el.dataset.id),
       "set-chat-bg": (el) => (el.getAttribute("aria-disabled") === "true" ? openFrameInfo() : setChatBg(el.dataset.bg)), // まだ獲得していない背景は、獲得条件を出す
       "toggle-crown": () => toggleCrown(),
       "open-achievements": () => openAchievements(),
