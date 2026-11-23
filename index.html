@@ -2444,8 +2444,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 
     player.x += (player.targetX - player.x) * 0.28;
 
-    // 10,000点ごとに、トゲやアイテムの出る間隔を15%ずつ縮めて密度を上げる（最短8フレーム）
-    const densityStep = Math.floor(score / 10000);
+    // 10,000点を超えたら、そこから2,000点ごとに、トゲやアイテムの出る間隔を15%ずつ縮めて密度を上げる（最短8フレーム）
+    const densityStep = score < 10000 ? 0 : 1 + Math.floor((score - 10000) / 2000);
     const spawnInterval = Math.max(8, Math.floor(Math.max(18, Math.floor(42 - speed * 5)) * Math.pow(0.85, densityStep)));
     if (frame % spawnInterval === 0) spawnEntity();
 
@@ -8780,7 +8780,7 @@ draw();
           const online = isOnline(u);
           return `
             <button type="button" data-action="start-dm" data-id="${esc(u.id)}" class="list-row group ${dmRoomId(state.me.id, u.id) === state.activeRoomId ? "is-active" : ""}">
-              ${withPresence(avatar(u.id, u.name, "w-11 h-11 text-sm"), online)}
+              <span data-action="view-user" data-id="${esc(u.id)}" class="shrink-0 rounded-full cursor-pointer" title="プロフィールを見る">${withPresence(avatar(u.id, u.name, "w-11 h-11 text-sm"), online)}</span>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1 min-w-0"><span class="font-semibold truncate text-slate-800${nameCls(u.id)}">${esc(u.name)}</span>${officialBadge(u.id)}</div>
                 <div class="text-xs truncate text-slate-400">@${esc(u.id)} ・ ${isRestricted(u) ? RESTRICTED_LABEL : online ? `<span class="text-emerald-600">オンライン</span>` : esc(relTime(u.lastSeen))}</div>
@@ -11615,7 +11615,7 @@ draw();
           const selectable = canReact ? `data-action="select-msg" data-id="${esc(m.id)}" title="${canReply ? "クリックでリアクション・返信" : "クリックでリアクション"}"` : "";
           html += `
             <div class="flex items-start gap-2 ${cont ? "mt-1" : "mt-3"} ${isNew ? "msg-in" : ""} ${selected ? "relative z-10" : ""}" data-msg-id="${esc(m.id)}">
-              <div class="w-8 shrink-0">${cont ? "" : avatar(m.senderId, name, "w-8 h-8 text-xs")}</div>
+              <div class="w-8 shrink-0">${cont ? "" : OPEN_ALIAS_RE.test(m.senderId || "") ? avatar(m.senderId, name, "w-8 h-8 text-xs") : `<span data-action="view-user" data-id="${esc(m.senderId)}" class="block rounded-full cursor-pointer" title="プロフィールを見る">${avatar(m.senderId, name, "w-8 h-8 text-xs")}</span>`}</div>
               <div class="min-w-0 flex-1">
                 ${!cont && isGroup ? `<div class="text-xs text-slate-500 mb-1 ml-1 truncate">${nameSpan(m.senderId, name)}${officialBadge(m.senderId, "w-3.5 h-3.5 inline-block align-[-0.2em] ml-0.5")}${isOpen(room) && aliasTag(m.senderId) ? ` <span class="text-slate-300">${aliasTag(m.senderId)}</span>` : ""}</div>` : ""}
                 <div class="relative flex items-end gap-1.5">
@@ -12923,6 +12923,17 @@ draw();
       clearDrafts(me.id);
       resetSession();
       toast("アカウントを削除しました");
+    }
+
+    // 自己紹介（users/{id}.bio。300文字以内（絵文字など一部の文字は2文字に数える。firestore.rules の size() と同じ数え方）。空にすると消す。firestore.rules と合わせる）
+    const BIO_MAX = 300;
+    async function updateBio(raw) {
+      const bio = String(raw ?? "").replace(/\r\n?/g, "\n").trim();
+      if (bio.length > BIO_MAX) throw new Error(`自己紹介は${BIO_MAX}文字以内で入力してください。`);
+      if (bio === (state.me.bio || "")) { toast("自己紹介は変わっていません"); return; }
+      await updateDoc(doc(db, "users", state.me.id), { bio: bio || deleteField() });
+      state.me.bio = bio || null;
+      toast(bio ? "自己紹介を保存しました" : "自己紹介を消しました");
     }
 
     async function updateName(raw) {
@@ -15287,6 +15298,15 @@ draw();
             </div>
             <p class="form-error" hidden></p>
           </form>
+          <form id="form-bio" class="mt-5 space-y-2">
+            <div class="flex items-baseline">
+              <label class="label" for="profile-bio">自己紹介</label>
+              <span id="bio-count" class="ml-auto text-xs text-slate-400 tabular-nums">${(state.me.bio || "").length} / ${BIO_MAX}</span>
+            </div>
+            <textarea id="profile-bio" name="bio" class="input min-h-[96px] resize-y" maxlength="${BIO_MAX}" placeholder="ほかの人があなたのプロフィールを開いたときに表示されます（${BIO_MAX}文字以内）" oninput="document.getElementById('bio-count').textContent = this.value.length + ' / ${BIO_MAX}'">${esc(state.me.bio || "")}</textarea>
+            <button type="submit" class="btn-primary w-full">自己紹介を保存</button>
+            <p class="form-error" hidden></p>
+          </form>
           <button type="button" data-action="change-password" class="btn-secondary w-full mt-6">${icon("key", "w-5 h-5")}パスワードを変更</button>
           ${isAdmin() ? `<button type="button" data-action="admin-unlock" class="btn-secondary w-full mt-3">${icon("shield", "w-5 h-5")}管理者メニュー</button>` : ""}
           <button type="button" data-action="logout" class="btn-danger-ghost w-full mt-3">${icon("logout", "w-5 h-5")}ログアウト</button>
@@ -16066,25 +16086,40 @@ draw();
         </form>`);
     }
 
+    // ユーザーのプロフィール（ヘッダー・アイコン・名前・状態・実績の数）。room：1対1のトークから開いたとき（トークの削除ボタンを出す）
+    let profileViewId = null;
+    function openUserProfile(id, room = null) {
+      const u = id === state.me.id ? state.me : state.users.get(id);
+      if (!u) return;
+      const name = u.name || id;
+      const canTalk = id !== state.me.id && !u.deleted && !room;
+      profileViewId = id;
+      openModal(`
+        ${modalHead(id === state.me.id ? "あなたのプロフィール" : "ユーザー情報")}
+        <div class="px-6 pb-6 text-center">
+          ${userHeader(u) ? headerBanner(userHeader(u), "h-24") : ""}
+          <div class="relative flex justify-center ${userHeader(u) ? "-mt-10" : ""}">${withPresence(avatar(id, name, "w-20 h-20 text-3xl"), isOnline(u))}</div>
+          <div class="mt-3 font-bold text-lg text-slate-900">${nameSpan(id, name)}${officialBadge(id, "w-5 h-5 inline-block align-[-0.2em] ml-1")}</div>
+          <div class="text-sm text-slate-500">@${esc(id)}</div>
+          <div class="text-xs mt-1 ${isOnline(u) ? "text-emerald-600" : "text-slate-400"}">${u.deleted ? "退会済み" : isRestricted(u) ? RESTRICTED_LABEL : isOnline(u) ? "オンライン" : `最終アクティブ ${esc(relTime(u.lastSeen))}`}</div>
+          ${u.bio && !u.deleted ? `<p class="mt-4 text-sm text-slate-700 text-left whitespace-pre-wrap break-words rounded-2xl bg-slate-50 ring-1 ring-slate-100 px-4 py-3">${esc(u.bio)}</p>` : ""}
+          <div id="profile-ach" class="mt-4 inline-flex items-center gap-1.5 rounded-full bg-amber-50 ring-1 ring-amber-200 px-3 py-1 text-xs font-semibold text-amber-700">🏅 実績 …</div>
+          ${canTalk ? `<button type="button" data-action="start-dm" data-id="${esc(id)}" class="btn-primary w-full mt-6">${icon("chat", "w-5 h-5")}トークする</button>` : ""}
+          <button type="button" data-action="copy" data-copy="${esc(id)}" data-label="ユーザーIDをコピーしました" class="btn-secondary w-full ${canTalk ? "mt-3" : "mt-6"}">${icon("copy", "w-5 h-5")}ユーザーIDをコピー</button>
+          ${room && canDeleteRoom(room) ? `<button type="button" data-action="delete-room" class="btn-danger-ghost w-full mt-3">${icon("trash", "w-5 h-5")}トークを削除</button>` : ""}
+        </div>`, () => { profileViewId = null; });
+      // 実績の数（実績はログイン中のだれでも読める）
+      getDocs(collection(db, "users", id, "achievements")).then((snap) => {
+        const el = $("#profile-ach");
+        if (profileViewId !== id || !el) return;
+        el.textContent = `🏅 実績 ${snap.docs.filter((d) => ACH_BY_ID[d.id]).length} / ${ACHIEVEMENTS.length}`;
+      }).catch((e) => { console.warn(e); if (profileViewId === id) $("#profile-ach")?.remove(); });
+    }
+
     function openRoomInfo() {
       const room = currentRoom();
       if (!room) return;
-      if (room.type === "dm") {
-        const pid = partnerOf(room);
-        const u = state.users.get(pid);
-        openModal(`
-          ${modalHead("ユーザー情報")}
-          <div class="px-6 pb-6 text-center">
-            ${userHeader(u) ? headerBanner(userHeader(u), "h-24") : ""}
-            <div class="relative flex justify-center ${userHeader(u) ? "-mt-10" : ""}">${withPresence(avatar(pid, roomTitle(room), "w-20 h-20 text-3xl"), isOnline(u))}</div>
-            <div class="mt-3 font-bold text-lg text-slate-900">${nameSpan(pid, roomTitle(room))}${officialBadge(pid, "w-5 h-5 inline-block align-[-0.2em] ml-1")}</div>
-            <div class="text-sm text-slate-500">@${esc(pid)}</div>
-            <div class="text-xs mt-1 ${isOnline(u) ? "text-emerald-600" : "text-slate-400"}">${u?.deleted ? "退会済み" : isRestricted(u) ? RESTRICTED_LABEL : isOnline(u) ? "オンライン" : u ? `最終アクティブ ${esc(relTime(u.lastSeen))}` : ""}</div>
-            <button type="button" data-action="copy" data-copy="${esc(pid)}" data-label="ユーザーIDをコピーしました" class="btn-secondary w-full mt-6">${icon("copy", "w-5 h-5")}ユーザーIDをコピー</button>
-            ${canDeleteRoom(room) ? `<button type="button" data-action="delete-room" class="btn-danger-ghost w-full mt-3">${icon("trash", "w-5 h-5")}トークを削除</button>` : ""}
-          </div>`);
-        return;
-      }
+      if (room.type === "dm") { openUserProfile(partnerOf(room), room); return; }
       if (isOpen(room)) { openOpenChatInfo(room); return; }
       const member = isMember(room);
       const notifyOn = !mutedRooms().has(room.id);
@@ -16136,7 +16171,7 @@ draw();
             </div>
             <div class="-mx-2 max-h-64 overflow-y-auto scroll-thin">
               ${members.map(({ id, u }) => `
-                <div class="flex items-center gap-3 px-2 py-2">
+                <div data-action="view-user" data-id="${esc(id)}" class="flex items-center gap-3 px-2 py-2 rounded-xl cursor-pointer hover:bg-slate-50" title="プロフィールを見る">
                   ${withPresence(avatar(id, u?.name, "w-9 h-9 text-sm"), isOnline(u))}
                   <div class="min-w-0 flex-1">
                     <div class="text-sm font-medium text-slate-800 truncate">${nameSpan(id, u?.name || id)}${id === state.me.id ? ` <span class="text-slate-400 font-normal">(あなた)</span>` : ""}</div>
@@ -16188,7 +16223,8 @@ draw();
         const id = el.dataset.id;
         openRoom(id, state.rooms.find((r) => r.id === id) || null);
       },
-      "start-dm": (el) => startDM(el.dataset.id),
+      "start-dm": (el) => { if (profileViewId) closeModal(); startDM(el.dataset.id); },
+      "view-user": (el) => openUserProfile(el.dataset.id),
       "leave-group": () => leaveGroup(),
       "leave-open": () => leaveOpenChat(),
       "rename-open": () => openRenameNick(),
@@ -16338,6 +16374,7 @@ draw();
       "form-forgot": (fd) => startForgotReset(fd.get("id")),
       "form-change-password": (fd) => changePassword(fd.get("current"), fd.get("password"), fd.get("password2")),
       "form-profile": (fd) => updateName(fd.get("name")),
+      "form-bio": (fd) => updateBio(fd.get("bio")),
       "form-create-group": (fd) => createGroup(fd.get("name"), fd.getAll("members")),
       "form-join": (fd) => joinGroup(parseInvite(fd.get("code"))),
       "form-create-open": (fd) => createOpenChat(fd.get("name"), fd.get("description"), fd.get("nick")),
