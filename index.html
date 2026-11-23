@@ -8625,6 +8625,11 @@ draw();
       if (room.type === "dm") { const pid = partnerOf(room); return userName(pid, room.memberNames?.[pid]); }
       return room.name || "(名称未設定)";
     }
+    // アイコンを押すとプロフィールを開くようにする（行全体のボタンの中に置いても、アイコンを押したときだけプロフィールが開く）
+    function profileLink(id, html) {
+      if (!id || OPEN_ALIAS_RE.test(id) || (id !== state.me?.id && !state.users.has(id))) return html;
+      return `<span data-action="view-user" data-id="${esc(id)}" class="shrink-0 rounded-full cursor-pointer" title="プロフィールを見る">${html}</span>`;
+    }
     function roomAvatar(room, size) {
       if (room.type === "dm") {
         const pid = partnerOf(room);
@@ -8744,7 +8749,7 @@ draw();
         }
         return `
           <button type="button" data-action="open-room" data-id="${esc(r.id)}" class="list-row ${r.id === state.activeRoomId ? "is-active" : ""}">
-            ${roomAvatar(r, "w-12 h-12 text-base")}
+            ${r.type === "dm" ? profileLink(partnerOf(r), roomAvatar(r, "w-12 h-12 text-base")) : roomAvatar(r, "w-12 h-12 text-base")}
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5">
                 <span class="font-semibold truncate text-slate-800${r.type === "dm" ? nameCls(partnerOf(r)) : ""}">${esc(roomTitle(r))}</span>
@@ -10362,7 +10367,7 @@ draw();
       const row = (r) => `
         <div class="flex items-center gap-3 px-2 py-2 rounded-2xl ${r.id === state.me.id ? "bg-indigo-50 ring-1 ring-indigo-200" : ""}">
           <div class="w-8 shrink-0 text-center font-bold ${r.rank <= 3 ? "text-xl" : "text-sm text-slate-500"}">${r.rank <= 3 ? medal[r.rank - 1] : r.rank}</div>
-          ${avatar(r.id, userName(r.id), "w-9 h-9 text-sm")}
+          ${profileLink(r.id, avatar(r.id, userName(r.id), "w-9 h-9 text-sm"))}
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1 min-w-0"><span class="font-semibold text-sm truncate text-slate-800">${esc(userName(r.id))}</span>${officialBadge(r.id)}</div>
             <div class="text-[11px] text-slate-400 truncate">@${esc(r.id)}${r.bestAt ? ` ・ ${esc(relTime(r.bestAt))}` : ""}</div>
