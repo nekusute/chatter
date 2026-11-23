@@ -798,6 +798,7 @@ const firebaseConfig = {
           <header class="flex items-center gap-1 px-2 sm:px-4 h-16 border-b border-slate-100 bg-white shrink-0">
             <button type="button" data-action="back" class="icon-btn md:hidden" aria-label="戻る"><span data-icon="back"></span></button>
             <div id="game-header-main" class="flex items-center gap-3 min-w-0 flex-1 pl-1"></div>
+            <button type="button" id="game-keys-btn" data-action="open-game-keys" class="icon-btn" aria-label="キー設定" title="キー設定"><span data-icon="key"></span></button>
             <button type="button" data-action="restart-game" class="icon-btn" aria-label="最初から" title="最初から"><span data-icon="refresh"></span></button>
             <button type="button" data-action="open-ranking" class="icon-btn text-amber-500" aria-label="ランキング" title="ランキング"><span data-icon="trophy"></span></button>
             <button type="button" data-action="close-game" class="icon-btn hidden md:grid" aria-label="ゲームを閉じる" title="ゲームを閉じる"><span data-icon="x"></span></button>
@@ -10391,10 +10392,159 @@ draw();
       loadRanking(gameId);
     }
 
+    // ============================================================
+    // ゲームのキー設定（ゲームごと。このブラウザに保存）。
+    // 操作ごとに好きなキーを1つ割り当てられる。割り当てたキーを押すと、ゲームには既定のキー（keys の先頭）を押したことにして伝える。
+    // 割り当てた操作の既定のキーは効かなくなる（ほかの操作と取り合わないように）。Esc は変えられない
+    // keys：KeyboardEvent.code（先頭が、ゲームに伝えるキー）
+    // ============================================================
+    const GAME_KEYS = {
+      suika: [
+        { id: "left", label: "左へ動かす", keys: ["ArrowLeft", "KeyA"] },
+        { id: "right", label: "右へ動かす", keys: ["ArrowRight", "KeyD"] },
+        { id: "drop", label: "落とす・もう一度", keys: ["ArrowDown", "KeyS", "Space"] },
+      ],
+      2048: [
+        { id: "up", label: "上へ", keys: ["ArrowUp", "KeyW"] },
+        { id: "down", label: "下へ・もう一度", keys: ["ArrowDown", "KeyS"] },
+        { id: "left", label: "左へ", keys: ["ArrowLeft", "KeyA"] },
+        { id: "right", label: "右へ", keys: ["ArrowRight", "KeyD"] },
+      ],
+      balloon: [
+        { id: "left", label: "左へ動かす", keys: ["ArrowLeft", "KeyA"] },
+        { id: "right", label: "右へ動かす", keys: ["ArrowRight", "KeyD"] },
+        { id: "start", label: "スタート・再開", keys: ["Space", "Enter"] },
+      ],
+      breakout: [
+        { id: "left", label: "左へ動かす", keys: ["ArrowLeft", "KeyA"] },
+        { id: "right", label: "右へ動かす", keys: ["ArrowRight", "KeyD"] },
+        { id: "launch", label: "発射・スタート", keys: ["Space"] },
+        { id: "pause", label: "一時停止", keys: ["KeyP"] },
+      ],
+      snake: [
+        { id: "up", label: "上へ", keys: ["ArrowUp", "KeyW"] },
+        { id: "down", label: "下へ", keys: ["ArrowDown", "KeyS"] },
+        { id: "left", label: "左へ", keys: ["ArrowLeft", "KeyA"] },
+        { id: "right", label: "右へ", keys: ["ArrowRight", "KeyD"] },
+        { id: "start", label: "スタート", keys: ["Space"] },
+        { id: "pause", label: "一時停止", keys: ["KeyP"] },
+      ],
+      puyo: [
+        { id: "left", label: "左へ動かす", keys: ["ArrowLeft"] },
+        { id: "right", label: "右へ動かす", keys: ["ArrowRight"] },
+        { id: "soft", label: "少し落とす", keys: ["ArrowDown"] },
+        { id: "hard", label: "一気に落とす", keys: ["KeyS"] },
+        { id: "rotL", label: "左回転", keys: ["KeyA"] },
+        { id: "rotR", label: "右回転", keys: ["KeyD"] },
+        { id: "start", label: "スタート", keys: ["Space"] },
+        { id: "pause", label: "一時停止", keys: ["KeyP"] },
+      ],
+      blocks: [
+        { id: "left", label: "左へ動かす", keys: ["ArrowLeft"] },
+        { id: "right", label: "右へ動かす", keys: ["ArrowRight"] },
+        { id: "soft", label: "少し落とす", keys: ["ArrowDown"] },
+        { id: "hard", label: "一気に落とす", keys: ["KeyS"] },
+        { id: "rotL", label: "左回転", keys: ["KeyA"] },
+        { id: "rotR", label: "右回転", keys: ["KeyD"] },
+        { id: "hold", label: "ホールド", keys: ["KeyW", "ArrowUp"] },
+        { id: "start", label: "スタート", keys: ["Space"] },
+        { id: "pause", label: "一時停止", keys: ["KeyP"] },
+      ],
+    };
+    // code から、ゲームに伝える key（文字）を作る
+    const codeToKey = (code) => code === "Space" ? " " : /^Key[A-Z]$/.test(code) ? code.slice(3).toLowerCase()
+      : /^Digit\d$/.test(code) ? code.slice(5) : code;
+    const keyLabel = (code) => ({ ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓", Space: "Space" })[code]
+      || (/^Key[A-Z]$/.test(code) ? code.slice(3) : /^Digit\d$/.test(code) ? code.slice(5) : /^Numpad/.test(code) ? "テンキー" + code.slice(6) : code);
+    const gameKeysKey = (id) => `chatter:gamekeys:${id}`;
+    function loadGameKeys(id) {
+      try { const v = JSON.parse(store.get(gameKeysKey(id)) || "{}"); return v && typeof v === "object" ? v : {}; } catch { return {}; }
+    }
+    // ゲームの中で使う、押したキー（code）→ ゲームに伝えるキー（null は効かなくする）
+    function keyTable(id) {
+      const custom = loadGameKeys(id);
+      const table = {};
+      for (const a of GAME_KEYS[id] || []) if (custom[a.id]) for (const k of a.keys) table[k] = null;
+      for (const a of GAME_KEYS[id] || []) {
+        const c = custom[a.id];
+        if (c) table[c] = { code: a.keys[0], key: codeToKey(a.keys[0]) };
+      }
+      return table;
+    }
+    // ゲームの iframe の最初に入れる：本物のキー入力を、表に合わせて置き換える（置き換えたものは、ゲームのほうへそのまま流す）
+    const KEYMAP_SCRIPT = `(function(t){addEventListener("message",function(e){var d=e.data;if(e.source===parent&&d&&d.source==="chatter"&&d.type==="keymap")t=d.map||{};});` +
+      `["keydown","keyup"].forEach(function(type){addEventListener(type,function(ev){if(!ev.isTrusted||!(ev.code in t))return;var m=t[ev.code];ev.stopImmediatePropagation();ev.preventDefault();if(!m)return;` +
+      `(ev.target||document).dispatchEvent(new KeyboardEvent(type,{key:m.key,code:m.code,repeat:ev.repeat,bubbles:true,cancelable:true}));},true);});})`;
+
+    let gameKeysView = null; // { gameId, waiting: 操作ID | null }
+    function openGameKeys() {
+      const id = state.activeGameId;
+      if (!GAME_KEYS[id]) return;
+      gameKeysView = { gameId: id, waiting: null };
+      openModal(`
+        ${modalHead(`キー設定：${esc(gameById(id).name)}`, "操作ごとに、好きなキーを1つ割り当てられます。割り当てた操作では、もとのキーは使えなくなります（このブラウザに保存されます）。")}
+        <div id="game-keys-body" class="px-6 pb-6"></div>`, () => { gameKeysView = null; });
+      renderGameKeys();
+    }
+    function renderGameKeys() {
+      const body = $("#game-keys-body");
+      if (!gameKeysView || !body) return;
+      const custom = loadGameKeys(gameKeysView.gameId);
+      const kbd = (c) => `<kbd class="inline-block min-w-[1.75rem] text-center px-1.5 py-0.5 rounded-md bg-slate-100 ring-1 ring-slate-200 text-xs font-semibold text-slate-700">${esc(keyLabel(c))}</kbd>`;
+      body.innerHTML = `
+        <div class="space-y-1.5">
+          ${GAME_KEYS[gameKeysView.gameId].map((a) => {
+            const waiting = gameKeysView.waiting === a.id;
+            return `
+              <div class="flex items-center gap-2 rounded-xl px-3 py-2 ${waiting ? "bg-indigo-50 ring-1 ring-indigo-300" : "bg-slate-50"}">
+                <span class="text-sm font-medium text-slate-700 flex-1 min-w-0 truncate">${esc(a.label)}</span>
+                <span class="flex flex-wrap gap-1 justify-end">${waiting ? `<span class="text-xs font-semibold text-indigo-600">キーを押してください（Esc でやめる）</span>` : (custom[a.id] ? kbd(custom[a.id]) : a.keys.map(kbd).join(""))}</span>
+                ${custom[a.id] && !waiting ? `<span class="text-[10px] text-indigo-600 font-semibold">変更済み</span>` : ""}
+                <button type="button" data-action="game-key-set" data-id="${esc(a.id)}" class="btn-chip py-1 text-xs bg-white ring-1 ring-slate-200 text-slate-600 hover:bg-slate-100">${waiting ? "やめる" : "変更"}</button>
+              </div>`;
+          }).join("")}
+        </div>
+        <button type="button" data-action="game-keys-reset" class="mt-4 w-full btn-chip justify-center py-2 text-sm bg-slate-100 text-slate-600 hover:bg-slate-200" ${Object.keys(custom).length ? "" : "disabled"}>すべて既定に戻す</button>`;
+    }
+    function saveGameKeys(id, custom) {
+      store.set(gameKeysKey(id), JSON.stringify(custom));
+      postToGame(id, { type: "keymap", map: keyTable(id) }); // 遊んでいる途中のゲームにもすぐ反映する
+    }
+    function toggleGameKeyWait(actionId) {
+      if (!gameKeysView) return;
+      gameKeysView.waiting = gameKeysView.waiting === actionId ? null : actionId;
+      renderGameKeys();
+    }
+    function resetGameKeys() {
+      if (!gameKeysView) return;
+      gameKeysView.waiting = null;
+      saveGameKeys(gameKeysView.gameId, {});
+      renderGameKeys();
+      toast("キー設定を既定に戻しました");
+    }
+    // 待っている間に押されたキーを割り当てる（ほかの操作に同じキーを割り当てていたら、そちらは外す）
+    window.addEventListener("keydown", (e) => {
+      if (!gameKeysView?.waiting) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.code === "Escape") { gameKeysView.waiting = null; renderGameKeys(); return; }
+      if (!e.code || /^(Shift|Control|Alt|Meta)/.test(e.code)) return;
+      const id = gameKeysView.gameId;
+      const action = GAME_KEYS[id].find((a) => a.id === gameKeysView.waiting);
+      const custom = loadGameKeys(id);
+      for (const k of Object.keys(custom)) if (custom[k] === e.code) delete custom[k];
+      if (action.keys.length === 1 && action.keys[0] === e.code) delete custom[action.id]; // 既定と同じなら、変更しなかったことにする
+      else custom[action.id] = e.code;
+      gameKeysView.waiting = null;
+      saveGameKeys(id, custom);
+      renderGameKeys();
+    }, true);
+
     function renderGameHeader() {
       const g = gameById(state.activeGameId);
       if (!g) return;
       const s = state.gameStats.get(g.id);
+      $("#game-keys-btn").hidden = !GAME_KEYS[g.id];
       $("#game-header-main").innerHTML = `
         ${gameThumb(g, "w-10 h-10 text-xl")}
         <div class="min-w-0">
@@ -10426,7 +10576,7 @@ draw();
       frame.className = "block w-full h-full border-0";
       frame.title = g.name;
       frame.setAttribute("sandbox", "allow-scripts");
-      frame.srcdoc = `<!DOCTYPE html><html lang="ja"${isDark() ? ` class="dark"` : ""}><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${esc(g.name)}</title></head><body>${src.innerHTML}</body></html>`;
+      frame.srcdoc = `<!DOCTYPE html><html lang="ja"${isDark() ? ` class="dark"` : ""}><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${esc(g.name)}</title><script>${KEYMAP_SCRIPT}(${JSON.stringify(keyTable(g.id))});<\/script></head><body>${src.innerHTML}</body></html>`;
       frame.addEventListener("load", () => {
         if (!state.gameStatsLoaded) return;
         postToGame(g.id, { type: "best", best: state.gameStats.get(g.id)?.best ?? 0 });
@@ -16007,6 +16157,9 @@ draw();
       "ach-game": (el) => { if (achView && (gameById(el.dataset.id) || el.dataset.id === ACH_SECRET)) { achView.gameId = el.dataset.id; renderAchievements(); } },
       "open-ranking": (el) => openRanking(el.dataset.id || undefined),
       "restart-game": () => restartGame(),
+      "open-game-keys": () => openGameKeys(),
+      "game-key-set": (el) => toggleGameKeyWait(el.dataset.id),
+      "game-keys-reset": () => resetGameKeys(),
       "ranking-game": (el) => setRankingGame(el.dataset.id),
       "pick-header": () => openHeaderPicker(),
       "set-header": (el) => { if (el.getAttribute("aria-disabled") !== "true") setHeader(el.dataset.header); },
