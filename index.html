@@ -5046,13 +5046,13 @@ const PUYO_STYLES = {
     eye: '#1e3f5a',
     accessory: 'star'
   },
-  3: { // Muscat Mint Green
-    name: 'green',
-    main: '#6ee0a8',
-    light: '#c2f7dc',
-    dark: '#3ab57a',
+  3: { // Grape Purple（ピンクと見分けやすいよう、緑から変更）
+    name: 'purple',
+    main: '#9b7bff',
+    light: '#d9ccff',
+    dark: '#6a48d9',
     cheek: '#ff85b3',
-    eye: '#1d4d36',
+    eye: '#2e1d5c',
     accessory: 'leaf'
   },
   4: { // Pudding Yellow
@@ -5102,7 +5102,7 @@ let maxChain = 0;     // このページを開いてからの最大れんさ
 highScoreEl.textContent = '-';
 maxChainEl.textContent = maxChain;
 function onBest(v) { highScore = Math.max(highScore || 0, v); updateStats(); }
-function onAppPause() { if (gameState === 'PLAYING') togglePause(); }
+function onAppPause() { releaseAllMoves(); if (gameState === 'PLAYING') togglePause(); }
 
 let gameState = 'START'; // START, PLAYING, PAUSED, RESOLVING, GAMEOVER
 let lastTime = 0;
@@ -5195,6 +5195,49 @@ function moveHorizontal(delta) {
     }
   }
 }
+
+// ---- 左右移動（押しっぱなし） ----
+// キーボードの自動連打（端末ごとに速さが違う）は使わず、押した瞬間に1マス、
+// MOVE_DELAY だけ待ってから MOVE_INTERVAL ごとに1マスずつ、一定の速さで動かす
+const MOVE_DELAY = 150;   // 連続移動が始まるまで（ミリ秒）
+const MOVE_INTERVAL = 60; // 連続移動の間隔（ミリ秒）
+const heldDirs = [];      // 押している向き（あとから押したほうを優先）
+let holdDir = 0;
+let holdNext = 0;         // 次に動かす時刻
+function pressMove(dir) {
+  if (heldDirs.includes(dir)) return;
+  heldDirs.push(dir);
+  holdDir = dir;
+  moveHorizontal(dir);
+  holdNext = performance.now() + MOVE_DELAY;
+}
+function releaseMove(dir) {
+  const i = heldDirs.indexOf(dir);
+  if (i < 0) return;
+  heldDirs.splice(i, 1);
+  const next = heldDirs[heldDirs.length - 1] || 0;
+  if (next !== holdDir) {
+    holdDir = next;
+    holdNext = performance.now() + MOVE_DELAY; // 反対の向きに切り替えたときも、少し待ってから連続移動
+  }
+}
+function releaseAllMoves() {
+  heldDirs.length = 0;
+  holdDir = 0;
+}
+// gameLoop から毎フレーム呼ぶ
+function stepHeldMove(now) {
+  if (!holdDir) return;
+  if (gameState !== 'PLAYING' || !activePair) { holdNext = now + MOVE_INTERVAL; return; } // 連鎖中などは待つ
+  let n = 0;
+  while (now >= holdNext && n < 10) {
+    moveHorizontal(holdDir);
+    holdNext += MOVE_INTERVAL;
+    n++;
+  }
+  if (now >= holdNext) holdNext = now + MOVE_INTERVAL; // 長く止まっていたときに、まとめて動きすぎないように
+}
+window.addEventListener('blur', releaseAllMoves);
 
 function rotatePair(rotDir) {
   // rotDir: 1 = clockwise (D), -1 = counter-clockwise (A)
@@ -5759,6 +5802,7 @@ function gameLoop(time = 0) {
   lastTime = time;
   wobblePhase += dt * 0.006;
 
+  stepHeldMove(performance.now());
   if (gameState === 'PLAYING' && activePair) {
     if (isGrounded()) {
       lockTimer += dt;
@@ -5805,10 +5849,10 @@ document.addEventListener('keydown', (e) => {
 
   switch (e.code) {
     case 'ArrowLeft':
-      moveHorizontal(-1);
+      if (!e.repeat) pressMove(-1);
       break;
     case 'ArrowRight':
-      moveHorizontal(1);
+      if (!e.repeat) pressMove(1);
       break;
     case 'ArrowDown':
       softDrop();
@@ -5834,8 +5878,21 @@ startBtn.addEventListener('click', () => {
   }
 });
 
-document.getElementById('btnLeft').addEventListener('click', () => moveHorizontal(-1));
-document.getElementById('btnRight').addEventListener('click', () => moveHorizontal(1));
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'ArrowLeft') releaseMove(-1);
+  else if (e.code === 'ArrowRight') releaseMove(1);
+});
+// タッチの ◀ ▶ も、押しているあいだ一定の速さで動く
+[['btnLeft', -1], ['btnRight', 1]].forEach(([id, dir]) => {
+  const btn = document.getElementById(id);
+  btn.addEventListener('pointerdown', (e) => {
+    if (gameState !== 'PLAYING') return;
+    e.preventDefault();
+    try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+    pressMove(dir);
+  });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => btn.addEventListener(ev, () => releaseMove(dir)));
+});
 document.getElementById('btnDown').addEventListener('click', () => softDrop());
 document.getElementById('btnRotL').addEventListener('click', () => rotatePair(-1));
 document.getElementById('btnRotR').addEventListener('click', () => rotatePair(1));
@@ -6221,7 +6278,7 @@ let dropCounter = 0;
 
 // 接地猶予（ロックダウン）設定
 const LOCK_DELAY = 500; // 接地後に動ける猶予時間（ミリ秒）
-const MAX_LOCK_MOVES = 15; // 無限に粘るのを防ぐための操作リセット上限回数
+const MAX_LOCK_MOVES = 40; // 接地後に回転・移動で固定までの時間をのばせる回数（無限に粘るのを防ぐための上限）
 let lockTimer = 0;
 let lockMoves = 0;
 let isGrounded = false;
@@ -6250,7 +6307,8 @@ function createPiece(type) {
   const matrix = SHAPES[type].map(row => [...row]);
   const x = Math.floor((COLS - matrix[0].length) / 2);
   const y = type === 'I' ? -1 : 0;
-  return { type, matrix, x, y };
+  // rot：向き（0 出てきた向き / 1 右回転 / 2 逆さ / 3 左回転）。lastRotate：最後に成功した操作が回転か（T-Spin の判定用）
+  return { type, matrix, x, y, rot: 0, lastRotate: false, lastKick: 0 };
 }
 
 function resetLockState() {
@@ -6361,7 +6419,7 @@ window.addEventListener('blur', releaseAllMoves);
 // ---- 列を消したときのエフェクト ----
 const fx = { rows: [], particles: [], texts: [], shakeUntil: 0, shakePower: 0 };
 const LINE_LABELS = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', '4 LINES!!'];
-function spawnLineEffects(rows, points, perfect) {
+function spawnLineEffects(rows, points, perfect, opts = {}) {
   const now = performance.now();
   for (const { r, cells } of rows) {
     fx.rows.push({ y: r, t0: now });
@@ -6380,10 +6438,12 @@ function spawnLineEffects(rows, points, perfect) {
   }
   const n = rows.length;
   // 文字は盤面の内側に収める（一番下の列を消したときに、はみ出さないように）
-  const midY = Math.min(boardCanvas.height - 60, Math.max(70, rows.reduce((sum, x) => sum + x.r, 0) / n * BLOCK_SIZE + BLOCK_SIZE / 2));
-  fx.texts.push({ text: LINE_LABELS[n] || `${n} LINES`, sub: `+${points}`, y: midY, t0: now, big: n >= 4 });
+  const rawY = n ? rows.reduce((sum, x) => sum + x.r, 0) / n * BLOCK_SIZE + BLOCK_SIZE / 2 : opts.y ?? boardCanvas.height / 2;
+  const midY = Math.min(boardCanvas.height - 60, Math.max(70, rawY));
+  const sub = `+${points}` + (opts.ren >= 2 ? `   ${opts.ren} REN` : '');
+  fx.texts.push({ text: opts.label || LINE_LABELS[n] || `${n} LINES`, sub, y: midY, t0: now, big: opts.big ?? n >= 4, spin: !!opts.spin });
   if (perfect) fx.texts.push({ text: 'PERFECT CLEAR!', sub: '', y: midY - 60, t0: now + 120, big: true });
-  if (n >= 2) { fx.shakeUntil = now + 120 + n * 70; fx.shakePower = n * 2.2; }
+  if (n >= 2 || (opts.spin && n >= 1)) { fx.shakeUntil = now + 120 + n * 70; fx.shakePower = (n + (opts.spin ? 1 : 0)) * 2.2; }
 }
 function drawLineEffects() {
   const now = performance.now();
@@ -6437,8 +6497,13 @@ function drawLineEffects() {
     ctx.font = `900 ${tx.big ? 34 : 26}px 'Segoe UI', Meiryo, sans-serif`;
     const g = ctx.createLinearGradient(-110, 0, 110, 0);
     if (tx.big) {
-      // 4列消し・パーフェクトは虹色が流れる
+      // 4列消し・T-Spin ダブル以上・パーフェクトは虹色が流れる
       for (let i = 0; i <= 6; i++) g.addColorStop(i / 6, `hsl(${(i * 60 + age * 0.4) % 360}, 95%, 65%)`);
+    } else if (tx.spin) {
+      // T-Spin（T の色の紫）
+      g.addColorStop(0, '#c084fc');
+      g.addColorStop(0.5, '#f5d0fe');
+      g.addColorStop(1, '#c084fc');
     } else {
       g.addColorStop(0, '#7dd3fc');
       g.addColorStop(0.5, '#ffffff');
@@ -6463,7 +6528,8 @@ function drawLineEffects() {
 }
 const hasLineEffects = () => fx.rows.length || fx.particles.length || fx.texts.length || performance.now() < fx.shakeUntil;
 
-function clearLines() {
+let ren = 0; // 続けて列を消した回数（消さずに固定すると 0 に戻る）
+function clearLines(spin = null) {
   let cleared = 0;
   // エフェクト用：消える列の、もとの位置とブロックの色
   const fullRows = [];
@@ -6476,20 +6542,33 @@ function clearLines() {
       r++;
     }
   }
+  ren = cleared > 0 ? ren + 1 : 0;
+  if (cleared === 0 && !spin) return;
+  // 得点：ふつう 100/300/500/800、T-Spin 400/800/1200/1600（0〜3列）、T-Spin ミニ 100/200/400（0〜2列）。×レベル
+  const lineScores = [0, 100, 300, 500, 800];
+  let points = spin
+    ? (spin.mini ? [100, 200, 400, 400][cleared] : [400, 800, 1200, 1600][cleared]) * level
+    : lineScores[cleared] * level;
+  if (ren >= 2) points += 50 * (ren - 1) * level; // REN ボーナス
+  score += points;
+  const perfect = cleared > 0 && board.every(row => row.every(cell => cell === null));
+  const spinLabel = spin ? `T-SPIN${spin.mini ? ' MINI' : ''}${cleared ? ' ' + ['', 'SINGLE', 'DOUBLE', 'TRIPLE'][cleared] : ''}` : null;
+  spawnLineEffects(fullRows, points, perfect, { label: spinLabel, spin: !!spin, big: cleared >= 4 || (!!spin && !spin.mini && cleared >= 2), y: spin ? spin.y : null, ren });
   if (cleared > 0) {
-    const lineScores = [0, 100, 300, 500, 800];
-    const points = lineScores[cleared] * level;
-    score += points;
-    spawnLineEffects(fullRows, points, board.every(row => row.every(cell => cell === null)));
     lines += cleared;
     level = Math.floor(lines / 10) + 1;
     if (cleared >= 4) achieve('blocks-4lines');
     if (lines >= 40) achieve('blocks-lines40');
+    if (lines >= 100) achieve('blocks-lines100');
     if (level >= 5) achieve('blocks-level5');
     if (level >= 10) achieve('blocks-level10');
-    if (board.every(row => row.every(cell => cell === null))) achieve('blocks-perfect');
-    updateStats();
+    if (perfect) achieve('blocks-perfect');
+    if (spin) achieve('blocks-tspin');
+    if (spin && !spin.mini && cleared === 2) achieve('blocks-tsd');
+    if (spin && !spin.mini && cleared === 3) achieve('blocks-tst');
+    if (ren >= 4) achieve('blocks-ren4');
   }
+  updateStats();
 }
 
 function updateStats() {
@@ -6502,6 +6581,7 @@ function updateStats() {
   }
   if (gameState === 'PLAYING') sendProgress(score);
   if (score >= 10000) achieve('blocks-10000');
+  if (score >= 30000) achieve('blocks-30000');
 }
 
 function rotateMatrix(matrix, dir) {
@@ -6519,31 +6599,67 @@ function rotateMatrix(matrix, dir) {
   return result;
 }
 
+// SRS の押し出し（[右, 上] の順に試す。上が + なので、盤面の y では引き算になる）
+const KICKS_JLSTZ = {
+  '0>1': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]], '1>0': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+  '1>2': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]], '2>1': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '2>3': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]], '3>2': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '3>0': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]], '0>3': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+};
+const KICKS_I = {
+  '0>1': [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]], '1>0': [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]],
+  '1>2': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]], '2>1': [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
+  '2>3': [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]], '3>2': [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
+  '3>0': [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]], '0>3': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
+};
+
 function tryRotate(dir) {
-  if (gameState !== 'PLAYING' || !current) return;
+  if (gameState !== 'PLAYING' || !current || current.type === 'O') return;
   const rotated = rotateMatrix(current.matrix, dir);
-  const kicks = [0, -1, 1, -2, 2];
-  for (const offset of kicks) {
-    if (!collides(rotated, current.x + offset, current.y)) {
+  const from = current.rot;
+  const to = (from + (dir > 0 ? 1 : 3)) % 4;
+  const tests = (current.type === 'I' ? KICKS_I : KICKS_JLSTZ)[`${from}>${to}`];
+  for (let i = 0; i < tests.length; i++) {
+    const [kx, ky] = tests[i];
+    if (!collides(rotated, current.x + kx, current.y - ky)) {
       current.matrix = rotated;
-      current.x += offset;
+      current.x += kx;
+      current.y -= ky;
+      current.rot = to;
+      current.lastRotate = true;
+      current.lastKick = i;
       onPieceManipulated();
       return;
     }
   }
 }
 
+// T-Spin：T を最後に回転させて固定したとき、T の中心の四隅のうち3か所以上が埋まっている（壁・床も埋まっているとみなす）。
+// とがった側の2つの角がどちらも埋まっていればふつうの T-Spin、そうでなければ T-Spin ミニ（最後の押し出しで入ったときは、ふつうの T-Spin）
+function detectTSpin() {
+  if (!current || current.type !== 'T' || !current.lastRotate) return null;
+  const cx = current.x + 1, cy = current.y + 1;
+  const filled = (x, y) => x < 0 || x >= COLS || y >= ROWS || (y >= 0 && board[y][x] !== null);
+  const corner = { tl: filled(cx - 1, cy - 1), tr: filled(cx + 1, cy - 1), bl: filled(cx - 1, cy + 1), br: filled(cx + 1, cy + 1) };
+  if (Object.values(corner).filter(Boolean).length < 3) return null;
+  const [f1, f2] = [['tl', 'tr'], ['tr', 'br'], ['bl', 'br'], ['tl', 'bl']][current.rot];
+  const mini = !(corner[f1] && corner[f2]) && current.lastKick !== 4;
+  return { mini, y: cy * BLOCK_SIZE + BLOCK_SIZE / 2 };
+}
+
 function moveHorizontal(dir) {
   if (gameState !== 'PLAYING' || !current) return;
   if (!collides(current.matrix, current.x + dir, current.y)) {
     current.x += dir;
+    current.lastRotate = false;
     onPieceManipulated();
   }
 }
 
 function lockAndAdvance() {
+  const spin = detectTSpin();
   mergePiece();
-  clearLines();
+  clearLines(spin);
   spawnPiece();
 }
 
@@ -6551,6 +6667,7 @@ function softDrop() {
   if (gameState !== 'PLAYING' || !current) return;
   if (!collides(current.matrix, current.x, current.y + 1)) {
     current.y++;
+    current.lastRotate = false;
     score += 1;
     updateStats();
     dropCounter = 0;
@@ -6568,6 +6685,7 @@ function hardDrop() {
     current.y++;
     dropped++;
   }
+  if (dropped > 0) current.lastRotate = false;
   score += dropped * 2;
   updateStats();
   dropCounter = 0;
@@ -6725,6 +6843,7 @@ function update(time = 0) {
       dropCounter += deltaTime;
       if (dropCounter >= getDropInterval()) {
         current.y++;
+        current.lastRotate = false;
         dropCounter = 0;
         if (checkGrounded()) {
           isGrounded = true;
@@ -8860,6 +8979,12 @@ draw();
       { id: "blocks-level10", game: "blocks", name: "レベル10", desc: "レベル10に到達した" },
       { id: "blocks-perfect", game: "blocks", name: "パーフェクト", desc: "列を消して盤面を空っぽにした" },
       { id: "blocks-10000", game: "blocks", name: "積み上げ名人", desc: "1回で10,000点以上取った" },
+      { id: "blocks-tspin", game: "blocks", name: "T-Spin", desc: "T-Spin で列を消した" },
+      { id: "blocks-tsd", game: "blocks", name: "T-Spin ダブル", desc: "T-Spin で2列を同時に消した" },
+      { id: "blocks-tst", game: "blocks", name: "T-Spin トリプル", desc: "T-Spin で3列を同時に消した" },
+      { id: "blocks-ren4", game: "blocks", name: "4 REN", desc: "4回続けて列を消した" },
+      { id: "blocks-lines100", game: "blocks", name: "100ライン", desc: "1回のゲームで100列消した" },
+      { id: "blocks-30000", game: "blocks", name: "積み上げの達人", desc: "1回で30,000点以上取った" },
     ];
     const ACH_BY_ID = Object.fromEntries(ACHIEVEMENTS.map((a) => [a.id, a]));
     function subscribeAchievements() {
