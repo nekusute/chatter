@@ -2428,10 +2428,15 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     if (score >= 12000) achieve('balloon-12000');
     // 速くなりかたは、泡が25点だったころと同じにする（泡の点を増やしても難しくなりすぎないように）
     const pace = score - run.bubbles * (BUBBLE_POINTS - 25);
-    // 5,000点ごとに一段速くなる（ふだんの速くなりかたとは別に上乗せ。上限あり）
-    const step = Math.floor(score / 5000);
-    if (step > speedStep) { speedStep = step; speedUpTimer = 90; }
-    speed = Math.min(4.2, 1.6 + pace * 0.0006) + Math.min(speedStep * 0.35, 2.8);
+    // ふだんの速くなりかたとは別に上乗せする（上限あり）：5,000点で一段（+0.35）、
+    // 7,500点を超えたら、そこから200点ごとに少しずつ（+0.05）。「SPEED UP!」は5,000点と、7,500点から1,000点ごとに出す
+    const step = score < 5000 ? 0 : score < 7500 ? 1 : 2 + Math.floor((score - 7500) / 200);
+    if (step > speedStep) {
+      if (step === 1 || (step - 2) % 5 === 0) speedUpTimer = 90;
+      speedStep = step;
+    }
+    const bonus = speedStep === 0 ? 0 : 0.35 + Math.max(0, speedStep - 1) * 0.05;
+    speed = Math.min(4.2, 1.6 + pace * 0.0006) + Math.min(bonus, 2.8);
     if (speedUpTimer > 0) speedUpTimer--;
 
     if (player.shieldTimer > 0) player.shieldTimer--;
