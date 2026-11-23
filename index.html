@@ -2444,7 +2444,9 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 
     player.x += (player.targetX - player.x) * 0.28;
 
-    const spawnInterval = Math.max(18, Math.floor(42 - speed * 5));
+    // 10,000点ごとに、トゲやアイテムの出る間隔を15%ずつ縮めて密度を上げる（最短8フレーム）
+    const densityStep = Math.floor(score / 10000);
+    const spawnInterval = Math.max(8, Math.floor(Math.max(18, Math.floor(42 - speed * 5)) * Math.pow(0.85, densityStep)));
     if (frame % spawnInterval === 0) spawnEntity();
 
     for (let i = entities.length - 1; i >= 0; i--) {
