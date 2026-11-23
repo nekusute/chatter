@@ -2217,6 +2217,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   let hiScore = null; // アプリから届く自己ベスト（届くまでは null）
   let speed = 1.6;
   let frame = 0;
+  let speedStep = 0;    // 5,000点ごとの段階
+  let speedUpTimer = 0; // 「SPEED UP!」を出しておく残りフレーム
 
   // ---- アプリとのやりとり ----
   function sendToApp(msg) {
@@ -2284,6 +2286,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     score = 0;
     speed = 1.6;
     frame = 0;
+    speedStep = 0;
+    speedUpTimer = 0;
     player.x = WIDTH / 2 - 8;
     player.targetX = player.x;
     player.shieldTimer = 0;
@@ -2424,7 +2428,11 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     if (score >= 12000) achieve('balloon-12000');
     // 速くなりかたは、泡が25点だったころと同じにする（泡の点を増やしても難しくなりすぎないように）
     const pace = score - run.bubbles * (BUBBLE_POINTS - 25);
-    speed = Math.min(4.2, 1.6 + pace * 0.0006);
+    // 5,000点ごとに一段速くなる（ふだんの速くなりかたとは別に上乗せ。上限あり）
+    const step = Math.floor(score / 5000);
+    if (step > speedStep) { speedStep = step; speedUpTimer = 90; }
+    speed = Math.min(4.2, 1.6 + pace * 0.0006) + Math.min(speedStep * 0.35, 2.8);
+    if (speedUpTimer > 0) speedUpTimer--;
 
     if (player.shieldTimer > 0) player.shieldTimer--;
     if (player.magnetTimer > 0) player.magnetTimer--;
@@ -2565,6 +2573,14 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
             ctx.fillRect(Math.round(cx + Math.cos(ang) * r), Math.round(cy + Math.sin(ang) * r), 1, 1);
           }
         }
+      }
+
+      if (speedUpTimer > 0 && Math.floor(speedUpTimer / 8) % 2 === 0) {
+        ctx.fillStyle = COLOR_DARK;
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('SPEED UP!', WIDTH / 2, HEIGHT / 3);
+        ctx.textAlign = 'left';
       }
 
       if (player.magnetTimer > 0 && Math.floor(frame / 6) % 2 === 0) {
@@ -7117,7 +7133,7 @@ startBtn.addEventListener('click', () => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
   const code = e.code;
-  const key = e.key.toLowerCase();
+  // 文字のキーも、入力モード（日本語入力など）に左右されないよう code で見る
   if (code === 'Space' && gameState === 'GAMEOVER' && (e.repeat || justEnded())) { e.preventDefault(); return; }
 
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(code)) {
@@ -7133,7 +7149,7 @@ document.addEventListener('keydown', (e) => {
   }
 
   // Pキーで一時停止
-  if (key === 'p') {
+  if (code === 'KeyP') {
     if (gameState === 'PLAYING' || gameState === 'PAUSED') {
       togglePause();
     }
@@ -7149,19 +7165,19 @@ document.addEventListener('keydown', (e) => {
     if (!e.repeat) pressMove(1);
   }
   // A で左回転
-  else if (key === 'a') {
+  else if (code === 'KeyA') {
     tryRotate(-1);
   }
   // D で右回転
-  else if (key === 'd') {
+  else if (code === 'KeyD') {
     tryRotate(1);
   }
   // W と ↑ でホールド
-  else if (key === 'w' || code === 'ArrowUp') {
+  else if (code === 'KeyW' || code === 'ArrowUp') {
     holdPiece();
   }
   // S でハードドロップ
-  else if (key === 's') {
+  else if (code === 'KeyS') {
     hardDrop();
   }
   // ↓ でソフトドロップ
@@ -7187,15 +7203,18 @@ document.querySelectorAll('.t-btn[data-action="left"], .t-btn[data-action="right
   ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => btn.addEventListener(ev, () => releaseMove(dir)));
 });
 
+// ほかのボタンも押した瞬間（pointerdown）に動かす。click は、別の指で ← → を押しているあいだは届かないことがあり、
+// 移動しながら回転できなくなるため
 document.querySelectorAll('.t-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const action = btn.dataset.action;
+  const action = btn.dataset.action;
+  if (action === 'left' || action === 'right') return;
+  btn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
     if (action === 'pause') {
       togglePause();
       return;
     }
     if (gameState !== 'PLAYING') return;
-    // ← → は押したとき（pointerdown）に動かすので、ここでは何もしない
     if (action === 'down') softDrop();
     if (action === 'rotL') tryRotate(-1);
     if (action === 'rotR') tryRotate(1);
