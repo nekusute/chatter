@@ -280,12 +280,15 @@
     .nc.nc-ruby { color: #be123c; } html.dark .nc.nc-ruby { color: #fb7185; }
     .nc.nc-emerald { color: #047857; } html.dark .nc.nc-emerald { color: #34d399; }
     /* グラデーション・動くもの：文字の形に背景を切り抜く */
-    .nc.nc-sunset, .nc.nc-ocean, .nc.nc-candy, .nc.nc-gold, .nc.nc-rainbow, .nc.nc-galaxy { background-image: var(--nc-g); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; }
+    .nc.nc-sunset, .nc.nc-ocean, .nc.nc-candy, .nc.nc-gold, .nc.nc-goldflow, .nc.nc-rainbow, .nc.nc-galaxy { background-image: var(--nc-g); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; }
     .nc.nc-sunset { --nc-g: linear-gradient(90deg, #ea580c, #e11d48, #9333ea); } html.dark .nc.nc-sunset { --nc-g: linear-gradient(90deg, #fdba74, #fb7185, #d8b4fe); }
     .nc.nc-ocean { --nc-g: linear-gradient(90deg, #0369a1, #0e7490, #4f46e5); } html.dark .nc.nc-ocean { --nc-g: linear-gradient(90deg, #7dd3fc, #67e8f9, #a5b4fc); }
     .nc.nc-candy { --nc-g: linear-gradient(90deg, #db2777, #9333ea, #0891b2); } html.dark .nc.nc-candy { --nc-g: linear-gradient(90deg, #f9a8d4, #d8b4fe, #67e8f9); }
     .nc.nc-gold { --nc-g: linear-gradient(90deg, #92400e, #d97706 35%, #a16207 60%, #b45309); } html.dark .nc.nc-gold { --nc-g: linear-gradient(90deg, #fde68a, #fbbf24 35%, #fef3c7 60%, #f59e0b); }
-    .nc.nc-rainbow, .nc.nc-galaxy { background-size: 200% auto; animation: ncFlow 3s linear infinite; }
+    .nc.nc-goldflow, .nc.nc-rainbow, .nc.nc-galaxy { background-size: 200% auto; animation: ncFlow 3s linear infinite; }
+    /* 流れるゴールド：金色の上を光が流れる */
+    .nc.nc-goldflow { --nc-g: linear-gradient(90deg, #92400e, #b45309 20%, #f59e0b 38%, #fde68a 50%, #f59e0b 62%, #b45309 80%, #92400e); filter: drop-shadow(0 0 2px rgb(245 158 11 / .35)); }
+    html.dark .nc.nc-goldflow { --nc-g: linear-gradient(90deg, #d97706, #f59e0b 20%, #fcd34d 38%, #fffbeb 50%, #fcd34d 62%, #f59e0b 80%, #d97706); filter: drop-shadow(0 0 3px rgb(251 191 36 / .5)); }
     .nc.nc-rainbow { --nc-g: linear-gradient(90deg, #dc2626, #ea580c, #ca8a04, #16a34a, #0891b2, #2563eb, #9333ea, #dc2626); }
     html.dark .nc.nc-rainbow { --nc-g: linear-gradient(90deg, #f87171, #fb923c, #facc15, #4ade80, #22d3ee, #60a5fa, #c084fc, #f87171); }
     .nc.nc-galaxy { --nc-g: linear-gradient(90deg, #4338ca, #7e22ce, #db2777, #4338ca); filter: drop-shadow(0 0 3px rgb(168 85 247 / .35)); }
@@ -8663,7 +8666,8 @@ draw();
       return `<div class="${size} shrink-0 rounded-full bg-gradient-to-br ${gradientOf(id)} text-white font-semibold grid place-items-center select-none shadow-sm">${esc(ch)}</div>`;
     }
     // アイコン（設定していれば枠を付ける）
-    function avatar(id, name, size) { return withDeco(withCrown(withFrame(avatarBase(id, name, size), frameOf(id)), crownOf(id)), decoOf(id)); }
+    // 王冠はデコとは別にいつでも付けられる。王冠を表示している間は、上の位置（top）のデコは王冠と重なるので出さない
+    function avatar(id, name, size) { const crowned = crownOf(id); return withDeco(withCrown(withFrame(avatarBase(id, name, size), frameOf(id)), crowned), decosOf(id), crowned); }
     // アイコンの枠（ゲームの特典）。users/{id}.frame。退会したユーザー・オープンチャットの匿名の送信者には付けない
     function userFrame(u) { return u && !u.deleted && FRAME_BY_ID[u.frame] ? u.frame : null; }
     function frameOf(id) { return userFrame(id === state.me?.id ? state.me : state.users.get(id)); }
@@ -9086,7 +9090,7 @@ draw();
 
     async function enterApp(user) {
       state.uid = auth.currentUser.uid;
-      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null, frame: user.frame ?? null, header: user.header ?? null, crown: user.crown ?? null, chatBg: user.chatBg ?? null, deco: user.deco ?? null, nameColor: user.nameColor ?? null, sendFx: user.sendFx ?? null };
+      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null, frame: user.frame ?? null, header: user.header ?? null, crown: user.crown ?? null, chatBg: user.chatBg ?? null, deco: user.deco ?? null, decos: user.decos ?? null, nameColor: user.nameColor ?? null, sendFx: user.sendFx ?? null };
       document.querySelectorAll('#screen-login input[type="password"]').forEach((el) => { el.value = ""; });
       syncAppFont();
       readMap = store.json(`chatter:read:${user.id}`, {});
@@ -9541,9 +9545,9 @@ draw();
       state.unsub.users = onSnapshot(
         query(collection(db, "users"), orderBy("lastSeen", "desc"), limit(300)),
         (snap) => {
-          const prevIcons = new Map([...state.users].map(([id, u]) => [id, `${u.icon}|${badgeKey(u)}|${userFrame(u)}|${u.crown}|${u.deco}`]));
+          const prevIcons = new Map([...state.users].map(([id, u]) => [id, `${u.icon}|${badgeKey(u)}|${userFrame(u)}|${u.crown}|${u.deco}|${JSON.stringify(u.decos ?? null)}`]));
           state.users = new Map(snap.docs.map((d) => [d.id, withId(d)]));
-          const iconChanged = [...state.users].some(([id, u]) => `${u.icon}|${badgeKey(u)}|${userFrame(u)}|${u.crown}|${u.deco}` !== prevIcons.get(id)); // 公式マーク・アイコンの枠の変化も含める
+          const iconChanged = [...state.users].some(([id, u]) => `${u.icon}|${badgeKey(u)}|${userFrame(u)}|${u.crown}|${u.deco}|${JSON.stringify(u.decos ?? null)}` !== prevIcons.get(id)); // 公式マーク・アイコンの枠の変化も含める
           const mine = state.users.get(state.me.id);
           if (mine?.deleted && !state.accountDeleting) {
             // 別の端末でアカウントが削除された
@@ -9552,7 +9556,7 @@ draw();
             return;
           }
           if (mine && mine.uid !== state.uid && !snap.metadata.fromCache) { signOutForReset(); return; } // 管理者がパスワードをリセットした
-          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; state.me.frame = mine.frame ?? null; state.me.header = mine.header ?? null; state.me.crown = mine.crown ?? null; state.me.chatBg = mine.chatBg ?? null; state.me.deco = mine.deco ?? null; state.me.nameColor = mine.nameColor ?? null; state.me.sendFx = mine.sendFx ?? null; applyChatBg(); syncAppFont(); }
+          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; state.me.frame = mine.frame ?? null; state.me.header = mine.header ?? null; state.me.crown = mine.crown ?? null; state.me.chatBg = mine.chatBg ?? null; state.me.deco = mine.deco ?? null; state.me.decos = mine.decos ?? null; state.me.nameColor = mine.nameColor ?? null; state.me.sendFx = mine.sendFx ?? null; applyChatBg(); syncAppFont(); }
           state.usersLoaded = true;
           applyRestriction();
           renderSidebar();
@@ -10697,12 +10701,28 @@ draw();
       if (d.special === "comet") return `<span class="av-deco-comet">${COMET_SVG}</span>`;
       return `<span class="av-deco av-deco-${d.pos}">${emojiSvg(d.emoji)}</span>`;
     }
-    function withDeco(html, decoId) {
-      const d = DECO_BY_ID[decoId];
-      return d ? `<span class="av-decorated" title="${esc(d.name)}">${html}${decoMarkup(d)}</span>` : html;
+    // デコの付く位置（users/{id}.decos のキー。位置がちがうものは同時に付けられ、同じ位置のものは入れ替わる。firestore.rules の decosOwned と合わせる）
+    // ★5 は見た目に合わせて：天使の輪 = 上、七色ハート = 右上、流れ星 = 左上、天使の羽 = 両側、星のオーラ・シャボン玉 = まわり
+    const DECO_SLOTS = { top: "上", tl: "左上", tr: "右上", br: "右下", side: "両側", aura: "まわり" };
+    const SPECIAL_SLOT = { halo: "top", prism: "tr", comet: "tl", wings: "side", orbit: "aura", bubbles: "aura" };
+    const decoSlot = (d) => SPECIAL_SLOT[d.special] || d.pos;
+    // ids：付けているデコの ID（1つでも配列でも）。hideTop：王冠を表示中なら、上の位置のデコは出さない
+    function withDeco(html, ids, hideTop = false) {
+      const list = (Array.isArray(ids) ? ids : [ids]).map((id) => DECO_BY_ID[id]).filter((d) => d && !(hideTop && decoSlot(d) === "top"));
+      return list.length ? `<span class="av-decorated" title="${esc(list.map((d) => d.name).join("・"))}">${html}${list.map(decoMarkup).join("")}</span>` : html;
     }
-    function userDeco(u) { return u && !u.deleted && DECO_BY_ID[u.deco] ? u.deco : null; }
-    function decoOf(id) { return userDeco(id === state.me?.id ? state.me : state.users.get(id)); }
+    // 付けているデコ（位置 -> デコID）。decos（位置ごと）が無ければ、以前の1つだけの deco
+    function userDecoMap(u) {
+      if (!u || u.deleted) return {};
+      if (u.decos && typeof u.decos === "object") {
+        return Object.fromEntries(Object.entries(u.decos).filter(([slot, id]) => DECO_SLOTS[slot] && DECO_BY_ID[id] && decoSlot(DECO_BY_ID[id]) === slot));
+      }
+      return DECO_BY_ID[u.deco] ? { [decoSlot(DECO_BY_ID[u.deco])]: u.deco } : {};
+    }
+    // 表示の順番（後ろのものほど手前）：まわり・両側 → 上 → 角
+    const SLOT_ORDER = ["aura", "side", "top", "tl", "tr", "br"];
+    const userDecos = (u) => { const m = userDecoMap(u); return SLOT_ORDER.filter((s) => m[s]).map((s) => m[s]); };
+    function decosOf(id) { return userDecos(id === state.me?.id ? state.me : state.users.get(id)); }
     // デコの見本（自分のアイコンに付けたもの）
     const decoSample = (id, size = "w-12 h-12 text-base") => withDeco(avatarBase(state.me.id, state.me.name, size), id);
 
@@ -10839,23 +10859,32 @@ draw();
     async function setDeco(id) {
       if (decoBusy || !state.me || isRestricted(state.me)) return;
       id = id || null;
-      if (id && !(walletDecos()[id] > 0)) return;
-      if (id === userDeco(state.me)) id = null; // つけているものをもう一度押すと外す
+      if (!id || !(walletDecos()[id] > 0)) return;
+      // その位置に付ける（同じ位置のものと入れ替える）。つけているものをもう一度押すと外す
+      const slot = decoSlot(DECO_BY_ID[id]);
+      const cur = userDecoMap(state.me);
+      const removing = cur[slot] === id;
+      const replaced = !removing && cur[slot] ? DECO_BY_ID[cur[slot]] : null;
+      const next = { ...cur };
+      if (removing) delete next[slot]; else next[slot] = id;
       decoBusy = true;
       const me = state.me;
-      const prev = me.deco;
-      me.deco = id;
+      const prev = { deco: me.deco, decos: me.decos };
+      me.deco = null;
+      me.decos = Object.keys(next).length ? next : null;
       renderSidebar();
       renderGacha();
       try {
-        await updateDoc(doc(db, "users", me.id), { deco: id ?? deleteField() });
+        // 以前の1つだけの deco は消して、位置ごとの decos に移す
+        await updateDoc(doc(db, "users", me.id), { decos: me.decos ?? deleteField(), deco: deleteField() });
         if (state.me === me) {
-          toast(id ? `デコレーション「${DECO_BY_ID[id].name}」をつけました` : "デコレーションを外しました");
+          const d = DECO_BY_ID[id];
+          toast(removing ? `「${d.name}」を外しました` : `「${d.name}」を${DECO_SLOTS[slot]}につけました${replaced ? `（「${replaced.name}」と入れ替え）` : ""}`);
           if (state.activeRoomId) { renderChatHeader(); if (state.messagesLoaded) renderMessages(); }
         }
       } catch (e) {
         console.error(e);
-        if (state.me === me) { me.deco = prev; renderSidebar(); renderGacha(); toast("デコレーションを変更できませんでした", "error"); }
+        if (state.me === me) { me.deco = prev.deco; me.decos = prev.decos; renderSidebar(); renderGacha(); toast("デコレーションを変更できませんでした", "error"); }
       } finally {
         decoBusy = false;
       }
@@ -10879,7 +10908,10 @@ draw();
           ${tabBtn("gacha", "🎰 ガチャ")}${tabBtn("collection", `📦 コレクション ${ownedCount}/${DECOS.length}`)}
         </div>`;
       if (gachaView.tab === "collection") {
-        const cur = userDeco(state.me);
+        const curMap = userDecoMap(state.me);
+        const on = (d) => curMap[decoSlot(d)] === d.id;
+        const crowned = crownOf(state.me.id);
+        const worn = userDecos(state.me);
         const cards = [...DECOS].sort((a, b) => b.rarity - a.rarity).map((d) => {
           const n = owned[d.id] || 0;
           if (!n) {
@@ -10891,16 +10923,20 @@ draw();
               </div>`;
           }
           return `
-            <button type="button" data-action="set-deco" data-id="${d.id}" class="relative flex flex-col items-center gap-1 rounded-2xl p-2 text-center transition ${d.id === cur ? "bg-indigo-50 ring-2 ring-indigo-400" : "bg-white ring-1 ring-slate-200 hover:bg-slate-50"} ${d.rarity >= 5 ? "gacha-legend" : ""}" aria-pressed="${d.id === cur}" title="${d.id === cur ? "押すと外す" : "押すとつける"}">
+            <button type="button" data-action="set-deco" data-id="${d.id}" class="relative flex flex-col items-center gap-1 rounded-2xl p-2 text-center transition ${on(d) ? "bg-indigo-50 ring-2 ring-indigo-400" : "bg-white ring-1 ring-slate-200 hover:bg-slate-50"} ${d.rarity >= 5 ? "gacha-legend" : ""}" aria-pressed="${on(d)}" title="${on(d) ? "押すと外す" : `押すと${DECO_SLOTS[decoSlot(d)]}につける`}">
               <div class="pt-5 pr-2">${decoSample(d.id)}</div>
               <div class="text-[11px] font-semibold text-slate-700 leading-tight">${esc(d.name)}</div>
               <div class="text-[10px] ${RARITY_COLOR[d.rarity]}">${rarityStars(d.rarity)}</div>
               <span class="absolute top-1 left-1.5 text-[10px] text-slate-400">×${n}</span>
-              ${d.id === cur ? `<div class="text-[10px] font-bold text-indigo-600 leading-none">つけ中</div>` : ""}
+              <span class="absolute top-1 right-1.5 text-[9px] text-slate-400">${DECO_SLOTS[decoSlot(d)]}</span>
+              ${on(d) ? `<div class="text-[10px] font-bold text-indigo-600 leading-none">つけ中</div>` : ""}
             </button>`;
         }).join("");
         body.innerHTML = head + `
-          <p class="text-xs text-slate-500 mb-2">持っているデコレーションを押すと、アイコンにつけられます（つけているものをもう一度押すと外れます）。</p>
+          <div class="flex items-center gap-3 mb-3 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-3">
+            <div class="pt-3 px-3 shrink-0">${withDeco(withCrown(avatarBase(state.me.id, state.me.name, "w-14 h-14 text-lg"), crowned), worn, crowned)}</div>
+            <p class="text-xs text-slate-500 leading-relaxed">持っているデコを押すとつけられます。<b>付く位置（右上・上・両側など）がちがうものは、いくつでも同時に</b>つけられます（同じ位置のものは入れ替わり、つけているものをもう一度押すと外れます）。王冠はいつでも一緒に付けられます。王冠を表示している間は、「上」のデコは王冠に隠れます。</p>
+          </div>
           <div class="grid grid-cols-3 sm:grid-cols-4 gap-2">${cards}</div>`;
         return;
       }
@@ -10981,6 +11017,7 @@ draw();
       { id: "nc-candy", kind: "name", name: "キャンディグラデ", price: 12000, style: "グラデーション" },
       { id: "nc-gold", kind: "name", name: "ゴールドグラデ", price: 15000, style: "グラデーション" },
       // 名前の色：色が流れて動く
+      { id: "nc-goldflow", kind: "name", name: "流れるゴールド", price: 20000, style: "動く" },
       { id: "nc-rainbow", kind: "name", name: "流れるレインボー", price: 25000, style: "動く" },
       { id: "nc-galaxy", kind: "name", name: "流れるギャラクシー", price: 25000, style: "動く" },
       // 送信エフェクト（fx：降らせ方。chars：降らせる絵文字）
@@ -11478,6 +11515,40 @@ draw();
       { id: "stack-6", game: "stack", need: 300000, name: "タワーの神", bg: "conic-gradient(from 200deg at 70% 40%, #f43f5e, #f59e0b, #facc15, #22c55e, #06b6d4, #6366f1, #a855f7, #f43f5e)",
         deco: [["👑", 20, 6, 30], ["🏗️", 20, 44, 40], ["GOD", 64, 24, 44, "#fff"], ["★", 90, 10, 18, "#fff"], ["★", 44, 66, 14, "#fff"]] },
     ];
+    // やりこみ向けのヘッダー（-4 マスター / -5 レジェンド / -6 神）の見た目。
+    // 3段階で共通のデザイン（マスター：夜の色にゲームの色の光 / レジェンド：黒と金 / 神：オーロラ）に、ゲームの色と絵文字を入れる。
+    // ID・名前・必要な得点（need）は上の一覧のまま（firestore.rules の headerEarned と合わせる）
+    const ENDGAME_ACCENT = { suika: "#22c55e", 2048: "#f59e0b", balloon: "#38bdf8", minesweeper: "#ef4444", breakout: "#f97316", snake: "#10b981", puyo: "#ec4899", blocks: "#06b6d4", stack: "#6366f1" };
+    function endgameLook(h) {
+      const g = gameById(h.game), a = ENDGAME_ACCENT[h.game] || "#94a3b8";
+      const rank = h.id.split("-").pop();
+      // プロフィールではアイコンが下のまん中に、「ヘッダー」ボタンが右上に重なるので、文字は右寄りのまん中に置く
+      // 字間を空けた見出し（右端の空きを左にも足して、まん中に置く）
+      const title = (t, ls, css) => [t, 74, 34, 21, null, 0, null, null, `font-weight:600;letter-spacing:${ls}em;padding-left:${ls}em;${css}`];
+      if (rank === "4") return {
+        bg: `radial-gradient(90% 160% at 100% 0%, ${a}59, transparent 60%), repeating-linear-gradient(135deg, rgb(255 255 255 / .035) 0 1px, transparent 1px 14px), linear-gradient(135deg, #0b1220, #172033)`,
+        deco: [
+          [g.emoji, 15, 22, 30, null, 0, "rgb(255 255 255 / .06)", null, `padding:.34em;border-radius:9999px;border:1px solid ${a}80;box-shadow:inset 0 0 16px ${a}40, 0 0 18px ${a}33`],
+          title("MASTER", .42, "color:#f1f5f9"),
+          ["", 74, 64, 10, null, 0, a, null, "width:5.2em;height:.2em;padding:0;border-radius:2px"],
+        ] };
+      if (rank === "5") return {
+        bg: "linear-gradient(115deg, transparent 32%, rgb(253 230 138 / .14) 46%, transparent 58%), radial-gradient(70% 140% at 12% 50%, rgb(180 83 9 / .5), transparent 65%), linear-gradient(135deg, #120d05, #2a1d0a 55%, #120d05)",
+        deco: [
+          [g.emoji, 15, 22, 30, null, 0, "rgb(0 0 0 / .25)", null, "padding:.3em;border-radius:9999px;border:1.5px solid #fcd34d;box-shadow:0 0 0 4px rgb(252 211 77 / .12), 0 0 22px rgb(252 211 77 / .35)"],
+          title("LEGEND", .36, "color:#fde68a;font-family:Georgia,'Times New Roman',serif;text-shadow:0 0 12px rgb(251 191 36 / .45)"),
+          ["─── ◆ ───", 74, 62, 9, "#d4a24a", 0, null, null, "font-weight:400"],
+        ] };
+      return {
+        bg: "radial-gradient(55% 120% at 85% 15%, rgb(168 85 247 / .6), transparent 65%), radial-gradient(45% 110% at 8% 100%, rgb(34 211 238 / .45), transparent 65%), radial-gradient(40% 90% at 55% 65%, rgb(244 114 182 / .3), transparent 70%), radial-gradient(circle, rgb(255 255 255 / .7) 0 .8px, transparent 1.3px) 3px 5px / 29px 23px, radial-gradient(circle, rgb(233 213 255 / .5) 0 .6px, transparent 1.1px) 14px 11px / 41px 37px, #05060f",
+        deco: [
+          [g.emoji, 15, 22, 30, null, 0, "rgb(255 255 255 / .06)", null, "padding:.34em;border-radius:9999px;border:1.5px solid rgb(255 255 255 / .7);box-shadow:0 0 18px rgb(192 132 252 / .7), 0 0 34px rgb(34 211 238 / .35)"],
+          title("GOD", .6, "color:#fff;font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:min(24px, 7.06cqw);text-shadow:0 0 10px rgb(232 121 249 / .85), 0 0 24px rgb(103 232 249 / .5)"),
+          ["✦", 94, 82, 12, "#fff", 0, null, "0 0 8px #fff"],
+          ["✦", 30, 76, 9, "#e9d5ff", 0, null, "0 0 6px #e9d5ff"],
+        ] };
+    }
+    HEADERS.forEach((h) => { if (h.need && /-[456]$/.test(h.id)) Object.assign(h, endgameLook(h)); });
     // ショップのヘッダー（SHOP_HEADERS。shop: true）も同じ users.header に入る
     const HEADER_BY_ID = Object.fromEntries([...HEADERS, ...SHOP_HEADERS].map((h) => [h.id, h]));
     function userHeader(u) { return u && !u.deleted && HEADER_BY_ID[u.header] ? u.header : null; }
@@ -11487,8 +11558,10 @@ draw();
     function headerBanner(id, cls = "h-24") {
       const h = HEADER_BY_ID[id];
       if (!h) return "";
-      const deco = h.deco.map(([t, x, y, size, color, rot = 0, bg, glow]) => `<span class="absolute font-black leading-none whitespace-nowrap select-none" style="left:${x}%;top:${y}%;font-size:${size}px;transform:translateX(-50%) rotate(${rot}deg);${color ? `color:${color};` : ""}${bg ? `background:${bg};padding:4px 7px;border-radius:5px;` : ""}${glow ? `text-shadow:${glow};` : ""}">${esc(t)}</span>`).join("");
-      return `<div class="relative overflow-hidden ${cls} rounded-2xl ring-1 ring-black/5" style="background:${h.bg}" aria-hidden="true">${deco}</div>`;
+      // css：そのほかの見た目（字間・枠線など。一覧の中で書いた固定の値だけ）
+      const deco = h.deco.map(([t, x, y, size, color, rot = 0, bg, glow, css]) => `<span class="absolute font-black leading-none whitespace-nowrap select-none" style="left:${x}%;top:${y}%;font-size:min(${size}px, ${(size / 3.4).toFixed(2)}cqw);transform:translateX(-50%) rotate(${rot}deg);${color ? `color:${color};` : ""}${bg ? `background:${bg};padding:4px 7px;border-radius:5px;` : ""}${glow ? `text-shadow:${glow};` : ""}${css || ""}">${esc(t)}</span>`).join("");
+      // 文字の大きさは、幅 340px のときの大きさを基準に、ヘッダーの幅に合わせて小さくする（選ぶ画面の小さな見本でもはみ出さない）
+      return `<div class="relative overflow-hidden ${cls} rounded-2xl ring-1 ring-black/5" style="background:${h.bg};container-type:inline-size" aria-hidden="true">${deco}</div>`;
     }
 
     // ヘッダーを選ぶ画面（プロフィールから開く）
