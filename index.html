@@ -12242,8 +12242,8 @@ draw();
     // ============================================================
     const EMOJI_RECENT_MAX = 24;
     const emojiRecentKey = () => `chatter:emojiRecent:${state.me?.id}`;
-    // デフォルトにない絵文字でリアクションした履歴：リアクションの選択欄の2段目に新しい順で8個まで出す（データは上の「最近使った絵文字」と共通）
-    const REACT_HISTORY_MAX = 8;
+    // デフォルトにない絵文字でリアクションした履歴：リアクションの選択欄の2段目に新しい順で12個まで出す（データは上の「最近使った絵文字」と共通）
+    const REACT_HISTORY_MAX = 12;
     const reactHistory = () => {
       const list = store.json(emojiRecentKey(), []);
       return (Array.isArray(list) ? list : []).map((e) => `e:${e}`).filter((c) => reactionEmoji(c)).slice(0, REACT_HISTORY_MAX);
