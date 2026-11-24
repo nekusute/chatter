@@ -7233,6 +7233,1119 @@ document.querySelectorAll('.t-btn').forEach(btn => {
 draw();
 </script>
   </template>
+  <template id="game-src-stack">
+<style>
+    :root {
+      --bg-top: #0f172a;
+      --bg-bottom: #1e293b;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent: #38bdf8;
+      --gold: #fbbf24;
+      --glass: rgba(15, 23, 42, 0.65);
+      --glass-border: rgba(255, 255, 255, 0.14);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif;
+      background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+      color: var(--text-main);
+    }
+
+    .app-shell {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    #gameCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    /* HUD */
+    .hud {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 16px 20px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .hud-left {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .best-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .best-badge strong {
+      color: var(--gold);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .hud-center {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      pointer-events: none;
+    }
+
+    .score-value {
+      font-size: clamp(44px, 8vw, 68px);
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
+      text-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+      transition: transform 0.12s ease;
+    }
+
+    .score-value.bump {
+      transform: scale(1.14);
+    }
+
+    .combo-pill {
+      margin-top: 6px;
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 999px;
+      background: rgba(251, 191, 36, 0.18);
+      border: 1px solid rgba(251, 191, 36, 0.45);
+      color: #fde68a;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .combo-pill.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .hud-right {
+      display: flex;
+      gap: 8px;
+      pointer-events: auto;
+    }
+
+    .icon-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      border: 1px solid var(--glass-border);
+      background: var(--glass);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: var(--text-main);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s ease, transform 0.1s ease;
+    }
+
+    .icon-btn:hover {
+      background: rgba(30, 41, 59, 0.85);
+    }
+
+    .icon-btn:active {
+      transform: scale(0.94);
+    }
+
+    .icon-btn svg {
+      width: 20px;
+      height: 20px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* Overlays */
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 20;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+    }
+
+    .overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 340px;
+      padding: 28px 24px;
+      border-radius: 24px;
+      background: rgba(15, 23, 42, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+      text-align: center;
+      transform: translateY(10px);
+      transition: transform 0.25s ease;
+    }
+
+    .overlay.active .card {
+      transform: translateY(0);
+    }
+
+    .title-tag {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.16);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      color: #7dd3fc;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .card h1 {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+
+    .card p {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+
+    .stat-box {
+      padding: 12px 8px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .stat-num {
+      font-size: 20px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .new-record {
+      display: none;
+      margin-bottom: 14px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(251, 191, 36, 0.2);
+      border: 1px solid rgba(251, 191, 36, 0.5);
+      color: #fde68a;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .new-record.show {
+      display: inline-block;
+    }
+
+    .primary-btn {
+      width: 100%;
+      padding: 14px 20px;
+      border: none;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #38bdf8 0%, #6366f1 100%);
+      color: #ffffff;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 10px 25px rgba(56, 189, 248, 0.35);
+      transition: transform 0.12s ease, filter 0.15s ease;
+    }
+
+    .primary-btn:hover {
+      filter: brightness(1.08);
+    }
+
+    .primary-btn:active {
+      transform: scale(0.97);
+    }
+
+    .hint-text {
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .kbd {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    /* Floating feedback toast */
+    .perfect-banner {
+      position: absolute;
+      top: 132px;
+      left: 50%;
+      transform: translateX(-50%) scale(0.85);
+      padding: 6px 16px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.14);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      backdrop-filter: blur(8px);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      color: #ffffff;
+      pointer-events: none;
+      opacity: 0;
+      z-index: 15;
+      transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+
+    .perfect-banner.show {
+      opacity: 1;
+      transform: translateX(-50%) scale(1);
+    }
+    html { color-scheme: dark; }
+</style>
+  <div class="app-shell">
+    <canvas id="gameCanvas" aria-label="Stack Tower ゲーム画面"></canvas>
+
+    <!-- HUD -->
+    <div class="hud">
+      <div class="hud-left">
+        <div class="best-badge">
+          <span>BEST</span>
+          <strong id="bestScoreEl">0</strong>
+        </div>
+        <div class="best-badge">
+          <span>SPEED</span>
+          <strong id="speedEl">1.0x</strong>
+        </div>
+      </div>
+
+      <div class="hud-center">
+        <div id="scoreEl" class="score-value">0</div>
+        <div id="comboEl" class="combo-pill">PERFECT ×0</div>
+      </div>
+
+      <div class="hud-right">
+        <button id="soundBtn" class="icon-btn" type="button" aria-label="サウンド切り替え" title="サウンド切り替え">
+          <svg id="soundOnIcon" viewBox="0 0 24 24">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+          </svg>
+          <svg id="soundOffIcon" viewBox="0 0 24 24" style="display: none;">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <line x1="23" y1="9" x2="17" y2="15"></line>
+            <line x1="17" y1="9" x2="23" y2="15"></line>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div id="perfectBanner" class="perfect-banner">PERFECT!</div>
+
+    <!-- Start Overlay -->
+    <div id="startOverlay" class="overlay active">
+      <div class="card">
+        <span class="title-tag">Timing Arcade</span>
+        <h1>Stack Tower</h1>
+        <p>左右に動くブロックをタイミング良くタップして積み上げよう。ピッタリ揃えるとコンボ＆幅が少し回復します。</p>
+        <button id="startBtn" class="primary-btn" type="button">ゲームスタート</button>
+        <div class="hint-text">クリック / <span class="kbd">Space</span> / <span class="kbd">S</span> / <span class="kbd">↓</span> でブロックを停止・<span class="kbd">Esc</span> で戻る</div>
+      </div>
+    </div>
+
+    <!-- Game Over Overlay -->
+    <div id="gameOverOverlay" class="overlay">
+      <div class="card">
+        <span class="title-tag">Game Over</span>
+        <h1>タワー完成！</h1>
+        <div id="newRecordBadge" class="new-record">NEW BEST SCORE!</div>
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-label">スコア</div>
+            <div id="finalScoreEl" class="stat-num">0</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">ベスト</div>
+            <div id="finalBestEl" class="stat-num">0</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">PERFECT</div>
+            <div id="finalPerfectEl" class="stat-num">0</div>
+          </div>
+        </div>
+        <button id="restartBtn" class="primary-btn" type="button">もう一度遊ぶ</button>
+        <div class="hint-text"><span class="kbd">Space</span> / <span class="kbd">Enter</span> でもリスタートできます</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const canvas = document.getElementById('gameCanvas');
+      const ctx = canvas.getContext('2d');
+
+      const scoreEl = document.getElementById('scoreEl');
+      const bestScoreEl = document.getElementById('bestScoreEl');
+      const speedEl = document.getElementById('speedEl');
+      const comboEl = document.getElementById('comboEl');
+      const perfectBanner = document.getElementById('perfectBanner');
+      const startOverlay = document.getElementById('startOverlay');
+      const gameOverOverlay = document.getElementById('gameOverOverlay');
+      const startBtn = document.getElementById('startBtn');
+      const restartBtn = document.getElementById('restartBtn');
+      const soundBtn = document.getElementById('soundBtn');
+      const soundOnIcon = document.getElementById('soundOnIcon');
+      const soundOffIcon = document.getElementById('soundOffIcon');
+      const finalScoreEl = document.getElementById('finalScoreEl');
+      const finalBestEl = document.getElementById('finalBestEl');
+      const finalPerfectEl = document.getElementById('finalPerfectEl');
+      const newRecordBadge = document.getElementById('newRecordBadge');
+
+      const BLOCK_HEIGHT = 28;
+      const TOP_DEPTH = 14; // 擬似3Dの上面奥行き
+      const PERFECT_TOLERANCE = 5.5;
+      const COMBO_HEAL_THRESHOLD = 5;
+
+      let width = 0;
+      let height = 0;
+      let dpr = 1;
+      let rafId = null;
+      let lastTime = 0;
+
+      // Audio state
+      let audioCtx = null;
+      let muted = false;
+
+      // Game state
+      let gameState = 'start'; // 'start' | 'playing' | 'gameover'
+      let stack = [];
+      let debris = [];
+      let ripples = [];
+      let particles = [];
+      let movingBlock = null;
+
+      let score = 0;
+      let bestScore = null; // アプリから届く自己ベスト（届くまでは null）
+      let paused = false;
+      let maxCombo = 0;
+      let allPerfect = true; // 最初から全部 PERFECT か
+      let combo = 0;
+      let perfectCount = 0;
+      let baseHue = 195;
+      let cameraY = 0;
+      let targetCameraY = 0;
+      let bannerTimeout = null;
+      let scoreBumpTimeout = null;
+
+      bestScoreEl.textContent = '-';
+
+      // ---- アプリとのやりとり ----
+      function sendToApp(msg) {
+        try { parent.postMessage(Object.assign({ source: 'chatter-game' }, msg), '*'); } catch (e) {}
+      }
+      // 実績をアプリに知らせる（同じ実績は1回だけ送る。記録済みかどうかはアプリが判断する）
+      const achievedSent = new Set();
+      function achieve(id) {
+        if (achievedSent.has(id)) return;
+        achievedSent.add(id);
+        sendToApp({ type: 'achieve', id });
+      }
+      function showBest() { bestScoreEl.textContent = bestScore === null ? '-' : String(Math.max(bestScore, score)); }
+      window.addEventListener('message', (e) => {
+        const d = e.data;
+        if (e.source !== parent || !d || d.source !== 'chatter') return;
+        if (d.type === 'best' && Number.isInteger(d.best)) { bestScore = Math.max(bestScore || 0, d.best); showBest(); }
+        else if (d.type === 'pause') pauseGame();
+      });
+      // アプリで別の画面を開いたら一時停止する（タップ / Space / Enter で再開）
+      const startTitle = startOverlay.querySelector('h1');
+      const startText = startOverlay.querySelector('p');
+      function pauseGame() {
+        if (gameState !== 'playing' || paused) return;
+        paused = true;
+        startTitle.textContent = 'PAUSE';
+        startText.textContent = `いまの高さ：${score}段。準備ができたら再開しよう`;
+        startBtn.textContent = '再開する';
+        startOverlay.classList.add('active');
+      }
+      function resumeGame() {
+        if (!paused) return;
+        paused = false;
+        lastTime = 0;
+        startOverlay.classList.remove('active');
+      }
+
+      function initAudio() {
+        if (!audioCtx) {
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+          if (AudioContextClass) {
+            audioCtx = new AudioContextClass();
+          }
+        }
+        if (audioCtx && audioCtx.state === 'suspended') {
+          audioCtx.resume().catch(() => {});
+        }
+      }
+
+      function playTone(freq, duration, type = 'sine', volume = 0.16, slideTo = null) {
+        if (muted || !audioCtx) return;
+        try {
+          const now = audioCtx.currentTime;
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq, now);
+          if (slideTo) {
+            osc.frequency.exponentialRampToValueAtTime(slideTo, now + duration);
+          }
+          gain.gain.setValueAtTime(0.001, now);
+          gain.gain.linearRampToValueAtTime(volume, now + 0.012);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(now);
+          osc.stop(now + duration + 0.02);
+        } catch {
+          // ignore audio error
+        }
+      }
+
+      function playPlaceSound(isPerfect, currentCombo) {
+        if (isPerfect) {
+          // C major pentatonic ascending with combo
+          const scale = [261.63, 293.66, 329.63, 392.0, 440.0, 523.25, 587.33, 659.25, 783.99, 880.0, 1046.5];
+          const idx = Math.min(currentCombo - 1, scale.length - 1);
+          const freq = scale[Math.max(0, idx)];
+          playTone(freq, 0.28, 'triangle', 0.2);
+          playTone(freq * 1.5, 0.22, 'sine', 0.09);
+        } else {
+          playTone(220, 0.12, 'triangle', 0.14, 165);
+        }
+      }
+
+      function playGameOverSound() {
+        playTone(240, 0.22, 'sawtooth', 0.09, 140);
+        setTimeout(() => playTone(150, 0.35, 'triangle', 0.12, 85), 110);
+      }
+
+      function toggleSound() {
+        initAudio();
+        muted = !muted;
+        soundOnIcon.style.display = muted ? 'none' : 'block';
+        soundOffIcon.style.display = muted ? 'block' : 'none';
+      }
+
+      function getInitialBlockWidth() {
+        return Math.min(220, Math.max(130, width * 0.44));
+      }
+
+      function getColor(index) {
+        const hue = (baseHue + index * 9) % 360;
+        return {
+          hue,
+          front: `hsl(${hue}, 78%, 54%)`,
+          top: `hsl(${hue}, 85%, 68%)`,
+          side: `hsl(${hue}, 74%, 40%)`,
+          glow: `hsla(${hue}, 90%, 65%, 0.55)`
+        };
+      }
+
+      function resizeCanvas() {
+        const rect = canvas.parentElement.getBoundingClientRect();
+        width = Math.max(320, rect.width);
+        height = Math.max(360, rect.height);
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+        canvas.width = Math.floor(width * dpr);
+        canvas.height = Math.floor(height * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        if (stack.length === 0) {
+          setupPreviewTower();
+        }
+        render();
+      }
+
+      function setupPreviewTower() {
+        stack = [];
+        debris = [];
+        ripples = [];
+        particles = [];
+        baseHue = Math.floor(Math.random() * 360);
+
+        const initialW = getInitialBlockWidth();
+        const baseX = (width - initialW) / 2;
+        const baseY = height * 0.72;
+
+        stack.push({
+          x: baseX,
+          y: baseY,
+          w: initialW,
+          h: BLOCK_HEIGHT,
+          color: getColor(0)
+        });
+
+        cameraY = 0;
+        targetCameraY = 0;
+        movingBlock = null;
+      }
+
+      function startGame() {
+        if (paused) { resumeGame(); return; }
+        initAudio();
+        maxCombo = 0;
+        allPerfect = true;
+        setupPreviewTower();
+
+        score = 0;
+        combo = 0;
+        perfectCount = 0;
+        updateScoreUI(false);
+        updateComboUI();
+        speedEl.textContent = '1.0x';
+
+        gameState = 'playing';
+        startOverlay.classList.remove('active');
+        gameOverOverlay.classList.remove('active');
+        newRecordBadge.classList.remove('show');
+        showBest();
+        sendToApp({ type: 'start' });
+
+        spawnNextBlock();
+      }
+
+      function spawnNextBlock() {
+        const prev = stack[stack.length - 1];
+        const level = stack.length;
+        const speed = Math.min(960, 200 + level * 12);
+        speedEl.textContent = `${(speed / 200).toFixed(1)}x`;
+        const dir = level % 2 === 1 ? 1 : -1;
+        const margin = Math.max(40, width * 0.14);
+        const startX = dir === 1 ? -prev.w + margin : width - margin;
+
+        movingBlock = {
+          x: startX,
+          y: prev.y - BLOCK_HEIGHT,
+          w: prev.w,
+          h: BLOCK_HEIGHT,
+          dir,
+          speed,
+          color: getColor(level)
+        };
+
+        // カメラを上に追従（タワーの上端が画面中央より少し下に保たれるように）
+        const desiredScreenY = height * 0.62;
+        const blockWorldY = movingBlock.y;
+        const offsetNeeded = desiredScreenY - blockWorldY;
+        targetCameraY = Math.max(0, offsetNeeded);
+      }
+
+      function placeBlock() {
+        if (gameState !== 'playing' || !movingBlock) return;
+
+        const prev = stack[stack.length - 1];
+        const curr = movingBlock;
+        const delta = curr.x - prev.x;
+        const absDelta = Math.abs(delta);
+
+        // 完全ミス（重なりなし）
+        if (absDelta >= curr.w) {
+          debris.push({
+            x: curr.x,
+            y: curr.y,
+            w: curr.w,
+            h: curr.h,
+            vx: curr.dir * 60,
+            vy: 0,
+            rot: 0,
+            vRot: curr.dir * 1.8,
+            color: curr.color,
+            alpha: 1
+          });
+          movingBlock = null;
+          triggerGameOver();
+          return;
+        }
+
+        let placedX = curr.x;
+        let placedW = curr.w;
+        let isPerfect = false;
+
+        if (absDelta <= PERFECT_TOLERANCE) {
+          // PERFECT!
+          isPerfect = true;
+          placedX = prev.x;
+          placedW = prev.w;
+          combo += 1;
+          perfectCount += 1;
+          maxCombo = Math.max(maxCombo, combo);
+          if (combo >= 5) achieve('stack-perfect5');
+          if (combo >= 10) achieve('stack-perfect10');
+          if (combo >= 20) achieve('stack-perfect20');
+          if (perfectCount >= 50) achieve('stack-perfects50');
+          if (perfectCount >= 100) achieve('stack-perfects100');
+
+          // コンボボーナス：5連続以上で少しだけ幅を回復
+          if (combo >= COMBO_HEAL_THRESHOLD) {
+            const maxW = getInitialBlockWidth();
+            const heal = Math.min(10, maxW - placedW);
+            if (heal > 0) {
+              placedW += heal;
+              placedX -= heal / 2;
+            }
+          }
+
+          ripples.push({
+            x: placedX,
+            y: curr.y,
+            w: placedW,
+            h: BLOCK_HEIGHT,
+            progress: 0,
+            color: curr.color.glow
+          });
+
+          spawnPerfectParticles(placedX + placedW / 2, curr.y, placedW, curr.color.top);
+          showPerfectBanner(combo);
+        } else {
+          // 通常の配置（はみ出た部分をカット）
+          combo = 0;
+          allPerfect = false;
+          placedW = curr.w - absDelta;
+          placedX = delta > 0 ? curr.x : prev.x;
+
+          const cutW = absDelta;
+          const cutX = delta > 0 ? prev.x + prev.w : curr.x;
+          const pushDir = delta > 0 ? 1 : -1;
+
+          debris.push({
+            x: cutX,
+            y: curr.y,
+            w: cutW,
+            h: BLOCK_HEIGHT,
+            vx: pushDir * 85,
+            vy: -40,
+            rot: 0,
+            vRot: pushDir * 3.4,
+            color: curr.color,
+            alpha: 1
+          });
+        }
+
+        stack.push({
+          x: placedX,
+          y: curr.y,
+          w: placedW,
+          h: BLOCK_HEIGHT,
+          color: curr.color
+        });
+
+        score += 1;
+        showBest();
+        sendToApp({ type: 'progress', score }); // 途中のスコア（「最初から」でゲームを消すときは、アプリがこれを記録する）
+        for (const n of [10, 25, 50, 100, 200, 300]) if (score >= n) achieve('stack-' + n);
+        if (score >= 20 && allPerfect) achieve('stack-allperfect20');
+        if (placedW <= 15) achieve('stack-thin');
+
+        updateScoreUI(true);
+        updateComboUI();
+        playPlaceSound(isPerfect, combo);
+        spawnNextBlock();
+      }
+
+      function triggerGameOver() {
+        if (gameState === 'gameover') return;
+        gameState = 'gameover';
+        const isNewRecord = bestScore !== null && score > bestScore;
+        if (bestScore !== null) bestScore = Math.max(bestScore, score);
+        newRecordBadge.classList.toggle('show', isNewRecord);
+        sendToApp({ type: 'gameover', score });
+        playGameOverSound();
+        updateComboUI();
+
+        finalScoreEl.textContent = String(score);
+        finalBestEl.textContent = bestScore === null ? '-' : String(bestScore);
+        finalPerfectEl.textContent = String(perfectCount);
+
+        // タワー全体が少し見渡せるようにカメラを少し引く調整
+        if (stack.length > 6) {
+          targetCameraY = Math.max(0, targetCameraY - Math.min(120, stack.length * 4));
+        }
+
+        setTimeout(() => {
+          if (gameState === 'gameover') {
+            gameOverOverlay.classList.add('active');
+          }
+        }, 420);
+      }
+
+      function updateScoreUI(animate) {
+        scoreEl.textContent = String(score);
+        if (animate) {
+          scoreEl.classList.add('bump');
+          clearTimeout(scoreBumpTimeout);
+          scoreBumpTimeout = setTimeout(() => {
+            scoreEl.classList.remove('bump');
+          }, 120);
+        }
+      }
+
+      function updateComboUI() {
+        if (combo >= 2 && gameState === 'playing') {
+          comboEl.textContent = `PERFECT ×${combo}`;
+          comboEl.classList.add('visible');
+        } else {
+          comboEl.classList.remove('visible');
+        }
+      }
+
+      function showPerfectBanner(currentCombo) {
+        perfectBanner.textContent = currentCombo >= COMBO_HEAL_THRESHOLD
+          ? `PERFECT ×${currentCombo} (+WIDTH!)`
+          : currentCombo > 1
+            ? `PERFECT ×${currentCombo}`
+            : 'PERFECT!';
+        perfectBanner.classList.add('show');
+        clearTimeout(bannerTimeout);
+        bannerTimeout = setTimeout(() => {
+          perfectBanner.classList.remove('show');
+        }, 650);
+      }
+
+      function spawnPerfectParticles(cx, cy, spanW, color) {
+        const count = 14;
+        for (let i = 0; i < count; i++) {
+          const angle = -Math.PI + Math.random() * Math.PI;
+          const speed = 50 + Math.random() * 130;
+          particles.push({
+            x: cx + (Math.random() - 0.5) * spanW,
+            y: cy,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 30,
+            size: 2.5 + Math.random() * 3,
+            life: 1,
+            color
+          });
+        }
+      }
+
+      function update(dt) {
+        // カメラ補間
+        cameraY += (targetCameraY - cameraY) * Math.min(1, dt * 7.5);
+
+        // 移動中ブロック
+        if (gameState === 'playing' && movingBlock && !paused) {
+          movingBlock.x += movingBlock.dir * movingBlock.speed * dt;
+          const leftBound = -movingBlock.w * 0.45;
+          const rightBound = width - movingBlock.w * 0.55;
+
+          if (movingBlock.x >= rightBound) {
+            movingBlock.x = rightBound;
+            movingBlock.dir = -1;
+          } else if (movingBlock.x <= leftBound) {
+            movingBlock.x = leftBound;
+            movingBlock.dir = 1;
+          }
+        }
+
+        // 落下破片
+        for (let i = debris.length - 1; i >= 0; i--) {
+          const d = debris[i];
+          d.vy += 980 * dt;
+          d.x += d.vx * dt;
+          d.y += d.vy * dt;
+          d.rot += d.vRot * dt;
+          d.alpha -= dt * 0.65;
+          if (d.alpha <= 0 || d.y + cameraY > height + 160) {
+            debris.splice(i, 1);
+          }
+        }
+
+        // リップル
+        for (let i = ripples.length - 1; i >= 0; i--) {
+          const r = ripples[i];
+          r.progress += dt * 2.4;
+          if (r.progress >= 1) {
+            ripples.splice(i, 1);
+          }
+        }
+
+        // パーティクル
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.vy += 260 * dt;
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.life -= dt * 1.9;
+          if (p.life <= 0) {
+            particles.splice(i, 1);
+          }
+        }
+      }
+
+      function drawBlock(x, y, w, h, color) {
+        const d = TOP_DEPTH;
+        const sideOffset = 8; // 右側面の奥行き感
+
+        // 前面
+        ctx.fillStyle = color.front;
+        ctx.fillRect(x, y, w, h);
+
+        // 上面（斜め奥に台形）
+        ctx.fillStyle = color.top;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + sideOffset, y - d);
+        ctx.lineTo(x + w + sideOffset, y - d);
+        ctx.lineTo(x + w, y);
+        ctx.closePath();
+        ctx.fill();
+
+        // 右側面
+        ctx.fillStyle = color.side;
+        ctx.beginPath();
+        ctx.moveTo(x + w, y);
+        ctx.lineTo(x + w + sideOffset, y - d);
+        ctx.lineTo(x + w + sideOffset, y + h - d);
+        ctx.lineTo(x + w, y + h);
+        ctx.closePath();
+        ctx.fill();
+
+        // 上面のハイライト線
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + w, y);
+        ctx.stroke();
+      }
+
+      function render() {
+        // 高さに応じた背景グラデーション
+        const shift = Math.min(120, score * 2.5);
+        const topHue = (220 + shift) % 360;
+        const botHue = (215 + shift * 0.7) % 360;
+        const bgGrad = ctx.createLinearGradient(0, 0, 0, height);
+        bgGrad.addColorStop(0, `hsl(${topHue}, 42%, 11%)`);
+        bgGrad.addColorStop(1, `hsl(${botHue}, 36%, 20%)`);
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.save();
+        ctx.translate(0, cameraY);
+
+        // 土台の台座（最初のブロックの下）
+        if (stack.length > 0) {
+          const base = stack[0];
+          const pillarH = height * 0.6;
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+          ctx.fillRect(base.x, base.y + base.h, base.w, pillarH);
+          ctx.fillStyle = 'rgba(2, 6, 23, 0.55)';
+          ctx.beginPath();
+          ctx.moveTo(base.x + base.w, base.y + base.h);
+          ctx.lineTo(base.x + base.w + 8, base.y + base.h - TOP_DEPTH);
+          ctx.lineTo(base.x + base.w + 8, base.y + base.h + pillarH);
+          ctx.lineTo(base.x + base.w, base.y + base.h + pillarH);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        // 積み上がったブロック
+        for (let i = 0; i < stack.length; i++) {
+          const b = stack[i];
+          const screenY = b.y + cameraY;
+          if (screenY > height + 80 || screenY + b.h < -80) continue;
+          drawBlock(b.x, b.y, b.w, b.h, b.color);
+        }
+
+        // PERFECTリップル
+        for (let i = 0; i < ripples.length; i++) {
+          const r = ripples[i];
+          const expand = r.progress * 26;
+          const alpha = 1 - r.progress;
+          ctx.save();
+          ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.85})`;
+          ctx.lineWidth = 2.5;
+          ctx.strokeRect(
+            r.x - expand / 2,
+            r.y - expand * 0.15,
+            r.w + expand,
+            r.h + expand * 0.3
+          );
+          ctx.restore();
+        }
+
+        // 移動中のブロック
+        if (gameState === 'playing' && movingBlock) {
+          drawBlock(movingBlock.x, movingBlock.y, movingBlock.w, movingBlock.h, movingBlock.color);
+        }
+
+        // 落下中の破片
+        for (let i = 0; i < debris.length; i++) {
+          const d = debris[i];
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, d.alpha);
+          ctx.translate(d.x + d.w / 2, d.y + d.h / 2);
+          ctx.rotate(d.rot);
+          drawBlock(-d.w / 2, -d.h / 2, d.w, d.h, d.color);
+          ctx.restore();
+        }
+
+        // パーティクル
+        for (let i = 0; i < particles.length; i++) {
+          const p = particles[i];
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, p.life);
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        ctx.restore();
+      }
+
+      function loop(timestamp) {
+        if (!lastTime) lastTime = timestamp;
+        const dt = Math.min(0.05, (timestamp - lastTime) / 1000);
+        lastTime = timestamp;
+
+        update(dt);
+        render();
+        rafId = requestAnimationFrame(loop);
+      }
+
+      // Event listeners
+      function handleCanvasAction(e) {
+        if (e.target && e.target.closest('button')) return;
+        if (paused) { resumeGame(); return; }
+        if (gameState === 'playing') {
+          initAudio();
+          placeBlock();
+        }
+      }
+
+      canvas.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        handleCanvasAction(e);
+      });
+
+      startBtn.addEventListener('click', startGame);
+      restartBtn.addEventListener('click', startGame);
+      soundBtn.addEventListener('click', toggleSound);
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
+        if (e.repeat) return;
+        if (paused && (e.code === 'Space' || e.code === 'Enter')) { e.preventDefault(); resumeGame(); return; }
+        const isDropKey = e.code === 'Space' || e.code === 'KeyS' || e.code === 'ArrowDown';
+        const isStartKey = e.code === 'Space' || e.code === 'Enter';
+
+        if (gameState === 'playing' && !paused && isDropKey) {
+          e.preventDefault();
+          initAudio();
+          placeBlock();
+        } else if (isStartKey) {
+          e.preventDefault();
+          if (gameState === 'start') {
+            startGame();
+          } else if (gameState === 'gameover' && gameOverOverlay.classList.contains('active')) {
+            startGame();
+          }
+        }
+      });
+
+      // 始める前は、大きさが変わったら土台を真ん中に置き直す（iframe の大きさが決まる前に一度測ることがあるため）
+      window.addEventListener('resize', () => { if (gameState === 'start') stack = []; resizeCanvas(); });
+
+      resizeCanvas();
+      lastTime = 0;
+      rafId = requestAnimationFrame(loop);
+      window.addEventListener('load', () => { if (gameState === 'start') stack = []; resizeCanvas(); });
+    })();
+  </script>
+  </template>
 
 
   <script type="module">
@@ -8955,6 +10068,8 @@ draw();
         coinUnit: 2000, tiers: [3000, 15000, 50000, 120000, 300000, 800000] },
       { id: "blocks", name: "落ちものパズル", emoji: "🟦", desc: "落ちてくるブロックを並べて、横一列そろえて消そう", bg: "from-cyan-300 to-blue-600",
         coinUnit: 2000, tiers: [3000, 15000, 50000, 120000, 300000, 800000] },
+      { id: "stack", name: "スタックタワー", emoji: "🏗️", desc: "動くブロックをタイミングよく止めて、高く積み上げよう", bg: "from-sky-400 to-indigo-600",
+        coinUnit: 10, tiers: [30, 150, 500, 1500, 4000, 10000] },
     ];
     // アイコンの枠（users/{id}.frame。firestore.rules の frameEarned と合わせる）
     const FRAMES = [
@@ -9309,6 +10424,21 @@ draw();
       { id: "blocks-60000", game: "blocks", name: "積み上げの神", desc: "1回で60,000点以上取った" },
       { id: "blocks-plays10", game: "blocks", name: "常連さん", desc: "10回遊んだ", plays: 10 },
       { id: "blocks-plays100", game: "blocks", name: "やりこみ勢", desc: "100回遊んだ", plays: 100 },
+      { id: "stack-10", game: "stack", name: "はじめの一歩", desc: "10段積んだ" },
+      { id: "stack-25", game: "stack", name: "ビル", desc: "1回で25段積んだ" },
+      { id: "stack-50", game: "stack", name: "高層ビル", desc: "1回で50段積んだ" },
+      { id: "stack-100", game: "stack", name: "摩天楼", desc: "1回で100段積んだ" },
+      { id: "stack-200", game: "stack", name: "雲を突き抜けて", desc: "1回で200段積んだ" },
+      { id: "stack-300", game: "stack", name: "宇宙エレベーター", desc: "1回で300段積んだ" },
+      { id: "stack-perfect5", game: "stack", name: "ぴったり", desc: "PERFECT を5回続けた" },
+      { id: "stack-perfect10", game: "stack", name: "ぴったり職人", desc: "PERFECT を10回続けた" },
+      { id: "stack-perfect20", game: "stack", name: "寸分の狂いなし", desc: "PERFECT を20回続けた" },
+      { id: "stack-perfects50", game: "stack", name: "PERFECT 50", desc: "1回のゲームで PERFECT を50回出した" },
+      { id: "stack-perfects100", game: "stack", name: "PERFECT 100", desc: "1回のゲームで PERFECT を100回出した" },
+      { id: "stack-allperfect20", game: "stack", name: "完璧な土台", desc: "最初から20段、すべて PERFECT で積んだ" },
+      { id: "stack-thin", game: "stack", name: "綱渡り", desc: "幅15以下の細いブロックを積んだ" },
+      { id: "stack-plays10", game: "stack", name: "常連さん", desc: "10回遊んだ", plays: 10 },
+      { id: "stack-plays100", game: "stack", name: "やりこみ勢", desc: "100回遊んだ", plays: 100 },
       // 隠し実績（hidden：解除するまで名前と条件を「？？？」にする。実績の一覧の「隠し」のタブに出す。game はゲーム以外の ID）
       // shop-master：ショップの商品（SHOP_ITEMS）をすべて買うと解除（firestore.rules でも wallet/main の items の数を確かめる）
       { id: "shop-master", game: "shop", name: "買い物の達人", desc: "ショップの商品をすべて購入した", hidden: true },
@@ -10243,6 +11373,12 @@ draw();
         deco: [["　", 30, 30, 18, 0, 0, "#ef4444"], ["　", 50, 54, 18, 0, 0, "#22c55e"], ["　", 70, 30, 18, 0, 0, "#3b82f6"]] },
       { id: "blocks-3", game: "blocks", tier: 4, name: "4列消し", bg: "linear-gradient(180deg, #0b1120 0 30%, #06b6d4 30% 42%, #0b1120 42% 46%, #06b6d4 46% 58%, #0b1120 58% 62%, #06b6d4 62% 74%, #0b1120 74% 78%, #06b6d4 78% 90%, #0b1120 90%)",
         deco: [["4 LINES!", 50, 6, 18, "#facc15"]] },
+      { id: "stack-1", game: "stack", tier: 0, name: "積み木", bg: "linear-gradient(180deg, #0f172a, #1e293b)",
+        deco: [["　　　　　", 50, 70, 14, 0, 0, "#38bdf8"], ["　　　　", 52, 52, 14, 0, 0, "#6366f1"], ["　　　", 54, 34, 14, 0, 0, "#a855f7"]] },
+      { id: "stack-2", game: "stack", tier: 2, name: "PERFECT!", bg: "linear-gradient(135deg, #0ea5e9, #6366f1)",
+        deco: [["PERFECT!", 50, 30, 30, "#fff"], ["✦", 12, 20, 18, "#fde68a"], ["✦", 88, 60, 16, "#fde68a"]] },
+      { id: "stack-3", game: "stack", tier: 4, name: "摩天楼", bg: "linear-gradient(180deg, #312e81, #1e1b4b 60%, #020617)",
+        deco: [["🏙️", 22, 34, 40], ["✨", 60, 14, 20], ["🌙", 84, 18, 28]] },
     ];
     // ショップのヘッダー（SHOP_HEADERS。shop: true）も同じ users.header に入る
     const HEADER_BY_ID = Object.fromEntries([...HEADERS, ...SHOP_HEADERS].map((h) => [h.id, h]));
@@ -10469,6 +11605,10 @@ draw();
         { id: "rotR", label: "右回転", keys: ["KeyD"] },
         { id: "start", label: "スタート", keys: ["Space"] },
         { id: "pause", label: "一時停止", keys: ["KeyP"] },
+      ],
+      stack: [
+        { id: "drop", label: "ブロックを止める", keys: ["Space", "KeyS", "ArrowDown"] },
+        { id: "start", label: "スタート・再開", keys: ["Enter"] },
       ],
       blocks: [
         { id: "left", label: "左へ動かす", keys: ["ArrowLeft"] },
