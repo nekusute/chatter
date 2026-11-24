@@ -491,6 +491,10 @@
         @apply relative flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold text-slate-500 transition hover:text-slate-700;
       }
       .tab-btn.is-active { @apply bg-white text-indigo-600 shadow-sm; }
+      .game-pad-btn { display: grid; place-items: center; min-width: 3.25rem; height: 3.25rem; padding: 0 .5rem; border-radius: .9rem;
+        background: rgb(var(--c-slate-100)); color: rgb(var(--c-slate-700)); font-weight: 700; box-shadow: 0 2px 0 rgb(var(--c-slate-300));
+        -webkit-tap-highlight-color: transparent; touch-action: none; user-select: none; -webkit-user-select: none; }
+      .game-pad-btn.is-down { transform: translateY(2px); box-shadow: none; background: rgb(var(--c-slate-200)); }
       .switch {
         @apply relative shrink-0 w-11 h-6 rounded-full bg-slate-200 transition-colors
                focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2;
@@ -798,12 +802,18 @@ const firebaseConfig = {
           <header class="flex items-center gap-1 px-2 sm:px-4 h-16 border-b border-slate-100 bg-white shrink-0">
             <button type="button" data-action="back" class="icon-btn md:hidden" aria-label="戻る"><span data-icon="back"></span></button>
             <div id="game-header-main" class="flex items-center gap-3 min-w-0 flex-1 pl-1"></div>
+            <span id="game-pad-wrap" class="flex items-center gap-1.5 pr-1" title="画面にボタンを出す">
+              <span class="text-[11px] font-semibold text-slate-500 hidden sm:inline">ボタン</span>
+              <button type="button" id="game-pad-toggle" data-action="toggle-game-pad" class="switch" role="switch" aria-checked="false" aria-label="画面に操作ボタンを出す"><span class="switch-knob"></span></button>
+            </span>
             <button type="button" id="game-keys-btn" data-action="open-game-keys" class="icon-btn" aria-label="キー設定" title="キー設定"><span data-icon="key"></span></button>
             <button type="button" data-action="restart-game" class="icon-btn" aria-label="最初から" title="最初から"><span data-icon="refresh"></span></button>
             <button type="button" data-action="open-ranking" class="icon-btn text-amber-500" aria-label="ランキング" title="ランキング"><span data-icon="trophy"></span></button>
             <button type="button" data-action="close-game" class="icon-btn hidden md:grid" aria-label="ゲームを閉じる" title="ゲームを閉じる"><span data-icon="x"></span></button>
           </header>
           <div id="game-frame-wrap" class="flex-1 min-h-0 bg-white"></div>
+          <!-- 画面の操作ボタン（ヘッダーのスイッチで出す。押すと、そのキーを押したことにしてゲームに伝える） -->
+          <div id="game-pad" class="shrink-0 border-t border-slate-100 bg-white px-3 py-2.5 select-none" style="touch-action:none" hidden></div>
         </div>
       </main>
     </div>
@@ -11702,9 +11712,66 @@ draw();
       return table;
     }
     // ゲームの iframe の最初に入れる：本物のキー入力を、表に合わせて置き換える（置き換えたものは、ゲームのほうへそのまま流す）
-    const KEYMAP_SCRIPT = `(function(t){addEventListener("message",function(e){var d=e.data;if(e.source===parent&&d&&d.source==="chatter"&&d.type==="keymap")t=d.map||{};});` +
+    const KEYMAP_SCRIPT = `(function(t){addEventListener("message",function(e){var d=e.data;if(e.source!==parent||!d||d.source!=="chatter")return;if(d.type==="keymap")t=d.map||{};` +
+      // 画面の操作ボタン：アプリから届いたキーを、そのまま押したことにする（置き換えの表は通さない）
+      `else if(d.type==="key")document.dispatchEvent(new KeyboardEvent(d.down?"keydown":"keyup",{key:d.key,code:d.code,repeat:false,bubbles:true,cancelable:true}));});` +
       `["keydown","keyup"].forEach(function(type){addEventListener(type,function(ev){if(!ev.isTrusted||!(ev.code in t))return;var m=t[ev.code];ev.stopImmediatePropagation();ev.preventDefault();if(!m)return;` +
       `(ev.target||document).dispatchEvent(new KeyboardEvent(type,{key:m.key,code:m.code,repeat:ev.repeat,bubbles:true,cancelable:true}));},true);});})`;
+
+    // ---- 画面の操作ボタン（ゲームの操作ごとに1つ。スイッチのオン/オフはこのブラウザに保存）----
+    const GAME_PAD_KEY = "chatter:gamepad";
+    const gamePadOn = () => store.get(GAME_PAD_KEY) === "on";
+    const PAD_ICON = { left: "←", right: "→", up: "↑", down: "↓" };
+    function renderGamePad() {
+      const pad = $("#game-pad"), wrap = $("#game-pad-wrap");
+      const actions = GAME_KEYS[state.activeGameId];
+      wrap.hidden = !actions;
+      $("#game-pad-toggle").setAttribute("aria-checked", gamePadOn());
+      pad.hidden = !actions || !gamePadOn();
+      if (pad.hidden) return;
+      // 方向（上下左右）は十字に、それ以外は横に並べる
+      const dir = (id) => actions.find((a) => a.id === id);
+      const btn = (a, cls = "") => a ? `<button type="button" data-pad="${esc(a.id)}" class="game-pad-btn ${cls}" aria-label="${esc(a.label)}">${PAD_ICON[a.id] ? `<span class="text-xl leading-none">${PAD_ICON[a.id]}</span>` : `<span class="text-xs leading-tight">${esc(a.label)}</span>`}</button>` : `<span></span>`;
+      const hasDirs = ["left", "right", "up", "down"].some((id) => dir(id));
+      const others = actions.filter((a) => !PAD_ICON[a.id]);
+      pad.innerHTML = `
+        <div class="flex items-center justify-center gap-4 max-w-md mx-auto">
+          ${hasDirs ? `<div class="grid grid-cols-3 gap-1.5 shrink-0">
+            ${btn(null)}${btn(dir("up"))}${btn(null)}
+            ${btn(dir("left"))}${btn(dir("down"))}${btn(dir("right"))}
+          </div>` : ""}
+          ${others.length ? `<div class="grid ${others.length > 2 ? "grid-cols-2" : "grid-cols-1"} gap-1.5 flex-1 min-w-0">${others.map((a) => btn(a, "w-full")).join("")}</div>` : ""}
+        </div>`;
+    }
+    function toggleGamePad() {
+      store.set(GAME_PAD_KEY, gamePadOn() ? "off" : "on");
+      renderGamePad();
+    }
+    // 押している間だけ、そのキーを押したことにする（離す・指がずれる・取り消されたら離したことにする）
+    function sendPadKey(actionId, down) {
+      const a = GAME_KEYS[state.activeGameId]?.find((x) => x.id === actionId);
+      if (!a) return;
+      postToGame(state.activeGameId, { type: "key", down, code: a.keys[0], key: codeToKey(a.keys[0]) });
+    }
+    {
+      const pad = document.getElementById("game-pad");
+      pad.addEventListener("pointerdown", (e) => {
+        const b = e.target.closest("[data-pad]");
+        if (!b) return;
+        e.preventDefault();
+        try { b.setPointerCapture(e.pointerId); } catch {}
+        b.classList.add("is-down");
+        sendPadKey(b.dataset.pad, true);
+      });
+      const up = (e) => {
+        const b = e.target.closest?.("[data-pad]");
+        if (!b || !b.classList.contains("is-down")) return;
+        b.classList.remove("is-down");
+        sendPadKey(b.dataset.pad, false);
+      };
+      ["pointerup", "pointercancel", "lostpointercapture"].forEach((ev) => pad.addEventListener(ev, up));
+      pad.addEventListener("contextmenu", (e) => e.preventDefault()); // 長押しでメニューを出さない
+    }
 
     let gameKeysView = null; // { gameId, waiting: 操作ID | null }
     function openGameKeys() {
@@ -11775,6 +11842,7 @@ draw();
       if (!g) return;
       const s = state.gameStats.get(g.id);
       $("#game-keys-btn").hidden = !GAME_KEYS[g.id];
+      renderGamePad();
       $("#game-header-main").innerHTML = `
         ${gameThumb(g, "w-10 h-10 text-xl")}
         <div class="min-w-0">
@@ -17423,6 +17491,7 @@ draw();
       "open-ranking": (el) => openRanking(el.dataset.id || undefined),
       "restart-game": () => restartGame(),
       "open-game-keys": () => openGameKeys(),
+      "toggle-game-pad": () => toggleGamePad(),
       "game-key-set": (el) => toggleGameKeyWait(el.dataset.id),
       "game-keys-reset": () => resetGameKeys(),
       "ranking-game": (el) => setRankingGame(el.dataset.id),
