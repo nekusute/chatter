@@ -7275,9 +7275,12 @@ draw();
       overflow: hidden;
     }
 
+    /* 遊ぶ範囲（横に広すぎるとブロックの往復が長くなるので、最大 PLAY_MAX_W に絞って真ん中に置く） */
     #gameCanvas {
       display: block;
       width: 100%;
+      max-width: 440px;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 0 40px rgba(0, 0, 0, 0.35);
       height: 100%;
       cursor: pointer;
       touch-action: manipulation;
@@ -7681,6 +7684,7 @@ draw();
       const finalPerfectEl = document.getElementById('finalPerfectEl');
       const newRecordBadge = document.getElementById('newRecordBadge');
 
+      const PLAY_MAX_W = 440; // 遊ぶ範囲の最大の幅（CSS の #gameCanvas の max-width と合わせる）
       const BLOCK_HEIGHT = 28;
       const TOP_DEPTH = 14; // 擬似3Dの上面奥行き
       const PERFECT_TOLERANCE = 5.5;
@@ -7817,7 +7821,7 @@ draw();
       }
 
       function getInitialBlockWidth() {
-        return Math.min(220, Math.max(130, width * 0.44));
+        return Math.min(190, Math.max(120, width * 0.42)); // ブロックの最初の幅（遊ぶ範囲の幅に合わせる）
       }
 
       function getColor(index) {
@@ -7833,7 +7837,7 @@ draw();
 
       function resizeCanvas() {
         const rect = canvas.parentElement.getBoundingClientRect();
-        width = Math.max(320, rect.width);
+        width = Math.max(320, Math.min(PLAY_MAX_W, rect.width));
         height = Math.max(360, rect.height);
         dpr = Math.min(window.devicePixelRatio || 1, 2);
 
