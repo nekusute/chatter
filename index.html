@@ -11519,31 +11519,49 @@ draw();
     // 3段階で共通のデザイン（マスター：夜の色にゲームの色の光 / レジェンド：黒と金 / 神：オーロラ）に、ゲームの色と絵文字を入れる。
     // ID・名前・必要な得点（need）は上の一覧のまま（firestore.rules の headerEarned と合わせる）
     const ENDGAME_ACCENT = { suika: "#22c55e", 2048: "#f59e0b", balloon: "#38bdf8", minesweeper: "#ef4444", breakout: "#f97316", snake: "#10b981", puyo: "#ec4899", blocks: "#06b6d4", stack: "#6366f1" };
+    // マスターの地の色（ゲームの色を暗くしたもの）
+    const ENDGAME_DARK = { suika: "#052e16", 2048: "#2b1a04", balloon: "#082f49", minesweeper: "#2a0909", breakout: "#2b1204", snake: "#042f2e", puyo: "#2d0a20", blocks: "#083344", stack: "#1e1b4b" };
+    // ゲームごとの模様（c：模様の色。段階ごとに、マスターはゲームの色・レジェンドは金・神は白をうすく使う）と、絵文字の枠の形（角の丸み）
+    const ENDGAME_MOTIF = {
+      suika: { r: "9999px", m: (c) => `repeating-linear-gradient(100deg, ${c} 0 7px, transparent 7px 24px)` }, // スイカの縞
+      2048: { r: ".3em", m: (c) => `repeating-linear-gradient(0deg, transparent 0 22px, ${c} 22px 25px), repeating-linear-gradient(90deg, transparent 0 22px, ${c} 22px 25px)` }, // タイルのます目
+      balloon: { r: "50% 50% 46% 46% / 56% 56% 44% 44%", m: (c) => `radial-gradient(ellipse 6px 8px at 50% 40%, ${c} 98%, transparent) 0 0 / 34px 44px, radial-gradient(circle, ${c} 0 3px, transparent 3.5px) 17px 24px / 34px 44px` }, // 昇る気球
+      minesweeper: { r: ".15em", m: (c) => `repeating-conic-gradient(${c} 0 25%, transparent 0 50%) 0 0 / 22px 22px` }, // 地雷原のます目
+      breakout: { r: ".2em", m: (c) => `repeating-linear-gradient(0deg, transparent 0 10px, ${c} 10px 12px), repeating-linear-gradient(90deg, transparent 0 26px, ${c} 26px 28px)` }, // レンガ
+      snake: { r: "9999px", m: (c) => `radial-gradient(circle at 50% 0, transparent 0 7px, ${c} 7.5px 9px, transparent 9.5px) 0 0 / 18px 11px` }, // うろこ
+      puyo: { r: "45% 55% 50% 50% / 55% 50% 50% 45%", m: (c) => `radial-gradient(circle, ${c} 0 7px, transparent 7.5px) 0 0 / 28px 28px, radial-gradient(circle, ${c} 0 4px, transparent 4.5px) 14px 14px / 28px 28px` }, // ぷにぷに
+      blocks: { r: ".15em", m: (c) => { const sq = `conic-gradient(from 90deg at 12px 12px, transparent 50%, ${c} 0 75%, transparent 0)`; return `${sq} 0 0 / 39px 39px, ${sq} 13px 0 / 39px 39px, ${sq} 13px 13px / 39px 39px`; } }, // 落ちてくるブロック（L字に並べた 12px の四角）
+      stack: { r: ".25em", m: (c) => `repeating-linear-gradient(0deg, ${c} 0 8px, transparent 8px 13px)` }, // 積み上がる段
+    };
     function endgameLook(h) {
       const g = gameById(h.game), a = ENDGAME_ACCENT[h.game] || "#94a3b8";
       const rank = h.id.split("-").pop();
+      const motif = ENDGAME_MOTIF[h.game] || { r: "9999px", m: () => "linear-gradient(transparent, transparent)" };
+      // 模様は、文字の側（右）にかけた暗いグラデーションで薄くして、見出しを読みやすくする
+      const pattern = (c) => motif.m(c);
       // プロフィールではアイコンが下のまん中に、「ヘッダー」ボタンが右上に重なるので、文字は右寄りのまん中に置く
       // 字間を空けた見出し（右端の空きを左にも足して、まん中に置く）
       const title = (t, ls, css) => [t, 74, 34, 21, null, 0, null, null, `font-weight:600;letter-spacing:${ls}em;padding-left:${ls}em;${css}`];
       if (rank === "4") return {
-        bg: `radial-gradient(90% 160% at 100% 0%, ${a}59, transparent 60%), repeating-linear-gradient(135deg, rgb(255 255 255 / .035) 0 1px, transparent 1px 14px), linear-gradient(135deg, #0b1220, #172033)`,
+        bg: `radial-gradient(90% 160% at 100% 0%, ${a}59, transparent 60%), linear-gradient(90deg, transparent 40%, rgb(11 18 32 / .9) 82%), ${pattern(`${a}45`)}, linear-gradient(135deg, ${ENDGAME_DARK[h.game] || "#0b1220"}, #0b1220 75%)`,
         deco: [
-          [g.emoji, 15, 22, 30, null, 0, "rgb(255 255 255 / .06)", null, `padding:.34em;border-radius:9999px;border:1px solid ${a}80;box-shadow:inset 0 0 16px ${a}40, 0 0 18px ${a}33`],
+          [g.emoji, 15, 22, 30, null, 0, "rgb(15 23 42 / .75)", null, `padding:.34em;border-radius:${motif.r};border:1px solid ${a}80;box-shadow:inset 0 0 16px ${a}40, 0 0 18px ${a}33`],
           title("MASTER", .42, "color:#f1f5f9"),
           ["", 74, 64, 10, null, 0, a, null, "width:5.2em;height:.2em;padding:0;border-radius:2px"],
         ] };
       if (rank === "5") return {
-        bg: "linear-gradient(115deg, transparent 32%, rgb(253 230 138 / .14) 46%, transparent 58%), radial-gradient(70% 140% at 12% 50%, rgb(180 83 9 / .5), transparent 65%), linear-gradient(135deg, #120d05, #2a1d0a 55%, #120d05)",
+        bg: `linear-gradient(115deg, transparent 32%, rgb(253 230 138 / .14) 46%, transparent 58%), radial-gradient(70% 140% at 12% 50%, rgb(180 83 9 / .5), transparent 65%), linear-gradient(90deg, transparent 35%, #1f1608 80%), ${pattern("rgb(252 211 77 / .2)")}, linear-gradient(135deg, #120d05, #2a1d0a 55%, #120d05)`,
         deco: [
-          [g.emoji, 15, 22, 30, null, 0, "rgb(0 0 0 / .25)", null, "padding:.3em;border-radius:9999px;border:1.5px solid #fcd34d;box-shadow:0 0 0 4px rgb(252 211 77 / .12), 0 0 22px rgb(252 211 77 / .35)"],
+          [g.emoji, 15, 22, 30, null, 0, "rgb(18 13 5 / .8)", null, `padding:.3em;border-radius:${motif.r};border:1.5px solid #fcd34d;box-shadow:0 0 0 4px rgb(252 211 77 / .12), 0 0 22px rgb(252 211 77 / .35)`],
           title("LEGEND", .36, "color:#fde68a;font-family:Georgia,'Times New Roman',serif;text-shadow:0 0 12px rgb(251 191 36 / .45)"),
           ["─── ◆ ───", 74, 62, 9, "#d4a24a", 0, null, null, "font-weight:400"],
         ] };
       return {
-        bg: "radial-gradient(55% 120% at 85% 15%, rgb(168 85 247 / .6), transparent 65%), radial-gradient(45% 110% at 8% 100%, rgb(34 211 238 / .45), transparent 65%), radial-gradient(40% 90% at 55% 65%, rgb(244 114 182 / .3), transparent 70%), radial-gradient(circle, rgb(255 255 255 / .7) 0 .8px, transparent 1.3px) 3px 5px / 29px 23px, radial-gradient(circle, rgb(233 213 255 / .5) 0 .6px, transparent 1.1px) 14px 11px / 41px 37px, #05060f",
+        // オーロラの主な色を、ゲームの色にする
+        bg: `radial-gradient(55% 120% at 85% 15%, ${a}a6, transparent 65%), radial-gradient(45% 110% at 8% 100%, rgb(34 211 238 / .4), transparent 65%), radial-gradient(40% 90% at 55% 65%, rgb(244 114 182 / .28), transparent 70%), radial-gradient(circle, rgb(255 255 255 / .7) 0 .8px, transparent 1.3px) 3px 5px / 29px 23px, radial-gradient(circle, rgb(233 213 255 / .5) 0 .6px, transparent 1.1px) 14px 11px / 41px 37px, linear-gradient(90deg, transparent 35%, #05060f 80%), ${pattern("rgb(255 255 255 / .13)")}, #05060f`,
         deco: [
-          [g.emoji, 15, 22, 30, null, 0, "rgb(255 255 255 / .06)", null, "padding:.34em;border-radius:9999px;border:1.5px solid rgb(255 255 255 / .7);box-shadow:0 0 18px rgb(192 132 252 / .7), 0 0 34px rgb(34 211 238 / .35)"],
-          title("GOD", .6, "color:#fff;font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:min(24px, 7.06cqw);text-shadow:0 0 10px rgb(232 121 249 / .85), 0 0 24px rgb(103 232 249 / .5)"),
+          [g.emoji, 15, 22, 30, null, 0, "rgb(5 6 15 / .7)", null, `padding:.34em;border-radius:${motif.r};border:1.5px solid rgb(255 255 255 / .7);box-shadow:0 0 18px ${a}b3, 0 0 34px rgb(34 211 238 / .35)`],
+          title("GOD", .6, `color:#fff;font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:min(24px, 7.06cqw);text-shadow:0 0 10px ${a}, 0 0 24px rgb(103 232 249 / .5)`),
           ["✦", 94, 82, 12, "#fff", 0, null, "0 0 8px #fff"],
           ["✦", 30, 76, 9, "#e9d5ff", 0, null, "0 0 6px #e9d5ff"],
         ] };
@@ -12224,6 +12242,18 @@ draw();
     // ============================================================
     const EMOJI_RECENT_MAX = 24;
     const emojiRecentKey = () => `chatter:emojiRecent:${state.me?.id}`;
+    // デフォルトにない絵文字でリアクションした履歴：リアクションの選択欄の2段目に新しい順で8個まで出す（データは上の「最近使った絵文字」と共通）
+    const REACT_HISTORY_MAX = 8;
+    const reactHistory = () => {
+      const list = store.json(emojiRecentKey(), []);
+      return (Array.isArray(list) ? list : []).map((e) => `e:${e}`).filter((c) => reactionEmoji(c)).slice(0, REACT_HISTORY_MAX);
+    };
+    function addEmojiRecent(code) {
+      if (!isCustomCode(code) || !state.me?.id) return;
+      const emoji = code.slice(2);
+      const list = store.json(emojiRecentKey(), []);
+      store.set(emojiRecentKey(), JSON.stringify([emoji, ...(Array.isArray(list) ? list : []).filter((e) => e !== emoji)].slice(0, EMOJI_RECENT_MAX)));
+    }
     let emojiPick = null; // { msgId, q（検索語）, variantOf（肌の色を選んでいる絵文字） }
     function openEmojiPicker(msgId) {
       state.selectedMsgId = null;
@@ -12298,7 +12328,6 @@ draw();
     function pickEmoji(emoji) {
       if (!emojiPick || !reactionEmoji(`e:${emoji}`)) return;
       const msgId = emojiPick.msgId;
-      store.set(emojiRecentKey(), JSON.stringify([emoji, ...store.json(emojiRecentKey(), []).filter((e) => e !== emoji)].slice(0, EMOJI_RECENT_MAX)));
       closeModal();
       react(msgId, `e:${emoji}`).catch((e) => { console.warn(e); toast(errMsg(e), "error"); });
     }
@@ -13149,12 +13178,17 @@ draw();
       const current = m.reactions?.[selfId(room)];
       const pinned = isPinned(room, m.id);
       const canPin = isMember(room) && PINNABLE_TYPES.includes(m.type);
+      const history = reactHistory();
+      const emojiBtn = (code, emoji) => `
+            <button type="button" data-action="react" data-id="${esc(m.id)}" data-code="${esc(code)}" aria-label="${esc(emoji)}" aria-pressed="${current === code}"
+              class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center text-lg sm:text-xl leading-none transition hover:bg-slate-100 hover:scale-110 active:scale-95 ${current === code ? "bg-indigo-100 ring-1 ring-indigo-300" : ""}">${esc(emoji)}</button>`;
       return `
-        <div class="reaction-picker ${pickerShownFor === m.id ? "" : "pop-in"} absolute bottom-full left-0 mb-2 w-max flex items-center gap-0.5 p-1 rounded-full bg-white shadow-lg ring-1 ring-slate-200" role="toolbar" aria-label="リアクション">
+        <div class="reaction-picker ${pickerShownFor === m.id ? "" : "pop-in"} absolute bottom-full left-0 mb-2 w-max flex flex-col gap-0.5 p-1 ${history.length ? "rounded-[1.375rem]" : "rounded-full"} bg-white shadow-lg ring-1 ring-slate-200" role="toolbar" aria-label="リアクション">
+          <div class="flex items-center gap-0.5">
           ${REACTIONS.map(([code, emoji]) => `
             <button type="button" data-action="react" data-id="${esc(m.id)}" data-code="${code}" aria-label="${emoji}" aria-pressed="${current === code}"
               class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center text-lg sm:text-xl leading-none transition hover:bg-slate-100 hover:scale-110 active:scale-95 ${current === code ? "bg-indigo-100 ring-1 ring-indigo-300" : ""}">${emoji}</button>`).join("")}
-          ${isCustomCode(current) && reactionEmoji(current) ? `
+          ${isCustomCode(current) && reactionEmoji(current) && !history.includes(current) ? `
             <button type="button" data-action="react" data-id="${esc(m.id)}" data-code="${esc(current)}" aria-label="${esc(reactionEmoji(current))}" aria-pressed="true"
               class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center text-lg sm:text-xl leading-none transition hover:scale-110 active:scale-95 bg-indigo-100 ring-1 ring-indigo-300">${esc(reactionEmoji(current))}</button>` : ""}
           <button type="button" data-action="react-more" data-id="${esc(m.id)}" aria-label="ほかの絵文字" title="ほかの絵文字（Chatter Plus）"
@@ -13169,6 +13203,11 @@ draw();
           ${canPin ? `
             <button type="button" data-action="${pinned ? "unpin" : "pin"}" data-id="${esc(m.id)}" aria-label="${pinned ? "ピン留めを解除" : "ピン留め"}" title="${pinned ? "ピン留めを解除" : "ピン留め"}" aria-pressed="${pinned}"
               class="w-8 h-8 sm:w-9 sm:h-9 rounded-full grid place-items-center transition hover:bg-slate-100 hover:text-indigo-600 active:scale-95 ${pinned ? "bg-indigo-100 ring-1 ring-indigo-300 text-indigo-600" : "text-slate-500"}">${icon("pin", "w-5 h-5")}</button>` : ""}
+          </div>
+          ${history.length ? `
+          <div class="flex items-center gap-0.5 pt-0.5 border-t border-slate-100" aria-label="最近使った絵文字">
+            ${history.map((code) => emojiBtn(code, reactionEmoji(code))).join("")}
+          </div>` : ""}
         </div>`;
     }
 
@@ -13986,6 +14025,7 @@ draw();
       if (isCustomCode(code) && m.reactions?.[selfId(room)] !== code && myPlanRank() < PLAN_RANK.plus) { openPlans(); return; }
       const key = selfId(room);
       const same = m.reactions?.[key] === code;
+      if (!same) addEmojiRecent(code);
       await updateDoc(doc(db, "rooms", room.id, "messages", msgId), { [`reactions.${key}`]: same ? deleteField() : code });
     }
 
