@@ -491,7 +491,7 @@
         @apply relative flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-semibold text-slate-500 transition hover:text-slate-700;
       }
       .tab-btn.is-active { @apply bg-white text-indigo-600 shadow-sm; }
-      .game-pad-btn { display: grid; place-items: center; min-width: 3.25rem; height: 3.25rem; padding: 0 .5rem; border-radius: .9rem;
+      .game-pad-btn { display: grid; place-items: center; width: 3.5rem; height: 3.5rem; padding: 0 .25rem; border-radius: .9rem;
         background: rgb(var(--c-slate-100)); color: rgb(var(--c-slate-700)); font-weight: 700; box-shadow: 0 2px 0 rgb(var(--c-slate-300));
         -webkit-tap-highlight-color: transparent; touch-action: none; user-select: none; -webkit-user-select: none; }
       .game-pad-btn.is-down { transform: translateY(2px); box-shadow: none; background: rgb(var(--c-slate-200)); }
@@ -2091,13 +2091,14 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
   canvas.height = HEIGHT;
 
   // モノクロパレット（ダークモードでは白黒を反転する）
-  let COLOR_BG, COLOR_DARK, COLOR_MID, COLOR_DOT;
+  let COLOR_BG, COLOR_DARK, COLOR_MID, COLOR_DOT, COLOR_STAR;
   function applyPalette() {
     const dark = document.documentElement.classList.contains('dark');
     COLOR_BG = dark ? '#202124' : '#ffffff';
     COLOR_DARK = dark ? '#c8c8c8' : '#535353';
     COLOR_MID = dark ? '#8a8a8a' : '#888888';
     COLOR_DOT = dark ? '#33353a' : '#eeeeee';
+    COLOR_STAR = dark ? '#facc15' : '#eab308'; // ★（無敵アイテム）だけは金色
   }
   applyPalette();
 
@@ -2181,19 +2182,20 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
     "000111111000"
   ];
 
+  // ★：トゲと見分けやすいよう、金色（4）で描く
   const SPRITE_STAR = [
-    "000001100000",
-    "000011110000",
-    "000011110000",
-    "111111111111",
-    "011113311110",
-    "001113311100",
-    "000111111000",
-    "000111111000",
-    "001111111100",
-    "001110011100",
-    "011100001110",
-    "011000000110"
+    "000004400000",
+    "000044440000",
+    "000044440000",
+    "444444444444",
+    "044443344440",
+    "004443344400",
+    "000444444000",
+    "000444444000",
+    "004444444400",
+    "004440044400",
+    "044400004440",
+    "044000000440"
   ];
 
   const SPRITE_CLOUD = [
@@ -2216,6 +2218,7 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
         if (ch === '1') ctx.fillStyle = COLOR_DARK;
         else if (ch === '2') ctx.fillStyle = COLOR_MID;
         else if (ch === '3') ctx.fillStyle = COLOR_BG;
+        else if (ch === '4') ctx.fillStyle = COLOR_STAR;
         ctx.fillRect(rx + col * scale, ry + row * scale, scale, scale);
       }
     }
@@ -2565,8 +2568,8 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
       const starBlink = player.starTimer > 0 && Math.floor(frame / (player.starTimer > 120 ? 8 : 3)) % 2 === 0;
       if (!starBlink) drawSprite(SPRITE_BALLOON, player.x, player.y + bob, 1);
       if (player.starTimer > 0) {
-        // 気球のまわりを回るきらきら
-        ctx.fillStyle = COLOR_DARK;
+        // 気球のまわりを回るきらきら（★と同じ金色）
+        ctx.fillStyle = COLOR_STAR;
         const cx = Math.round(player.x + 8);
         const cy = Math.round(player.y + 9 + bob);
         for (let a = 0; a < 4; a++) {
@@ -10544,6 +10547,27 @@ draw();
     const coinAward = (gameId, score) => COIN_PER_STEP * Math.min(Math.floor(score / (gameById(gameId)?.coinUnit || Infinity)), COIN_MAX_STEPS);
     const walletCoins = () => state.wallet?.coins || 0;
     const walletDecos = () => state.wallet?.decos || {};
+    // 管理者の全体配布（wallet/main の grant）が届いたら、アップデートの通知と同じ形でお知らせを出す。
+    // 同じ配布は端末ごとに一度だけ出す（localStorage に最後に見た配布の ID を残す）
+    function showGrantNotice() {
+      const g = state.wallet?.grant;
+      if (!g?.id || !state.me) return;
+      const key = `chatter-grant-seen:${state.me.id}`;
+      if (localStorage.getItem(key) === g.id) return;
+      localStorage.setItem(key, g.id);
+      $("#grant-banner")?.remove();
+      const el = document.createElement("div");
+      el.id = "grant-banner";
+      el.setAttribute("role", "status");
+      el.className = "toast pointer-events-auto w-full flex items-start gap-2 pl-4 pr-2 py-2 rounded-2xl shadow-lg text-sm font-medium text-white bg-slate-900/90 backdrop-blur";
+      el.innerHTML = `${icon("gift", "w-4 h-4 mt-0.5 shrink-0")}<div class="flex-1 min-w-0 leading-snug">
+          <div class="font-bold text-amber-300">管理者から Chatterコインが ${Number(g.coins).toLocaleString()} 枚届きました</div>
+          <div class="mt-0.5 whitespace-pre-wrap break-words">${esc(g.message || "")}</div></div>
+        <button type="button" data-dismiss class="shrink-0 p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition" aria-label="閉じる">${icon("x", "w-4 h-4")}</button>`;
+      el.querySelector("[data-dismiss]").onclick = () => { el.classList.add("toast-out"); setTimeout(() => el.remove(), 300); };
+      $("#toast-root").prepend(el);
+    }
+
     function subscribeWallet() {
       state.unsub.wallet = onSnapshot(
         doc(db, "users", state.me.id, "wallet", "main"),
@@ -10554,6 +10578,7 @@ draw();
           if (SHOP_ITEMS.every((it) => state.wallet.items?.[it.id] === true)) unlockAchievement("shop", "shop-master");
           if (state.tab === "games" || state.tab === "shop") renderSidebar();
           if (gachaView) renderGacha();
+          showGrantNotice();
         },
         (e) => { console.warn(e); state.walletLoaded = true; },
       );
@@ -11722,30 +11747,66 @@ draw();
     const GAME_PAD_KEY = "chatter:gamepad";
     const gamePadOn = () => store.get(GAME_PAD_KEY) === "on";
     const PAD_ICON = { left: "←", right: "→", up: "↑", down: "↓" };
+    // ボタンの置き場所（ゲームごと。このブラウザに保存）：{ 操作ID: { x, y } }。ボタンの中心の位置を、欄の幅・高さに対する % で持つ
+    const padLayoutKey = (id) => `chatter:gamepad-layout:${id}`;
+    function defaultPadLayout(id) {
+      const actions = GAME_KEYS[id] || [];
+      const pos = {};
+      const cross = { up: [22, 18], left: [10, 50], right: [34, 50], down: [22, 82] };
+      const others = actions.filter((a) => !cross[a.id]);
+      const cols = others.length > 6 ? 3 : 2;
+      const rows = Math.ceil(others.length / cols);
+      for (const a of actions) if (cross[a.id]) pos[a.id] = { x: cross[a.id][0], y: cross[a.id][1] };
+      others.forEach((a, k) => {
+        const c = k % cols, r = Math.floor(k / cols);
+        pos[a.id] = { x: (cols === 3 ? 52 : 64) + c * (cols === 3 ? 20 : 24), y: rows <= 1 ? 50 : 18 + r * (64 / (rows - 1)) };
+      });
+      return pos;
+    }
+    function padLayout(id) {
+      const def = defaultPadLayout(id);
+      try {
+        const saved = JSON.parse(store.get(padLayoutKey(id)) || "{}");
+        for (const k of Object.keys(def)) {
+          const v = saved?.[k];
+          if (v && Number.isFinite(v.x) && Number.isFinite(v.y)) def[k] = { x: Math.min(97, Math.max(3, v.x)), y: Math.min(95, Math.max(5, v.y)) };
+        }
+      } catch {}
+      return def;
+    }
+    let padEditing = false; // 配置を変えているところ
     function renderGamePad() {
       const pad = $("#game-pad"), wrap = $("#game-pad-wrap");
-      const actions = GAME_KEYS[state.activeGameId];
+      const id = state.activeGameId;
+      const actions = GAME_KEYS[id];
       wrap.hidden = !actions;
       $("#game-pad-toggle").setAttribute("aria-checked", gamePadOn());
       pad.hidden = !actions || !gamePadOn();
-      if (pad.hidden) return;
-      // 方向（上下左右）は十字に、それ以外は横に並べる
-      const dir = (id) => actions.find((a) => a.id === id);
-      const btn = (a, cls = "") => a ? `<button type="button" data-pad="${esc(a.id)}" class="game-pad-btn ${cls}" aria-label="${esc(a.label)}">${PAD_ICON[a.id] ? `<span class="text-xl leading-none">${PAD_ICON[a.id]}</span>` : `<span class="text-xs leading-tight">${esc(a.label)}</span>`}</button>` : `<span></span>`;
-      const hasDirs = ["left", "right", "up", "down"].some((id) => dir(id));
-      const others = actions.filter((a) => !PAD_ICON[a.id]);
+      if (pad.hidden) { padEditing = false; return; }
+      const pos = padLayout(id);
       pad.innerHTML = `
-        <div class="flex items-center justify-center gap-4 max-w-md mx-auto">
-          ${hasDirs ? `<div class="grid grid-cols-3 gap-1.5 shrink-0">
-            ${btn(null)}${btn(dir("up"))}${btn(null)}
-            ${btn(dir("left"))}${btn(dir("down"))}${btn(dir("right"))}
-          </div>` : ""}
-          ${others.length ? `<div class="grid ${others.length > 2 ? "grid-cols-2" : "grid-cols-1"} gap-1.5 flex-1 min-w-0">${others.map((a) => btn(a, "w-full")).join("")}</div>` : ""}
+        <div class="flex items-center gap-2 max-w-xl mx-auto mb-1">
+          ${padEditing ? `<span class="text-xs font-semibold text-indigo-600">ボタンをドラッグして好きな場所へ</span>` : ""}
+          <span class="ml-auto"></span>
+          ${padEditing ? `<button type="button" data-action="game-pad-reset" class="btn-chip py-1 text-xs bg-slate-100 text-slate-600 hover:bg-slate-200">既定に戻す</button>` : ""}
+          <button type="button" data-action="game-pad-edit" class="btn-chip py-1 text-xs ${padEditing ? "bg-indigo-600 text-white hover:bg-indigo-500" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}">${padEditing ? "完了" : `${icon("pencil", "w-3.5 h-3.5")}配置を変える`}</button>
+        </div>
+        <div id="game-pad-area" class="relative h-44 max-w-xl mx-auto rounded-2xl ${padEditing ? "border-2 border-dashed border-indigo-300 bg-indigo-50" : ""}">
+          ${actions.map((a) => `<button type="button" data-pad="${esc(a.id)}" class="game-pad-btn absolute ${padEditing ? "cursor-move ring-2 ring-indigo-400" : ""}" style="left:${pos[a.id].x}%;top:${pos[a.id].y}%;transform:translate(-50%,-50%)" aria-label="${esc(a.label)}">${PAD_ICON[a.id] ? `<span class="text-xl leading-none">${PAD_ICON[a.id]}</span>` : `<span class="text-[10px] leading-tight text-center break-all">${esc(a.label)}</span>`}</button>`).join("")}
         </div>`;
     }
     function toggleGamePad() {
       store.set(GAME_PAD_KEY, gamePadOn() ? "off" : "on");
       renderGamePad();
+    }
+    function toggleGamePadEdit() {
+      padEditing = !padEditing;
+      renderGamePad();
+    }
+    function resetGamePadLayout() {
+      store.set(padLayoutKey(state.activeGameId), "{}");
+      renderGamePad();
+      toast("ボタンの配置を既定に戻しました");
     }
     // 押している間だけ、そのキーを押したことにする（離す・指がずれる・取り消されたら離したことにする）
     function sendPadKey(actionId, down) {
@@ -11755,15 +11816,38 @@ draw();
     }
     {
       const pad = document.getElementById("game-pad");
+      let drag = null; // 配置を変えているとき：{ btn, id }
       pad.addEventListener("pointerdown", (e) => {
         const b = e.target.closest("[data-pad]");
         if (!b) return;
         e.preventDefault();
         try { b.setPointerCapture(e.pointerId); } catch {}
+        if (padEditing) { drag = { btn: b, id: b.dataset.pad }; return; }
         b.classList.add("is-down");
         sendPadKey(b.dataset.pad, true);
       });
+      pad.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        const area = $("#game-pad-area").getBoundingClientRect();
+        // ボタンが欄からはみ出さないように、中心が動ける範囲をボタンの大きさの半分だけ内側にする
+        const hw = (drag.btn.offsetWidth / 2 / area.width) * 100, hh = (drag.btn.offsetHeight / 2 / area.height) * 100;
+        const x = Math.min(100 - hw, Math.max(hw, ((e.clientX - area.left) / area.width) * 100));
+        const y = Math.min(100 - hh, Math.max(hh, ((e.clientY - area.top) / area.height) * 100));
+        drag.btn.style.left = `${x}%`;
+        drag.btn.style.top = `${y}%`;
+        drag.x = x; drag.y = y;
+      });
       const up = (e) => {
+        if (drag) {
+          if (drag.x !== undefined) {
+            const id = state.activeGameId;
+            const pos = padLayout(id);
+            pos[drag.id] = { x: Math.round(drag.x * 10) / 10, y: Math.round(drag.y * 10) / 10 };
+            store.set(padLayoutKey(id), JSON.stringify(pos));
+          }
+          drag = null;
+          return;
+        }
         const b = e.target.closest?.("[data-pad]");
         if (!b || !b.classList.contains("is-down")) return;
         b.classList.remove("is-down");
@@ -16761,6 +16845,7 @@ draw();
             <button type="button" data-action="admin-restrict" class="btn-secondary w-full">${icon("alert", "w-5 h-5")}アカウントの制限</button>
             <button type="button" data-action="admin-reset" class="btn-secondary w-full">${icon("key", "w-5 h-5")}パスワードのリセット</button>
             <button type="button" data-action="admin-plans" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}プランの加入状況</button>
+            <button type="button" data-action="admin-grant" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}全員にコインを配る</button>
             <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
           </div>
           <div id="admin-lock-box" class="lg:col-span-2"></div>
@@ -17026,6 +17111,63 @@ draw();
 
     // 管理者メニュー：ユーザーごとのプラン（Chatter Plus / Pro / Max）の加入状況。見るだけ（変更は本人のプラン画面から）
     let adminPlanFilter = "all"; // "all" | "none" | "plus" | "pro" | "max"
+    // 全員にコインを配る（メッセージ付き）。コインは 1人あたりの数。1人ずつ wallet/main に足す（firestore.rules の grantOk と合わせる）
+    const GRANT_MAX_COINS = 100000, GRANT_MAX_MESSAGE = 300, GRANT_BATCH = 200;
+    function openAdminGrant() {
+      if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
+      const n = [...state.users.values()].filter((u) => !u.deleted).length;
+      openAdminModal(`
+        ${modalHead("全員にコインを配る", `ユーザー ${n}人それぞれに、コインとメッセージが届きます。届いたときに、アップデートの通知と同じようにお知らせが出ます。`)}
+        <form id="form-admin-grant" class="px-6 pb-6 space-y-4">
+          <div>
+            <label class="label" for="grant-message">メッセージ</label>
+            <textarea id="grant-message" name="message" class="input" rows="3" maxlength="${GRANT_MAX_MESSAGE}" placeholder="例：いつもありがとうございます！"></textarea>
+          </div>
+          <div>
+            <label class="label" for="grant-coins">コインの数（1人あたり）</label>
+            <input id="grant-coins" name="coins" type="number" min="1" max="${GRANT_MAX_COINS}" step="1" inputmode="numeric" class="input" placeholder="例：100" />
+          </div>
+          <div class="flex gap-2">
+            <button type="button" data-action="admin-menu" class="btn-secondary flex-1">戻る</button>
+            <button type="submit" class="btn-primary flex-1">配る</button>
+          </div>
+        </form>`);
+    }
+    async function grantCoinsToAll(message, coinsRaw) {
+      if (!isAdmin() || !adminKey) return;
+      const msg = String(message ?? "").trim();
+      const raw = String(coinsRaw ?? "").trim();
+      const coins = Number(raw);
+      if (!msg || msg.length > GRANT_MAX_MESSAGE) throw new Error(`メッセージを 1〜${GRANT_MAX_MESSAGE} 文字で入力してください。`);
+      if (!raw || !Number.isInteger(coins) || coins < 1 || coins > GRANT_MAX_COINS) throw new Error(`コインの数は 1〜${GRANT_MAX_COINS} の整数で入力してください。`);
+      const ids = [...state.users.values()].filter((u) => !u.deleted).map((u) => u.id);
+      if (!ids.length) throw new Error("配る相手がいません。");
+      if (!window.confirm(`${ids.length}人に、それぞれ ${coins.toLocaleString()} コインを配ります。取り消せません。よろしいですか？`)) return;
+      const gid = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      let done = 0;
+      try {
+        for (let i = 0; i < ids.length; i += GRANT_BATCH) {
+          const batch = writeBatch(db);
+          // 管理者のパスワードの確認（proof）。同じ書き込みの中でルールが確かめる
+          batch.set(doc(db, "admin", "secret"), { hash: adminKey, proof: adminKey, at: serverTimestamp() });
+          for (const id of ids.slice(i, i + GRANT_BATCH)) {
+            batch.set(doc(db, "users", id, "wallet", "main"), {
+              coins: increment(coins),
+              grant: { id: gid, coins, message: msg, at: serverTimestamp() },
+              updatedAt: serverTimestamp(),
+            }, { merge: true });
+          }
+          await batch.commit();
+          done += Math.min(GRANT_BATCH, ids.length - i);
+        }
+      } catch (e) {
+        if (e.code === "permission-denied") throw new Error(`${ADMIN_PASSWORD_ERROR}（${done}人に配ったあとで止まりました）`);
+        throw e;
+      }
+      closeModal();
+      toast(`${done}人に ${coins.toLocaleString()} コインずつ配りました`);
+    }
+
     function openAdminPlans() {
       if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
       adminPlanFilter = "all";
@@ -17492,6 +17634,8 @@ draw();
       "restart-game": () => restartGame(),
       "open-game-keys": () => openGameKeys(),
       "toggle-game-pad": () => toggleGamePad(),
+      "game-pad-edit": () => toggleGamePadEdit(),
+      "game-pad-reset": () => resetGamePadLayout(),
       "game-key-set": (el) => toggleGameKeyWait(el.dataset.id),
       "game-keys-reset": () => resetGameKeys(),
       "ranking-game": (el) => setRankingGame(el.dataset.id),
@@ -17587,6 +17731,7 @@ draw();
       "admin-password": () => openAdminPassword(),
       "admin-restrict": () => openAdminRestrict(),
       "admin-plans": () => openAdminPlans(),
+      "admin-grant": () => openAdminGrant(),
       "admin-plan-filter": (el) => { adminPlanFilter = el.dataset.plan; renderAdminPlanList(); },
       "admin-restrict-user": (el) => openRestrictUser(el.dataset.id),
       "admin-unrestrict": (el) => unrestrictUser(el),
@@ -17669,6 +17814,7 @@ draw();
       "form-admin-unlock-timed": (fd) => startAdminUnlock(fd.get("hours"), fd.get("minutes")),
       "form-admin-password": (fd) => changeAdminPassword(fd.get("current"), fd.get("password"), fd.get("password2")),
       "form-admin-restrict": (fd) => restrictUser(fd.get("user"), fd.get("hours"), fd.get("minutes"), fd.get("direct") === "1"),
+      "form-admin-grant": (fd) => grantCoinsToAll(fd.get("message"), fd.get("coins")),
     };
 
     function setLoginTab(tab) {
