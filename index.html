@@ -10560,8 +10560,12 @@ draw();
       el.id = "grant-banner";
       el.setAttribute("role", "status");
       el.className = "toast pointer-events-auto w-full flex items-start gap-2 pl-4 pr-2 py-2 rounded-2xl shadow-lg text-sm font-medium text-white bg-slate-900/90 backdrop-blur";
+      const n = Number(g.coins);
+      const title = n >= 0
+        ? `<div class="font-bold text-amber-300">管理者から Chatterコインが ${n.toLocaleString()} 枚届きました</div>`
+        : `<div class="font-bold text-rose-300">管理者によって Chatterコインが ${(-n).toLocaleString()} 枚減らされました</div>`;
       el.innerHTML = `${icon("gift", "w-4 h-4 mt-0.5 shrink-0")}<div class="flex-1 min-w-0 leading-snug">
-          <div class="font-bold text-amber-300">管理者から Chatterコインが ${Number(g.coins).toLocaleString()} 枚届きました</div>
+          ${title}
           <div class="mt-0.5 whitespace-pre-wrap break-words">${esc(g.message || "")}</div></div>
         <button type="button" data-dismiss class="shrink-0 p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition" aria-label="閉じる">${icon("x", "w-4 h-4")}</button>`;
       el.querySelector("[data-dismiss]").onclick = () => { el.classList.add("toast-out"); setTimeout(() => el.remove(), 300); };
@@ -17112,10 +17116,11 @@ draw();
     // 管理者メニュー：ユーザーごとのプラン（Chatter Plus / Pro / Max）の加入状況。見るだけ（変更は本人のプラン画面から）
     let adminPlanFilter = "all"; // "all" | "none" | "plus" | "pro" | "max"
     // 全員にコインを配る（メッセージ付き）。コインは 1人あたりの数。1人ずつ wallet/main に足す（firestore.rules の grantOk と合わせる）
-    const GRANT_MAX_COINS = 100000, GRANT_MAX_MESSAGE = 300, GRANT_BATCH = 200;
+    const GRANT_MAX_COINS = 100000, GRANT_MAX_MESSAGE = 300, GRANT_BATCH = 100;
     function openAdminGrant() {
       if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
-      const n = [...state.users.values()].filter((u) => !u.deleted).length;
+      const users = [...state.users.values()].filter((u) => !u.deleted).sort((a, b) => String(a.name).localeCompare(String(b.name), "ja"));
+      const n = users.length;
       openAdminModal(`
         ${modalHead("全員にコインを配る", `ユーザー ${n}人それぞれに、コインとメッセージが届きます。届いたときに、アップデートの通知と同じようにお知らせが出ます。`)}
         <form id="form-admin-grant" class="px-6 pb-6 space-y-4">
@@ -17124,8 +17129,18 @@ draw();
             <textarea id="grant-message" name="message" class="input" rows="3" maxlength="${GRANT_MAX_MESSAGE}" placeholder="例：いつもありがとうございます！"></textarea>
           </div>
           <div>
-            <label class="label" for="grant-coins">コインの数（1人あたり）</label>
-            <input id="grant-coins" name="coins" type="number" min="1" max="${GRANT_MAX_COINS}" step="1" inputmode="numeric" class="input" placeholder="例：100" />
+            <label class="label" for="grant-coins">コインの数（1人あたり。マイナスで減らします）</label>
+            <input id="grant-coins" name="coins" type="number" min="-${GRANT_MAX_COINS}" max="${GRANT_MAX_COINS}" step="1" inputmode="numeric" class="input" placeholder="例：100（減らすなら -100）" />
+          </div>
+          <div>
+            <span class="label">配る相手</span>
+            <div class="flex gap-5 text-sm text-slate-700">
+              <label class="flex items-center gap-2"><input type="radio" name="target" value="all" checked /> 全員（${n}人）</label>
+              <label class="flex items-center gap-2"><input type="radio" name="target" value="some" /> 選んだ人だけ</label>
+            </div>
+            <div class="mt-2 max-h-56 overflow-y-auto scroll-thin rounded-2xl ring-1 ring-slate-100 divide-y divide-slate-100">
+              ${users.map((u) => `<label class="flex items-center gap-3 px-3 py-2 text-sm cursor-pointer"><input type="checkbox" name="users" value="${esc(u.id)}" class="shrink-0" /><span class="truncate">${esc(u.name)}<span class="text-xs text-slate-400"> @${esc(u.id)}</span></span></label>`).join("")}
+            </div>
           </div>
           <div class="flex gap-2">
             <button type="button" data-action="admin-menu" class="btn-secondary flex-1">戻る</button>
@@ -17133,39 +17148,56 @@ draw();
           </div>
         </form>`);
     }
-    async function grantCoinsToAll(message, coinsRaw) {
+    // selected：配る相手のユーザーID（null なら全員）。coins はマイナスなら減らす（持っている分より多くは減らさない）
+    async function grantCoinsToAll(message, coinsRaw, selected = null) {
       if (!isAdmin() || !adminKey) return;
       const msg = String(message ?? "").trim();
       const raw = String(coinsRaw ?? "").trim();
       const coins = Number(raw);
       if (!msg || msg.length > GRANT_MAX_MESSAGE) throw new Error(`メッセージを 1〜${GRANT_MAX_MESSAGE} 文字で入力してください。`);
-      if (!raw || !Number.isInteger(coins) || coins < 1 || coins > GRANT_MAX_COINS) throw new Error(`コインの数は 1〜${GRANT_MAX_COINS} の整数で入力してください。`);
-      const ids = [...state.users.values()].filter((u) => !u.deleted).map((u) => u.id);
-      if (!ids.length) throw new Error("配る相手がいません。");
-      if (!window.confirm(`${ids.length}人に、それぞれ ${coins.toLocaleString()} コインを配ります。取り消せません。よろしいですか？`)) return;
+      if (!raw || !Number.isInteger(coins) || coins === 0 || Math.abs(coins) > GRANT_MAX_COINS) {
+        throw new Error(`コインの数は -${GRANT_MAX_COINS}〜${GRANT_MAX_COINS} の整数（0 以外）で入力してください。マイナスで減らします。`);
+      }
+      const ids = selected
+        ? [...new Set(selected)].filter((id) => state.users.get(id) && !state.users.get(id).deleted)
+        : [...state.users.values()].filter((u) => !u.deleted).map((u) => u.id);
+      if (!ids.length) throw new Error(selected ? "配る相手を選んでください。" : "配る相手がいません。");
+      const verb = coins > 0 ? `${coins.toLocaleString()} コインずつ配ります` : `${(-coins).toLocaleString()} コインずつ減らします（持っている分まで）`;
+      if (!window.confirm(`${ids.length}人に、${verb}。取り消せません。よろしいですか？`)) return;
       const gid = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-      let done = 0;
+      let people = 0, total = 0, skipped = 0;
       try {
         for (let i = 0; i < ids.length; i += GRANT_BATCH) {
-          const batch = writeBatch(db);
-          // 管理者のパスワードの確認（proof）。同じ書き込みの中でルールが確かめる
-          batch.set(doc(db, "admin", "secret"), { hash: adminKey, proof: adminKey, at: serverTimestamp() });
-          for (const id of ids.slice(i, i + GRANT_BATCH)) {
-            batch.set(doc(db, "users", id, "wallet", "main"), {
-              coins: increment(coins),
-              grant: { id: gid, coins, message: msg, at: serverTimestamp() },
-              updatedAt: serverTimestamp(),
-            }, { merge: true });
-          }
-          await batch.commit();
-          done += Math.min(GRANT_BATCH, ids.length - i);
+          const chunk = ids.slice(i, i + GRANT_BATCH);
+          // 1回の取引で、今の残高を読んでから書く（減らすときは 0 より小さくしない。増減の結果は grant.coins に記録する）
+          const r = await runTransaction(db, async (tx) => {
+            const refs = chunk.map((id) => doc(db, "users", id, "wallet", "main"));
+            const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+            // 管理者のパスワードの確認（proof）。同じ取引の中でルールが確かめる
+            tx.set(doc(db, "admin", "secret"), { hash: adminKey, proof: adminKey, at: serverTimestamp() });
+            let p = 0, t = 0, s = 0;
+            snaps.forEach((snap, k) => {
+              const before = snap.exists() ? (snap.data().coins || 0) : 0;
+              const after = Math.max(0, before + coins);
+              const delta = after - before;
+              if (delta === 0) { s++; return; }
+              tx.set(refs[k], {
+                coins: after,
+                grant: { id: gid, coins: delta, message: msg, at: serverTimestamp() },
+                updatedAt: serverTimestamp(),
+              }, { merge: true });
+              p++; t += delta;
+            });
+            return { p, t, s };
+          });
+          people += r.p; total += r.t; skipped += r.s;
         }
       } catch (e) {
-        if (e.code === "permission-denied") throw new Error(`権限エラーで止まりました（${done}人に配ったあとです。ルールが最新か、管理者パスワードが正しいかを確かめてください）`);
+        if (e.code === "permission-denied") throw new Error(`権限エラーで止まりました（${people}人に反映したあとです。ルールが最新か、管理者パスワードが正しいかを確かめてください）`);
         throw e;
       }
       closeModal();
-      toast(`${done}人に ${coins.toLocaleString()} コインずつ配りました`);
+      toast(`${people}人に反映しました（合計 ${Math.abs(total).toLocaleString()} コイン${total >= 0 ? "配布" : "減少"}${skipped ? `、減らせなかった人 ${skipped}人` : ""}）`);
     }
 
     function openAdminPlans() {
@@ -17814,7 +17846,7 @@ draw();
       "form-admin-unlock-timed": (fd) => startAdminUnlock(fd.get("hours"), fd.get("minutes")),
       "form-admin-password": (fd) => changeAdminPassword(fd.get("current"), fd.get("password"), fd.get("password2")),
       "form-admin-restrict": (fd) => restrictUser(fd.get("user"), fd.get("hours"), fd.get("minutes"), fd.get("direct") === "1"),
-      "form-admin-grant": (fd) => grantCoinsToAll(fd.get("message"), fd.get("coins")),
+      "form-admin-grant": (fd) => grantCoinsToAll(fd.get("message"), fd.get("coins"), fd.get("target") === "some" ? fd.getAll("users") : null),
     };
 
     function setLoginTab(tab) {
