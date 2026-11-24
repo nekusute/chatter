@@ -17161,7 +17161,7 @@ draw();
           done += Math.min(GRANT_BATCH, ids.length - i);
         }
       } catch (e) {
-        if (e.code === "permission-denied") throw new Error(`${ADMIN_PASSWORD_ERROR}（${done}人に配ったあとで止まりました）`);
+        if (e.code === "permission-denied") throw new Error(`権限エラーで止まりました（${done}人に配ったあとです。ルールが最新か、管理者パスワードが正しいかを確かめてください）`);
         throw e;
       }
       closeModal();
