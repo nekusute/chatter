@@ -10559,6 +10559,8 @@ draw();
       const key = `chatter-grant-seen:${state.me.id}`;
       if (localStorage.getItem(key) === g.id) return;
       localStorage.setItem(key, g.id);
+      // 初めて開いた端末などで、ずっと前の配布のお知らせを出さない（at が未確定 = 今書いたばかり）
+      if (g.at && Date.now() - ms(g.at) > GRANT_NOTICE_DAYS * 864e5) return;
       $("#grant-banner")?.remove();
       const el = document.createElement("div");
       el.id = "grant-banner";
@@ -10566,8 +10568,8 @@ draw();
       el.className = "toast pointer-events-auto w-full flex items-start gap-2 pl-4 pr-2 py-2 rounded-2xl shadow-lg text-sm font-medium text-white bg-slate-900/90 backdrop-blur";
       const n = Number(g.coins);
       const title = n >= 0
-        ? `<div class="font-bold text-amber-300">管理者から Chatterコインが ${n.toLocaleString()} 枚届きました</div>`
-        : `<div class="font-bold text-rose-300">管理者によって Chatterコインが ${(-n).toLocaleString()} 枚減らされました</div>`;
+        ? `<div class="font-bold text-amber-300">Chatterコインが ${n.toLocaleString()} 枚届きました</div>`
+        : `<div class="font-bold text-rose-300">Chatterコインが ${(-n).toLocaleString()} 枚減りました</div>`;
       el.innerHTML = `${icon("gift", "w-4 h-4 mt-0.5 shrink-0")}<div class="flex-1 min-w-0 leading-snug">
           ${title}
           <div class="mt-0.5 whitespace-pre-wrap break-words">${esc(g.message || "")}</div></div>
@@ -16962,7 +16964,7 @@ draw();
             <button type="button" data-action="admin-restrict" class="btn-secondary w-full">${icon("alert", "w-5 h-5")}アカウントの制限</button>
             <button type="button" data-action="admin-reset" class="btn-secondary w-full">${icon("key", "w-5 h-5")}パスワードのリセット</button>
             <button type="button" data-action="admin-plans" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}プランの加入状況</button>
-            <button type="button" data-action="admin-grant" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}全員にコインを配る</button>
+            <button type="button" data-action="admin-grant" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}コインを配る</button>
             <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
           </div>
           <div id="admin-lock-box" class="lg:col-span-2"></div>
@@ -17229,13 +17231,13 @@ draw();
     // 管理者メニュー：ユーザーごとのプラン（Chatter Plus / Pro / Max）の加入状況。見るだけ（変更は本人のプラン画面から）
     let adminPlanFilter = "all"; // "all" | "none" | "plus" | "pro" | "max"
     // 全員にコインを配る（メッセージ付き）。コインは 1人あたりの数。1人ずつ wallet/main に足す（firestore.rules の grantOk と合わせる）
-    const GRANT_MAX_COINS = 100000, GRANT_MAX_MESSAGE = 300, GRANT_BATCH = 100;
+    const GRANT_MAX_COINS = 100000, GRANT_MAX_MESSAGE = 300, GRANT_BATCH = 100, GRANT_NOTICE_DAYS = 7;
     function openAdminGrant() {
       if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
       const users = [...state.users.values()].filter((u) => !u.deleted).sort((a, b) => String(a.name).localeCompare(String(b.name), "ja"));
       const n = users.length;
       openAdminModal(`
-        ${modalHead("全員にコインを配る", `ユーザー ${n}人それぞれに、コインとメッセージが届きます。届いたときに、アップデートの通知と同じようにお知らせが出ます。`)}
+        ${modalHead("コインを配る", "選んだ相手それぞれに、コインとメッセージが届きます（マイナスなら減らします）。届いたときに、アップデートの通知と同じようにお知らせが出ます。")}
         <form id="form-admin-grant" class="px-6 pb-6 space-y-4">
           <div>
             <label class="label" for="grant-message">メッセージ</label>
@@ -17260,6 +17262,11 @@ draw();
             <button type="submit" class="btn-primary flex-1">配る</button>
           </div>
         </form>`);
+      // ユーザーにチェックを付けたら「選んだ人だけ」に切り替える（「全員」のまま全員に配ってしまわないように）
+      const form = $("#form-admin-grant");
+      form?.addEventListener("change", (e) => {
+        if (e.target.name === "users" && e.target.checked) form.querySelector('input[name="target"][value="some"]').checked = true;
+      });
     }
     // selected：配る相手のユーザーID（null なら全員）。coins はマイナスなら減らす（持っている分より多くは減らさない）
     async function grantCoinsToAll(message, coinsRaw, selected = null) {
