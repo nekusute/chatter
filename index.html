@@ -191,6 +191,8 @@
     @media (max-width: 767.98px) {
       #app[data-view="list"] #chat-pane { display: none; }
       #app[data-view="chat"] #sidebar { display: none; }
+      /* ゲームを大きく表示（ゲームを開いている間だけ、左の画面を隠す） */
+      #app.game-wide:has(#game-pane:not([hidden])) #sidebar { display: none; }
     }
 
     .scroll-thin { scrollbar-width: thin; scrollbar-color: rgb(var(--c-slate-300)) transparent; }
@@ -812,6 +814,7 @@ const firebaseConfig = {
             <button type="button" id="game-keys-btn" data-action="open-game-keys" class="icon-btn" aria-label="キー設定" title="キー設定"><span data-icon="key"></span></button>
             <button type="button" data-action="restart-game" class="icon-btn" aria-label="最初から" title="最初から"><span data-icon="refresh"></span></button>
             <button type="button" data-action="open-ranking" class="icon-btn text-amber-500" aria-label="ランキング" title="ランキング"><span data-icon="trophy"></span></button>
+            <button type="button" id="game-wide-btn" data-action="toggle-game-wide" class="icon-btn hidden md:grid" aria-label="ゲームを大きく表示" title="左の画面を閉じて、ゲームを大きく表示"><span data-icon="expand"></span></button>
             <button type="button" data-action="close-game" class="icon-btn hidden md:grid" aria-label="ゲームを閉じる" title="ゲームを閉じる"><span data-icon="x"></span></button>
           </header>
           <div id="game-frame-wrap" class="flex-1 min-h-0 bg-white"></div>
@@ -8629,6 +8632,8 @@ draw();
     ICONS.game = "M6 11h4M8 9v4M15 12h.01M18 10h.01M17.32 5H6.68a4 4 0 00-3.978 3.59l-.6 6A3 3 0 005.087 18h.913a3 3 0 002.4-1.2l.6-.8a2 2 0 011.6-.8h2.8a2 2 0 011.6.8l.6.8a3 3 0 002.4 1.2h.913a3 3 0 002.985-3.41l-.6-6A4 4 0 0017.32 5z"; // ゲームのコントローラー
     ICONS.trophy = "M8 21h8m-4-4v4m-5-17h10v5a5 5 0 01-10 0V4zm10 1h2a2 2 0 010 4h-2M7 5H5a2 2 0 000 4h2";
     ICONS.shop = "M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"; // ショップ（買い物袋）
+    ICONS.expand = "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"; // 大きく表示
+    ICONS.shrink = "M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"; // もとの大きさに戻す
     const icon = (name, cls = "w-5 h-5") =>
       `<svg class="${cls}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
     const hydrateIcons = (root = document) =>
@@ -17786,6 +17791,13 @@ draw();
       "restart-game": () => restartGame(),
       "open-game-keys": () => openGameKeys(),
       "toggle-game-pad": () => toggleGamePad(),
+      "toggle-game-wide": () => {
+        const wide = $("#app").classList.toggle("game-wide");
+        const b = $("#game-wide-btn");
+        b.innerHTML = icon(wide ? "shrink" : "expand");
+        b.title = wide ? "左の画面を表示する" : "左の画面を閉じて、ゲームを大きく表示";
+        b.setAttribute("aria-label", wide ? "左の画面を表示する" : "ゲームを大きく表示");
+      },
       "game-pad-edit": () => toggleGamePadEdit(),
       "game-pad-reset": () => resetGamePadLayout(),
       "game-key-set": (el) => toggleGameKeyWait(el.dataset.id),
