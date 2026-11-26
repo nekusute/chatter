@@ -267,6 +267,43 @@
     .chatbg-bg-dream { background: linear-gradient(120deg, #fde2f3, #e0f2fe, #ecfccb, #fef3c7, #ede9fe, #fde2f3); background-size: 400% 400%; animation: dreamShift 24s ease-in-out infinite; }
     html.dark .chatbg-bg-dream { background: linear-gradient(120deg, #2a1428, #0c2131, #15240f, #2a2210, #1c1838, #2a1428); background-size: 400% 400%; }
     @keyframes dreamShift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+    /* ===== ショップ：動く背景（30,000 / 40,000）。模様は ::before に重ね、background-position を動かして降らせる・昇らせる。
+       繰り返しの大きさの整数倍だけ動かすので、つなぎ目は見えない（端末の「視差効果を減らす」では止まる） ===== */
+    /* 雪の夜：大きさのちがう雪が、ちがう速さで降る */
+    .chatbg-bg-snow { background: radial-gradient(ellipse at 50% 0%, rgb(255 255 255 / .9), transparent 60%), linear-gradient(180deg, #e0f2fe, #f1f5f9 60%, #e2e8f0); }
+    .chatbg-bg-snow::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Ccircle cx='53.7' cy='339.0' r='3.1' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='102.0' cy='198.2' r='2.7' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='260.6' cy='315.5' r='2.3' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='11.3' cy='334.3' r='2.7' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='304.9' cy='0.8' r='2.7' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='288.6' cy='91.5' r='3.3' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='360.6' cy='12.2' r='2.2' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='216.6' cy='375.7' r='2.7' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='86.6' cy='168.8' r='2.2' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='88.7' cy='175.2' r='2.8' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='93.2' cy='92.3' r='2.5' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='183.8' cy='115.9' r='2.2' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='335.0' cy='222.6' r='3.0' fill='%2393c5fd' opacity='0.85'/%3E%3Ccircle cx='74.4' cy='397.0' r='3.2' fill='%2393c5fd' opacity='0.85'/%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'%3E%3Ccircle cx='286.8' cy='284.3' r='1.0' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='25.5' cy='250.6' r='1.6' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='200.9' cy='92.4' r='1.5' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='182.0' cy='174.4' r='1.1' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='129.2' cy='118.1' r='1.6' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='298.4' cy='284.8' r='1.4' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='133.5' cy='80.5' r='1.0' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='8.2' cy='139.5' r='1.3' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='114.0' cy='267.5' r='1.4' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='168.2' cy='70.8' r='1.0' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='97.5' cy='41.0' r='1.4' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='299.6' cy='202.3' r='1.1' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='268.1' cy='239.0' r='1.6' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='272.0' cy='228.9' r='1.6' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='106.1' cy='294.3' r='1.8' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='48.4' cy='226.2' r='1.6' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='138.4' cy='159.1' r='1.4' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='277.4' cy='150.3' r='1.7' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='106.2' cy='264.9' r='1.7' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='138.3' cy='170.3' r='1.7' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='217.1' cy='146.0' r='1.2' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='97.4' cy='209.9' r='1.1' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='272.4' cy='80.4' r='1.7' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='92.9' cy='287.2' r='1.6' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='151.3' cy='155.3' r='1.5' fill='%2394a3b8' opacity='0.6'/%3E%3Ccircle cx='176.4' cy='93.6' r='1.2' fill='%2394a3b8' opacity='0.6'/%3E%3C/svg%3E");
+      background-size: 400px 400px, 300px 300px; background-position: 0 0, 0 0; background-repeat: repeat; animation: snowFall 14s linear infinite; }
+    html.dark .chatbg-bg-snow { background: radial-gradient(ellipse at 50% 0%, rgb(148 163 184 / .18), transparent 60%), linear-gradient(180deg, #0b1324, #111c33 60%, #1e293b); }
+    html.dark .chatbg-bg-snow::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Ccircle cx='53.7' cy='339.0' r='3.1' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='102.0' cy='198.2' r='2.7' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='260.6' cy='315.5' r='2.3' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='11.3' cy='334.3' r='2.7' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='304.9' cy='0.8' r='2.7' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='288.6' cy='91.5' r='3.3' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='360.6' cy='12.2' r='2.2' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='216.6' cy='375.7' r='2.7' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='86.6' cy='168.8' r='2.2' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='88.7' cy='175.2' r='2.8' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='93.2' cy='92.3' r='2.5' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='183.8' cy='115.9' r='2.2' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='335.0' cy='222.6' r='3.0' fill='%23ffffff' opacity='0.9'/%3E%3Ccircle cx='74.4' cy='397.0' r='3.2' fill='%23ffffff' opacity='0.9'/%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'%3E%3Ccircle cx='286.8' cy='284.3' r='1.0' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='25.5' cy='250.6' r='1.6' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='200.9' cy='92.4' r='1.5' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='182.0' cy='174.4' r='1.1' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='129.2' cy='118.1' r='1.6' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='298.4' cy='284.8' r='1.4' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='133.5' cy='80.5' r='1.0' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='8.2' cy='139.5' r='1.3' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='114.0' cy='267.5' r='1.4' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='168.2' cy='70.8' r='1.0' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='97.5' cy='41.0' r='1.4' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='299.6' cy='202.3' r='1.1' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='268.1' cy='239.0' r='1.6' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='272.0' cy='228.9' r='1.6' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='106.1' cy='294.3' r='1.8' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='48.4' cy='226.2' r='1.6' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='138.4' cy='159.1' r='1.4' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='277.4' cy='150.3' r='1.7' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='106.2' cy='264.9' r='1.7' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='138.3' cy='170.3' r='1.7' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='217.1' cy='146.0' r='1.2' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='97.4' cy='209.9' r='1.1' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='272.4' cy='80.4' r='1.7' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='92.9' cy='287.2' r='1.6' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='151.3' cy='155.3' r='1.5' fill='%23e2e8f0' opacity='0.6'/%3E%3Ccircle cx='176.4' cy='93.6' r='1.2' fill='%23e2e8f0' opacity='0.6'/%3E%3C/svg%3E"); }
+    @keyframes snowFall { to { background-position: 0 800px, 0 600px; } }
+    /* 泡のアクアリウム：泡がゆっくり昇っていく */
+    .chatbg-bg-bubbles { background: radial-gradient(ellipse at 50% 0%, rgb(255 255 255 / .7), transparent 55%), linear-gradient(180deg, #ecfeff, #cffafe 55%, #a5f3fc); }
+    .chatbg-bg-bubbles::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 500'%3E%3Ccircle cx='95.2' cy='272.1' r='7.8' fill='none' stroke='%230e7490' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='92.5' cy='269.4' r='1.7' fill='%230e7490' opacity='0.45'/%3E%3Ccircle cx='241.6' cy='312.9' r='6.3' fill='none' stroke='%230e7490' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='239.4' cy='310.7' r='1.4' fill='%230e7490' opacity='0.45'/%3E%3Ccircle cx='5.3' cy='418.7' r='7.3' fill='none' stroke='%230e7490' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='2.7' cy='416.1' r='1.6' fill='%230e7490' opacity='0.45'/%3E%3Ccircle cx='93.7' cy='497.8' r='8.4' fill='none' stroke='%230e7490' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='90.8' cy='494.9' r='1.8' fill='%230e7490' opacity='0.45'/%3E%3Ccircle cx='334.6' cy='238.2' r='9.2' fill='none' stroke='%230e7490' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='331.4' cy='235.0' r='2.0' fill='%230e7490' opacity='0.45'/%3E%3Ccircle cx='60.2' cy='317.4' r='10.3' fill='none' stroke='%230e7490' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='56.6' cy='313.8' r='2.3' fill='%230e7490' opacity='0.45'/%3E%3Ccircle cx='209.3' cy='370.6' r='9.4' fill='none' stroke='%230e7490' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='206.0' cy='367.3' r='2.1' fill='%230e7490' opacity='0.45'/%3E%3Ccircle cx='25.6' cy='379.1' r='9.0' fill='none' stroke='%230e7490' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='22.5' cy='376.0' r='2.0' fill='%230e7490' opacity='0.45'/%3E%3Ccircle cx='120.5' cy='15.5' r='10.3' fill='none' stroke='%230e7490' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='116.9' cy='11.9' r='2.3' fill='%230e7490' opacity='0.45'/%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 400'%3E%3Ccircle cx='70.8' cy='41.3' r='3.3' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='69.6' cy='40.1' r='0.8' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='46.5' cy='26.6' r='3.3' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='45.3' cy='25.4' r='0.8' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='275.4' cy='320.2' r='4.0' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='274.0' cy='318.8' r='0.9' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='66.6' cy='214.7' r='3.1' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='65.5' cy='213.6' r='0.8' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='51.8' cy='42.5' r='2.9' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='50.8' cy='41.5' r='0.8' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='278.2' cy='331.6' r='4.1' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='276.8' cy='330.2' r='0.9' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='240.1' cy='77.4' r='3.1' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='239.0' cy='76.3' r='0.8' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='188.1' cy='292.8' r='4.2' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='186.6' cy='291.3' r='0.9' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='264.0' cy='34.7' r='3.7' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='262.7' cy='33.4' r='0.8' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='201.5' cy='202.4' r='2.9' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='200.5' cy='201.4' r='0.8' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='142.1' cy='35.7' r='4.4' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='140.6' cy='34.2' r='1.0' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='259.6' cy='219.1' r='3.1' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='258.5' cy='218.0' r='0.8' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='272.7' cy='228.9' r='4.3' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='271.2' cy='227.4' r='0.9' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='254.4' cy='203.3' r='3.3' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='253.2' cy='202.1' r='0.8' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='179.7' cy='172.4' r='2.8' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='178.7' cy='171.4' r='0.8' fill='%230891b2' opacity='0.45'/%3E%3Ccircle cx='91.5' cy='325.0' r='2.6' fill='none' stroke='%230891b2' stroke-width='1.3' opacity='0.45'/%3E%3Ccircle cx='90.6' cy='324.1' r='0.8' fill='%230891b2' opacity='0.45'/%3E%3C/svg%3E");
+      background-size: 400px 500px, 300px 400px; background-position: 0 0, 0 0; background-repeat: repeat; animation: bubbleUp 16s linear infinite; }
+    html.dark .chatbg-bg-bubbles { background: radial-gradient(ellipse at 50% 0%, rgb(34 211 238 / .15), transparent 55%), linear-gradient(180deg, #032a2f, #062f3a 55%, #083344); }
+    html.dark .chatbg-bg-bubbles::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 500'%3E%3Ccircle cx='95.2' cy='272.1' r='7.8' fill='none' stroke='%23a5f3fc' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='92.5' cy='269.4' r='1.7' fill='%23a5f3fc' opacity='0.5'/%3E%3Ccircle cx='241.6' cy='312.9' r='6.3' fill='none' stroke='%23a5f3fc' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='239.4' cy='310.7' r='1.4' fill='%23a5f3fc' opacity='0.5'/%3E%3Ccircle cx='5.3' cy='418.7' r='7.3' fill='none' stroke='%23a5f3fc' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='2.7' cy='416.1' r='1.6' fill='%23a5f3fc' opacity='0.5'/%3E%3Ccircle cx='93.7' cy='497.8' r='8.4' fill='none' stroke='%23a5f3fc' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='90.8' cy='494.9' r='1.8' fill='%23a5f3fc' opacity='0.5'/%3E%3Ccircle cx='334.6' cy='238.2' r='9.2' fill='none' stroke='%23a5f3fc' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='331.4' cy='235.0' r='2.0' fill='%23a5f3fc' opacity='0.5'/%3E%3Ccircle cx='60.2' cy='317.4' r='10.3' fill='none' stroke='%23a5f3fc' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='56.6' cy='313.8' r='2.3' fill='%23a5f3fc' opacity='0.5'/%3E%3Ccircle cx='209.3' cy='370.6' r='9.4' fill='none' stroke='%23a5f3fc' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='206.0' cy='367.3' r='2.1' fill='%23a5f3fc' opacity='0.5'/%3E%3Ccircle cx='25.6' cy='379.1' r='9.0' fill='none' stroke='%23a5f3fc' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='22.5' cy='376.0' r='2.0' fill='%23a5f3fc' opacity='0.5'/%3E%3Ccircle cx='120.5' cy='15.5' r='10.3' fill='none' stroke='%23a5f3fc' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='116.9' cy='11.9' r='2.3' fill='%23a5f3fc' opacity='0.5'/%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 400'%3E%3Ccircle cx='70.8' cy='41.3' r='3.3' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='69.6' cy='40.1' r='0.8' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='46.5' cy='26.6' r='3.3' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='45.3' cy='25.4' r='0.8' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='275.4' cy='320.2' r='4.0' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='274.0' cy='318.8' r='0.9' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='66.6' cy='214.7' r='3.1' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='65.5' cy='213.6' r='0.8' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='51.8' cy='42.5' r='2.9' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='50.8' cy='41.5' r='0.8' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='278.2' cy='331.6' r='4.1' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='276.8' cy='330.2' r='0.9' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='240.1' cy='77.4' r='3.1' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='239.0' cy='76.3' r='0.8' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='188.1' cy='292.8' r='4.2' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='186.6' cy='291.3' r='0.9' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='264.0' cy='34.7' r='3.7' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='262.7' cy='33.4' r='0.8' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='201.5' cy='202.4' r='2.9' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='200.5' cy='201.4' r='0.8' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='142.1' cy='35.7' r='4.4' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='140.6' cy='34.2' r='1.0' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='259.6' cy='219.1' r='3.1' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='258.5' cy='218.0' r='0.8' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='272.7' cy='228.9' r='4.3' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='271.2' cy='227.4' r='0.9' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='254.4' cy='203.3' r='3.3' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='253.2' cy='202.1' r='0.8' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='179.7' cy='172.4' r='2.8' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='178.7' cy='171.4' r='0.8' fill='%2367e8f9' opacity='0.5'/%3E%3Ccircle cx='91.5' cy='325.0' r='2.6' fill='none' stroke='%2367e8f9' stroke-width='1.3' opacity='0.5'/%3E%3Ccircle cx='90.6' cy='324.1' r='0.8' fill='%2367e8f9' opacity='0.5'/%3E%3C/svg%3E"); }
+    @keyframes bubbleUp { to { background-position: 0 -500px, 0 -800px; } }
+    /* 流星群：星空に、光の筋が右上から左下へ流れる */
+    .chatbg-bg-meteor { background: radial-gradient(circle, rgb(255 255 255 / .8) 0 1px, transparent 1.5px) 0 0 / 53px 53px, radial-gradient(circle, rgb(199 210 254 / .6) 0 .8px, transparent 1.3px) 20px 30px / 89px 89px, radial-gradient(ellipse at 80% 0%, rgb(129 140 248 / .45), transparent 55%), linear-gradient(180deg, #312e81, #3b3486 55%, #4c1d95); }
+    .chatbg-bg-meteor::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Cdefs%3E%3ClinearGradient id='m' x1='1' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23ffffff'/%3E%3Cstop offset='1' stop-color='%23ffffff' stop-opacity='0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cline x1='330' y1='20' x2='260' y2='90' stroke='url(%23m)' stroke-width='2' stroke-linecap='round'/%3E%3Cline x1='170' y1='150' x2='100' y2='220' stroke='url(%23m)' stroke-width='2' stroke-linecap='round'/%3E%3Cline x1='380' y1='260' x2='310' y2='330' stroke='url(%23m)' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"); background-size: 400px 400px; background-position: 0 0; background-repeat: repeat; animation: meteorFall 7s linear infinite; }
+    html.dark .chatbg-bg-meteor { background: radial-gradient(circle, rgb(255 255 255 / .8) 0 1px, transparent 1.5px) 0 0 / 53px 53px, radial-gradient(circle, rgb(199 210 254 / .55) 0 .8px, transparent 1.3px) 20px 30px / 89px 89px, radial-gradient(ellipse at 80% 0%, rgb(99 102 241 / .3), transparent 55%), linear-gradient(180deg, #05061a, #0d0b2b 55%, #1a0f35); }
+    html.dark .chatbg-bg-meteor::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'%3E%3Cdefs%3E%3ClinearGradient id='m' x1='1' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23ffffff'/%3E%3Cstop offset='1' stop-color='%23ffffff' stop-opacity='0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cline x1='330' y1='20' x2='260' y2='90' stroke='url(%23m)' stroke-width='2' stroke-linecap='round'/%3E%3Cline x1='170' y1='150' x2='100' y2='220' stroke='url(%23m)' stroke-width='2' stroke-linecap='round'/%3E%3Cline x1='380' y1='260' x2='310' y2='330' stroke='url(%23m)' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"); }
+    @keyframes meteorFall { to { background-position: -400px 400px; } }
+    /* ネオンウェーブ：夕日の地平線と、手前に流れてくる光の床 */
+    .chatbg-bg-neonwave { background: linear-gradient(transparent 58%, #f5f3ff 58%), radial-gradient(circle at 50% 58%, #fde68a 0 46px, #fb7185 47px 70px, transparent 71px), linear-gradient(180deg, #ede9fe, #f5d0fe 45%, #fbcfe8 58%, #f5f3ff 58%); }
+    .chatbg-bg-neonwave::before { inset: 58% -60% -10% -60%; transform: perspective(260px) rotateX(58deg); transform-origin: 50% 0;
+      background-image: linear-gradient(rgb(236 72 153 / .55) 0 2px, transparent 2px), linear-gradient(90deg, rgb(168 85 247 / .5) 0 2px, transparent 2px);
+      background-size: 100% 40px, 46px 100%; background-position: 0 0, 0 0; background-repeat: repeat; animation: neonRun 1.6s linear infinite; }
+    html.dark .chatbg-bg-neonwave { background: linear-gradient(transparent 58%, #0b0616 58%), radial-gradient(circle at 50% 58%, #fde047 0 46px, #f43f5e 47px 70px, transparent 71px), radial-gradient(ellipse at 50% 58%, rgb(244 63 94 / .35), transparent 45%), linear-gradient(180deg, #0f0a1f, #2e1065 45%, #6b21a8 58%, #0b0616 58%); }
+    html.dark .chatbg-bg-neonwave::before { background-image: linear-gradient(rgb(244 114 182 / .75) 0 2px, transparent 2px), linear-gradient(90deg, rgb(192 132 252 / .7) 0 2px, transparent 2px); }
+    @keyframes neonRun { to { background-position: 0 40px, 0 0; } }
+    /* 小さな見本では、模様を小さく */
+    .bg-mini.chatbg-bg-meteor::before { background-size: 120px 120px; }
+    .bg-mini.chatbg-bg-snow::before { background-size: 200px 200px, 150px 150px; }
+    .bg-mini.chatbg-bg-bubbles::before { background-size: 200px 250px, 150px 200px; }
+    .bg-mini.chatbg-bg-neonwave { background-size: 100% 100%; background-image: linear-gradient(transparent 58%, #f5f3ff 58%), radial-gradient(circle at 50% 58%, #fde68a 0 12%, #fb7185 12.5% 19%, transparent 19.5%), linear-gradient(180deg, #ede9fe, #f5d0fe 45%, #fbcfe8 58%, #f5f3ff 58%); }
+    html.dark .bg-mini.chatbg-bg-neonwave { background-image: linear-gradient(transparent 58%, #0b0616 58%), radial-gradient(circle at 50% 58%, #fde047 0 12%, #f43f5e 12.5% 19%, transparent 19.5%), linear-gradient(180deg, #0f0a1f, #2e1065 45%, #6b21a8 58%, #0b0616 58%); }
+    .bg-mini.chatbg-bg-neonwave::before { background-size: 100% 10px, 14px 100%; }
 
     /* ゲーム・ショップのコインの欄：グラデーションの薄い色はダークモードで差し替わらないので、暗い色にする */
     /* ガチャの「激レア」の欄（グラデーションの背景は変数で切り替わらないので、ダークモード用の色を当てる） */
@@ -282,19 +319,21 @@
     .nc.nc-ruby { color: #be123c; } html.dark .nc.nc-ruby { color: #fb7185; }
     .nc.nc-emerald { color: #047857; } html.dark .nc.nc-emerald { color: #34d399; }
     /* グラデーション・動くもの：文字の形に背景を切り抜く */
-    .nc.nc-sunset, .nc.nc-ocean, .nc.nc-candy, .nc.nc-gold, .nc.nc-goldflow, .nc.nc-rainbow, .nc.nc-galaxy { background-image: var(--nc-g); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; }
+    .nc.nc-sunset, .nc.nc-ocean, .nc.nc-candy, .nc.nc-gold, .nc.nc-goldflow, .nc.nc-rainbow, .nc.nc-galaxy, .nc.nc-goldfast, .nc.nc-rainbowfast, .nc.nc-galaxyfast { background-image: var(--nc-g); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; }
     .nc.nc-sunset { --nc-g: linear-gradient(90deg, #ea580c, #e11d48, #9333ea); } html.dark .nc.nc-sunset { --nc-g: linear-gradient(90deg, #fdba74, #fb7185, #d8b4fe); }
     .nc.nc-ocean { --nc-g: linear-gradient(90deg, #0369a1, #0e7490, #4f46e5); } html.dark .nc.nc-ocean { --nc-g: linear-gradient(90deg, #7dd3fc, #67e8f9, #a5b4fc); }
     .nc.nc-candy { --nc-g: linear-gradient(90deg, #db2777, #9333ea, #0891b2); } html.dark .nc.nc-candy { --nc-g: linear-gradient(90deg, #f9a8d4, #d8b4fe, #67e8f9); }
     .nc.nc-gold { --nc-g: linear-gradient(90deg, #92400e, #d97706 35%, #a16207 60%, #b45309); } html.dark .nc.nc-gold { --nc-g: linear-gradient(90deg, #fde68a, #fbbf24 35%, #fef3c7 60%, #f59e0b); }
     .nc.nc-goldflow, .nc.nc-rainbow, .nc.nc-galaxy { background-size: 200% auto; animation: ncFlow 3s linear infinite; }
+    /* 速いゴールド・レインボー・ギャラクシー：色は流れるものと同じで、3倍くらいの速さで流れる */
+    .nc.nc-goldfast, .nc.nc-rainbowfast, .nc.nc-galaxyfast { background-size: 200% auto; animation: ncFlow .9s linear infinite; }
     /* 流れるゴールド：金色の上を光が流れる */
-    .nc.nc-goldflow { --nc-g: linear-gradient(90deg, #92400e, #b45309 20%, #f59e0b 38%, #fde68a 50%, #f59e0b 62%, #b45309 80%, #92400e); filter: drop-shadow(0 0 2px rgb(245 158 11 / .35)); }
-    html.dark .nc.nc-goldflow { --nc-g: linear-gradient(90deg, #d97706, #f59e0b 20%, #fcd34d 38%, #fffbeb 50%, #fcd34d 62%, #f59e0b 80%, #d97706); filter: drop-shadow(0 0 3px rgb(251 191 36 / .5)); }
-    .nc.nc-rainbow { --nc-g: linear-gradient(90deg, #dc2626, #ea580c, #ca8a04, #16a34a, #0891b2, #2563eb, #9333ea, #dc2626); }
-    html.dark .nc.nc-rainbow { --nc-g: linear-gradient(90deg, #f87171, #fb923c, #facc15, #4ade80, #22d3ee, #60a5fa, #c084fc, #f87171); }
-    .nc.nc-galaxy { --nc-g: linear-gradient(90deg, #4338ca, #7e22ce, #db2777, #4338ca); filter: drop-shadow(0 0 3px rgb(168 85 247 / .35)); }
-    html.dark .nc.nc-galaxy { --nc-g: linear-gradient(90deg, #a5b4fc, #e9d5ff, #f9a8d4, #a5b4fc); filter: drop-shadow(0 0 4px rgb(192 132 252 / .5)); }
+    .nc.nc-goldflow, .nc.nc-goldfast { --nc-g: linear-gradient(90deg, #92400e, #b45309 20%, #f59e0b 38%, #fde68a 50%, #f59e0b 62%, #b45309 80%, #92400e); filter: drop-shadow(0 0 2px rgb(245 158 11 / .35)); }
+    html.dark .nc.nc-goldflow, html.dark .nc.nc-goldfast { --nc-g: linear-gradient(90deg, #d97706, #f59e0b 20%, #fcd34d 38%, #fffbeb 50%, #fcd34d 62%, #f59e0b 80%, #d97706); filter: drop-shadow(0 0 3px rgb(251 191 36 / .5)); }
+    .nc.nc-rainbow, .nc.nc-rainbowfast { --nc-g: linear-gradient(90deg, #dc2626, #ea580c, #ca8a04, #16a34a, #0891b2, #2563eb, #9333ea, #dc2626); }
+    html.dark .nc.nc-rainbow, html.dark .nc.nc-rainbowfast { --nc-g: linear-gradient(90deg, #f87171, #fb923c, #facc15, #4ade80, #22d3ee, #60a5fa, #c084fc, #f87171); }
+    .nc.nc-galaxy, .nc.nc-galaxyfast { --nc-g: linear-gradient(90deg, #4338ca, #7e22ce, #db2777, #4338ca); filter: drop-shadow(0 0 3px rgb(168 85 247 / .35)); }
+    html.dark .nc.nc-galaxy, html.dark .nc.nc-galaxyfast { --nc-g: linear-gradient(90deg, #a5b4fc, #e9d5ff, #f9a8d4, #a5b4fc); filter: drop-shadow(0 0 4px rgb(192 132 252 / .5)); }
     @keyframes ncFlow { to { background-position: 200% 0; } }
 
     /* ===== ショップ：送信エフェクト（画面に降る。押した場所は下に通す） ===== */
@@ -15062,7 +15101,7 @@ draw();
     let slotLocal = null;
     const slotMedals = () => slotLocal ?? (walletSlot()?.medals || 0);
     function slotCapLeft() {
-      if (!adminSettings.slotCap) return null;
+      if (!adminSettings.slotCap || slotCapOff()) return null;
       const s = walletSlot();
       const same = s && s.day === slotDay();
       return Math.max(0, adminSettings.slotCap - (same ? s.got - s.spent : 0));
@@ -15142,7 +15181,7 @@ draw();
           const same = b.day === today;
           const spent = same ? b.spent : 0, got = same ? b.got : 0;
           let cash = medals;
-          if (adminSettings.slotCap > 0) cash = Math.min(cash, Math.floor((adminSettings.slotCap - (got - spent)) / b.rate));
+          if (adminSettings.slotCap > 0 && !slotCapOff()) cash = Math.min(cash, Math.floor((adminSettings.slotCap - (got - spent)) / b.rate));
           if (cash <= 0) throw new Error("今日の精算の上限に達しました（明日また精算できます）");
           const add = cash * b.rate;
           tx.update(walletRef(), {
@@ -15608,6 +15647,9 @@ draw();
       { id: "nc-goldflow", kind: "name", name: "流れるゴールド", price: 20000, style: "動く" },
       { id: "nc-rainbow", kind: "name", name: "流れるレインボー", price: 25000, style: "動く" },
       { id: "nc-galaxy", kind: "name", name: "流れるギャラクシー", price: 25000, style: "動く" },
+      { id: "nc-goldfast", kind: "name", name: "速いゴールド", price: 50000, style: "速く動く" },
+      { id: "nc-rainbowfast", kind: "name", name: "速いレインボー", price: 50000, style: "速く動く" },
+      { id: "nc-galaxyfast", kind: "name", name: "速いギャラクシー", price: 50000, style: "速く動く" },
       // 送信エフェクト（fx：降らせ方。chars：降らせる絵文字）
       { id: "fx-confetti", kind: "fx", name: "紙吹雪", price: 5000, emoji: "🎊", fx: "confetti" },
       { id: "fx-hearts", kind: "fx", name: "ハート", price: 8000, emoji: "💕", fx: "emoji", chars: ["💖", "💕", "💗", "❤️", "💘"] },
@@ -15622,6 +15664,10 @@ draw();
       { id: "bg-city", kind: "bg", name: "夜の街", price: 14000 },
       { id: "bg-galaxy", kind: "bg", name: "銀河", price: 16000 },
       { id: "bg-dream", kind: "bg", name: "ゆめかわグラデ", price: 20000, style: "動く" },
+      { id: "bg-snow", kind: "bg", name: "雪の夜", price: 30000, style: "動く" },
+      { id: "bg-bubbles", kind: "bg", name: "泡のアクアリウム", price: 30000, style: "動く" },
+      { id: "bg-meteor", kind: "bg", name: "流星群", price: 40000, style: "動く" },
+      { id: "bg-neonwave", kind: "bg", name: "ネオンウェーブ", price: 40000, style: "動く" },
       // ヘッダー（deco：[文字, 左(%), 上(%), 大きさ(px), 色, 回転(deg), 文字の背景, 光（text-shadow）]）
       { id: "hd-cafe", kind: "header", name: "カフェタイム", price: 8000, bg: "linear-gradient(135deg, #fef3c7, #fde68a 45%, #e7c08f)",
         deco: [["☕", 12, 22, 34, 0, -8], ["🍰", 34, 52, 30, 0, 6], ["🥐", 58, 16, 30, 0, -6], ["🍩", 80, 50, 30, 0, 10], ["☕", 94, 12, 20]] },
@@ -21502,7 +21548,10 @@ draw();
     // adminScores：管理者のゲームのスコアをランキングに記録する（文書に無ければオン）。オフの間に遊んだスコアはランキングに載らない
     // slotOn：カジノ（Chatterコインで遊ぶゲーム）を遊べる（無ければオン）/ slotSetting：設定 0〜6（無ければ 2）/ slotRate：メダル1枚のコイン数（無ければ 10）
     // slotCap：1日に精算で増やせるコインの上限（0 は上限なし。無ければ 20000）
-    let adminSettings = { signupOpen: true, readReceipts: true, hideOnline: false, longText: true, rawImage: true, adminScores: true, slotOn: true, slotSetting: 2, slotRate: 10, slotCap: 20000 };
+    // slotCapOffUntil：この時刻（ミリ秒）まで1日の上限を一時的に無くす（0 か過ぎていれば slotCap のとおり）
+    let adminSettings = { signupOpen: true, readReceipts: true, hideOnline: false, longText: true, rawImage: true, adminScores: true, slotOn: true, slotSetting: 2, slotRate: 10, slotCap: 20000, slotCapOffUntil: 0 };
+    let capOffTimer = 0; // 一時的に無くした上限が元に戻る時刻に、ゲームと管理者メニューを更新する
+    function slotCapOff() { return adminSettings.slotCapOffUntil > Date.now(); }
     const maxText = () => (adminSettings.longText ? MAX_TEXT_LONG : MAX_TEXT_SHORT);
     // 管理者メニューのパスワードのハッシュ。メニューを開いている間だけ持ち、閉じたら消す
     let adminKey = null;
@@ -21524,6 +21573,7 @@ draw();
             slotSetting: Number.isInteger(d?.slotSetting) && d.slotSetting >= 0 && d.slotSetting <= 6 ? d.slotSetting : 2,
             slotRate: SLOT_RATES.includes(d?.slotRate) ? d.slotRate : 10,
             slotCap: SLOT_CAPS.includes(d?.slotCap) ? d.slotCap : 20000,
+            slotCapOffUntil: ms(d?.slotCapOffUntil),
           });
         },
         (e) => console.warn(e), // 読めないときは既定の設定（募集中・既読を表示）のまま
@@ -21534,6 +21584,8 @@ draw();
       const hideChanged = next.hideOnline !== adminSettings.hideOnline;
       const rawChanged = next.rawImage !== adminSettings.rawImage;
       adminSettings = next;
+      clearTimeout(capOffTimer);
+      if (slotCapOff()) capOffTimer = setTimeout(() => { sendSlotConfig(); renderAdminSettings(); }, next.slotCapOffUntil - Date.now() + 1000);
       if (rawChanged) renderRawImageButton();
       sendSlotConfig();
       if (state.me && state.tab === "games") renderSidebar();
@@ -21651,7 +21703,8 @@ draw();
               <label class="text-xs text-slate-500">1日の上限
                 <select name="cap" class="input mt-1 py-1.5">${SLOT_CAPS.map((c) => `<option value="${c}" ${adminSettings.slotCap === c ? "selected" : ""}>${c ? `+${c.toLocaleString()}` : "なし"}</option>`).join("")}</select></label>
             </div>
-            <p class="text-xs text-slate-400 leading-relaxed">設定は払い戻しの多さで、（ ）は賭けたメダルのうち戻ってくる割合の目安です。スロット2台・ハイアンドロー・コイントス・マインズ・メダルプッシャーに使います（メダルプッシャーの設定0は約75%。ポーカーは設定によらず約97%）。100% を超えると、遊ぶほどコインが増えます。メダル1枚のコイン数を変えても、すでにメダルを持っている人は、メダルが0になるまで借りたときの値のままです。「1日の上限」は、1日（日本時間）に精算で増やせるコイン（精算 − 借りた分）の上限です。</p>
+            <div id="admin-capoff" class="rounded-xl bg-white ring-1 ring-slate-100 p-3"></div>
+            <p class="text-xs text-slate-400 leading-relaxed">設定は払い戻しの多さで、（ ）は賭けたメダルのうち戻ってくる割合の目安です。スロット2台・ハイアンドロー・コイントス・マインズ・メダルプッシャーに使います（メダルプッシャーの設定0は約75%。ポーカーは設定によらず約97%）。100% を超えると、遊ぶほどコインが増えます。メダル1枚のコイン数を変えても、すでにメダルを持っている人は、メダルが0になるまで借りたときの値のままです。「1日の上限」は、1日（日本時間）に精算で増やせるコイン（精算 − 借りた分）の上限です。上限を一時的に無くした間に精算した分も、その日の合計に数えます。</p>
             <button type="submit" class="btn-primary w-full">カジノの設定を保存</button>
           </form>
           <div class="!mt-5 space-y-3 lg:space-y-0 lg:!mt-2 lg:col-span-2 lg:grid lg:grid-cols-2 lg:gap-3">
@@ -21753,6 +21806,7 @@ draw();
       </div>`;
     // 管理者メニューを開いているときに設定が変わったら、表示を合わせる
     function renderAdminSettings() {
+      renderCapOff();
       for (const [key, sw] of Object.entries(ADMIN_SWITCHES)) {
         const btn = $(`#admin-switch-${key}`);
         if (!btn) continue;
@@ -21787,6 +21841,66 @@ draw();
       await adminWrite(adminKey, { settings: { slotSetting, slotRate, slotCap } });
       applySettings({ ...adminSettings, slotSetting, slotRate, slotCap });
       toast(`カジノを 設定${slotSetting}・1枚${slotRate}コイン・上限${slotCap ? slotCap.toLocaleString() : "なし"} にしました`);
+    }
+
+    // 1日の上限を一時的に無くす。決めた時刻（slotCapOffUntil）が来ると、だれも何もしなくても元の上限に戻る
+    const CAP_OFF_CHOICES = [["1h", "1時間"], ["3h", "3時間"], ["6h", "6時間"], ["12h", "12時間"], ["today", "今日の終わりまで"], ["24h", "24時間"], ["3d", "3日間"], ["7d", "7日間"]];
+    function capOffUntil(choice) {
+      if (choice === "today") return (slotDay() + 1) * 86400000 - 9 * 3600000; // 日本時間の次の 0 時
+      const n = parseInt(choice, 10);
+      return Date.now() + n * (choice.endsWith("d") ? 86400000 : 3600000);
+    }
+    function fmtCapOffUntil(t) {
+      const d = new Date(t);
+      return `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+    }
+    function renderCapOff() {
+      const box = $("#admin-capoff");
+      if (!box) return;
+      const cap = adminSettings.slotCap, capText = cap ? `+${cap.toLocaleString()}` : "なし";
+      if (slotCapOff()) {
+        box.innerHTML = `
+          <div class="flex items-center gap-2">
+            <div class="min-w-0 flex-1">
+              <div class="text-xs font-semibold text-amber-700">🔓 1日の上限を一時的に無くしています</div>
+              <div class="text-xs text-slate-500 mt-0.5">${esc(fmtCapOffUntil(adminSettings.slotCapOffUntil))} に、元の上限（${capText}）に戻ります</div>
+            </div>
+            <button type="button" data-action="admin-capoff-end" class="btn-secondary shrink-0 px-3 py-1.5 text-xs">今すぐ戻す</button>
+          </div>`;
+        return;
+      }
+      const keep = $("#admin-capoff-len")?.value || "1h";
+      box.innerHTML = `
+        <div class="text-xs font-semibold text-slate-700">1日の上限を一時的に無くす</div>
+        <div class="flex items-center gap-2 mt-1.5">
+          <select id="admin-capoff-len" class="input py-1.5 flex-1 min-w-0" aria-label="上限を無くす時間" ${cap ? "" : "disabled"}>${CAP_OFF_CHOICES.map(([v, t]) => `<option value="${v}" ${v === keep ? "selected" : ""}>${t}</option>`).join("")}</select>
+          <button type="button" data-action="admin-capoff-start" class="btn-secondary shrink-0 px-3 py-1.5 text-xs" ${cap ? "" : "disabled"}>上限を無くす</button>
+        </div>
+        <p class="text-xs text-slate-400 mt-1.5">${cap ? "時間が来ると、自動で元の上限に戻ります。保存ボタンを押さなくてもすぐに効きます。" : "いまは「1日の上限」が「なし」なので、使う必要はありません。"}</p>`;
+    }
+    async function startCapOff(btn) {
+      if (!isAdmin() || !adminKey || btn.disabled || !adminSettings.slotCap) return;
+      const until = capOffUntil($("#admin-capoff-len")?.value || "1h");
+      if (!(until > Date.now())) return;
+      btn.disabled = true;
+      try {
+        await adminWrite(adminKey, { settings: { slotCapOffUntil: new Date(until) } });
+      } finally {
+        if (btn.isConnected) btn.disabled = false;
+      }
+      applySettings({ ...adminSettings, slotCapOffUntil: until });
+      toast(`${fmtCapOffUntil(until)} まで、カジノの1日の上限を無くしました`);
+    }
+    async function endCapOff(btn) {
+      if (!isAdmin() || !adminKey || btn.disabled) return;
+      btn.disabled = true;
+      try {
+        await adminWrite(adminKey, { settings: { slotCapOffUntil: deleteField() } });
+      } finally {
+        if (btn.isConnected) btn.disabled = false;
+      }
+      applySettings({ ...adminSettings, slotCapOffUntil: 0 });
+      toast("カジノの1日の上限を元に戻しました");
     }
 
     function openAdminPassword() {
@@ -22591,6 +22705,8 @@ draw();
       "admin-lock": () => lockAdmin(),
       "admin-menu": () => openAdminMenu(),
       "admin-toggle": (el) => toggleAdminSetting(el.dataset.key),
+      "admin-capoff-start": (el) => startCapOff(el),
+      "admin-capoff-end": (el) => endCapOff(el),
       "admin-password": () => openAdminPassword(),
       "admin-restrict": () => openAdminRestrict(),
       "admin-plans": () => openAdminPlans(),
