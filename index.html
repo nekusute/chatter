@@ -7651,6 +7651,23 @@ draw();
   html:not(.dark) .paytable .reg .mult { color: #7c3aed; }
   /* 暗いまま残した画面・色付きボタンの文字は白のまま */
   html:not(.dark) .stop-btn { color: #f8fafc; }
+  /* ---------- まとめて借りる画面 ---------- */
+  .lend-sheet h2 { margin-bottom: 4px; }
+  .lend-have { font-size: 12px; color: var(--muted); font-weight: 700; margin-bottom: 12px; }
+  .lend-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+  .lend-opt { position: relative; padding: 10px 12px; border-radius: 14px; text-align: left; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); transition: background 0.15s, transform 0.08s; }
+  .lend-opt:last-child { grid-column: span 2; }
+  .lend-opt b { display: block; font-size: 17px; font-weight: 900; color: #fcd34d; line-height: 1.2; }
+  .lend-opt small { display: block; font-size: 11px; color: var(--muted); font-weight: 700; }
+  .lend-opt .key { position: absolute; top: 6px; right: 9px; font-size: 9px; font-weight: 800; opacity: 0.5; }
+  .lend-opt:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+  .lend-opt:active:not(:disabled) { transform: scale(0.97); }
+  .lend-opt:disabled { opacity: 0.35; }
+  .lend-cancel { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+  html:not(.dark) .lend-opt { background: #f8fafc; }
+  html:not(.dark) .lend-opt:hover:not(:disabled) { background: #f1f5f9; }
+  html:not(.dark) .lend-opt b { color: #b45309; }
+  html:not(.dark) .lend-cancel { background: #e2e8f0; color: #334155; }
 </style>
 <canvas id="fx"></canvas>
 <div class="cutin" id="cutin"></div>
@@ -7905,7 +7922,7 @@ draw();
   }
 
   function applyConfig() {
-    $('lendNote').textContent = `${CONFIG.lendMedals}枚 / ${fmt(CONFIG.lendMedals * CONFIG.coinPerMedal)}コイン`;
+    $('lendNote').textContent = `${CONFIG.lendMedals}〜1,000枚 ・ 1枚${fmt(CONFIG.coinPerMedal)}コイン`;
     $('rateNote').textContent = `メダル1枚＝${fmt(CONFIG.coinPerMedal)}コイン。やめるときは「精算する」でコインに戻せます。`;
     for (const k of Object.keys(PAY)) $('pay' + k).textContent = `×${PAY[k]}`;
     $('walletLabel').textContent = embedded ? 'Chatterコイン' : 'Chatterコイン（お試し）';
@@ -8032,13 +8049,13 @@ draw();
   }
   function clearHits() { document.querySelectorAll('.cell.hit').forEach((e) => e.classList.remove('hit')); }
 
-  function lend() {
-    const cost = CONFIG.lendMedals * CONFIG.coinPerMedal;
+  function lend(n = CONFIG.lendMedals) {
+    const cost = n * CONFIG.coinPerMedal;
     if (phase !== 'idle' || coins < cost || busy || !ready || !slotOn) return;
-    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend'); return; }
-    coins -= cost; credit += CONFIG.lendMedals;
+    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend', { medals: n }); return; }
+    coins -= cost; credit += n;
     sfx.small();
-    setMsg(`メダル ${CONFIG.lendMedals}枚 を借りました`, `-${fmt(cost)}コイン`);
+    setMsg(`メダル ${fmt(n)}枚 を借りました`, `-${fmt(cost)}コイン`);
     burst(innerWidth / 2, innerHeight * 0.75, 14, 'coin');
     update({ tween: true });
   }
@@ -8203,7 +8220,41 @@ draw();
   betBtns.forEach((b) => b.addEventListener('click', () => selectBet(+b.dataset.bet)));
   lever.addEventListener('click', pullLever);
   stopBtns.forEach((b, i) => b.addEventListener('click', () => pressStop(i)));
-  $('lendBtn').addEventListener('click', lend);
+  $('lendBtn').addEventListener('click', openLend);
+  // ---------- まとめて借りる（「メダルを借りる」を押すと枚数を選ぶ。数字キー 1〜5 でも選べる。Esc・外側で閉じる） ----------
+  const LEND_CHOICES = [50, 100, 200, 500, 1000];
+  const lendModal = document.createElement('div');
+  lendModal.className = 'modal'; lendModal.hidden = true;
+  lendModal.innerHTML = '<div class="sheet lend-sheet" role="dialog" aria-label="メダルを借りる"><h2>メダルを借りる</h2><p class="lend-have"></p><div class="lend-grid"></div><button class="close-btn lend-cancel" type="button">やめる</button></div>';
+  document.body.appendChild(lendModal);
+  const closeLend = () => { lendModal.hidden = true; };
+  function openLend() {
+    if ($('lendBtn').disabled) return;
+    const rate = CONFIG.coinPerMedal;
+    lendModal.querySelector('.lend-have').textContent = `Chatterコイン ${fmt(coins)}枚 ・ メダル1枚 = ${fmt(rate)}コイン`;
+    const grid = lendModal.querySelector('.lend-grid');
+    grid.innerHTML = '';
+    LEND_CHOICES.forEach((n, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'lend-opt'; b.disabled = coins < n * rate;
+      b.innerHTML = `<b>${fmt(n)}枚</b><small>${fmt(n * rate)}コイン</small><span class="key">${i + 1}</span>`;
+      b.addEventListener('click', () => { closeLend(); lend(n); });
+      grid.appendChild(b);
+    });
+    lendModal.hidden = false;
+  }
+  lendModal.querySelector('.lend-cancel').addEventListener('click', closeLend);
+  lendModal.addEventListener('click', (e) => { if (e.target === lendModal) closeLend(); });
+  // 開いている間は、ゲームのキー操作より先に受け取る（ゲームが動いたり、Esc でゲームが閉じたりしないように）
+  window.addEventListener('keydown', (e) => {
+    if (lendModal.hidden) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.key === 'Escape') { closeLend(); return; }
+    const i = Number(e.key) - 1;
+    const b = lendModal.querySelectorAll('.lend-opt')[i];
+    if (b && !b.disabled) b.click();
+  }, true);
+  window.addEventListener('keyup', (e) => { if (!lendModal.hidden) e.stopImmediatePropagation(); }, true);
   $('cashBtn').addEventListener('click', cashOut);
   const modal = $('payModal');
   $('payBtn').addEventListener('click', () => { modal.hidden = false; });
@@ -8252,7 +8303,7 @@ draw();
       else if (m.op === 'lend') {
         adopt(m.medals);
         sfx.small();
-        setMsg(`メダル ${m.added}枚 を借りました`, `-${fmt(m.added * CONFIG.coinPerMedal)}コイン`);
+        setMsg(`メダル ${fmt(m.added)}枚 を借りました`, `-${fmt(m.added * CONFIG.coinPerMedal)}コイン`);
         burst(innerWidth / 2, innerHeight * 0.75, 14, 'coin');
       } else if (m.op === 'cashout') {
         adopt(m.medals); bet = 0; payout = 0;
@@ -8597,6 +8648,23 @@ draw();
   html:not(.dark) .paytable .mult { color: #b45309; }
   /* 暗いまま残した画面・色付きボタンの文字は白のまま */
   html:not(.dark) .lcd, html:not(.dark) .freeze, html:not(.dark) .battle button, html:not(.dark) .lever, html:not(.dark) .stop-btn, html:not(.dark) .cutin { color: #f8fafc; }
+  /* ---------- まとめて借りる画面 ---------- */
+  .lend-sheet h2 { margin-bottom: 4px; }
+  .lend-have { font-size: 12px; color: var(--muted); font-weight: 700; margin-bottom: 12px; }
+  .lend-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+  .lend-opt { position: relative; padding: 10px 12px; border-radius: 14px; text-align: left; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); transition: background 0.15s, transform 0.08s; }
+  .lend-opt:last-child { grid-column: span 2; }
+  .lend-opt b { display: block; font-size: 17px; font-weight: 900; color: #fcd34d; line-height: 1.2; }
+  .lend-opt small { display: block; font-size: 11px; color: var(--muted); font-weight: 700; }
+  .lend-opt .key { position: absolute; top: 6px; right: 9px; font-size: 9px; font-weight: 800; opacity: 0.5; }
+  .lend-opt:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+  .lend-opt:active:not(:disabled) { transform: scale(0.97); }
+  .lend-opt:disabled { opacity: 0.35; }
+  .lend-cancel { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+  html:not(.dark) .lend-opt { background: #f8fafc; }
+  html:not(.dark) .lend-opt:hover:not(:disabled) { background: #f1f5f9; }
+  html:not(.dark) .lend-opt b { color: #b45309; }
+  html:not(.dark) .lend-cancel { background: #e2e8f0; color: #334155; }
 </style>
 <canvas id="fx"></canvas>
 <div class="freeze" id="freeze">
@@ -8931,7 +8999,7 @@ draw();
   }
 
   function applyConfig() {
-    $('lendNote').textContent = `${CONFIG.lendMedals}枚 / ${fmt(CONFIG.lendMedals * CONFIG.coinPerMedal)}コイン`;
+    $('lendNote').textContent = `${CONFIG.lendMedals}〜1,000枚 ・ 1枚${fmt(CONFIG.coinPerMedal)}コイン`;
     $('rateNote').textContent = `メダル1枚＝${fmt(CONFIG.coinPerMedal)}コイン。やめるときは「精算する」でコインに戻せます。`;
     for (const k of Object.keys(PAY)) { const el = $('pay' + k); if (el) el.textContent = `${PAY[k]}枚`; }
     $('setNote').textContent = SET_PAY;
@@ -9128,13 +9196,13 @@ draw();
   }
   function clearHits() { document.querySelectorAll('.cell.hit').forEach((e) => e.classList.remove('hit')); }
 
-  function lend() {
-    const cost = CONFIG.lendMedals * CONFIG.coinPerMedal;
+  function lend(n = CONFIG.lendMedals) {
+    const cost = n * CONFIG.coinPerMedal;
     if (phase !== 'idle' || coins < cost || busy || !ready || !casinoOn) return;
-    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend'); return; }
-    coins -= cost; credit += CONFIG.lendMedals;
+    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend', { medals: n }); return; }
+    coins -= cost; credit += n;
     sfx.small();
-    setMsg(`メダル ${CONFIG.lendMedals}枚 を借りました`, `-${fmt(cost)}コイン`);
+    setMsg(`メダル ${fmt(n)}枚 を借りました`, `-${fmt(cost)}コイン`);
     update({ tween: true });
   }
 
@@ -9271,7 +9339,41 @@ draw();
   lever.addEventListener('click', pullLever);
   stopBtns.forEach((b, i) => b.addEventListener('click', () => pressStop(i)));
   document.querySelectorAll('.battle button').forEach((b) => b.addEventListener('click', () => chooseMove(+b.dataset.move)));
-  $('lendBtn').addEventListener('click', lend);
+  $('lendBtn').addEventListener('click', openLend);
+  // ---------- まとめて借りる（「メダルを借りる」を押すと枚数を選ぶ。数字キー 1〜5 でも選べる。Esc・外側で閉じる） ----------
+  const LEND_CHOICES = [50, 100, 200, 500, 1000];
+  const lendModal = document.createElement('div');
+  lendModal.className = 'modal'; lendModal.hidden = true;
+  lendModal.innerHTML = '<div class="sheet lend-sheet" role="dialog" aria-label="メダルを借りる"><h2>メダルを借りる</h2><p class="lend-have"></p><div class="lend-grid"></div><button class="close-btn lend-cancel" type="button">やめる</button></div>';
+  document.body.appendChild(lendModal);
+  const closeLend = () => { lendModal.hidden = true; };
+  function openLend() {
+    if ($('lendBtn').disabled) return;
+    const rate = CONFIG.coinPerMedal;
+    lendModal.querySelector('.lend-have').textContent = `Chatterコイン ${fmt(coins)}枚 ・ メダル1枚 = ${fmt(rate)}コイン`;
+    const grid = lendModal.querySelector('.lend-grid');
+    grid.innerHTML = '';
+    LEND_CHOICES.forEach((n, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'lend-opt'; b.disabled = coins < n * rate;
+      b.innerHTML = `<b>${fmt(n)}枚</b><small>${fmt(n * rate)}コイン</small><span class="key">${i + 1}</span>`;
+      b.addEventListener('click', () => { closeLend(); lend(n); });
+      grid.appendChild(b);
+    });
+    lendModal.hidden = false;
+  }
+  lendModal.querySelector('.lend-cancel').addEventListener('click', closeLend);
+  lendModal.addEventListener('click', (e) => { if (e.target === lendModal) closeLend(); });
+  // 開いている間は、ゲームのキー操作より先に受け取る（ゲームが動いたり、Esc でゲームが閉じたりしないように）
+  window.addEventListener('keydown', (e) => {
+    if (lendModal.hidden) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.key === 'Escape') { closeLend(); return; }
+    const i = Number(e.key) - 1;
+    const b = lendModal.querySelectorAll('.lend-opt')[i];
+    if (b && !b.disabled) b.click();
+  }, true);
+  window.addEventListener('keyup', (e) => { if (!lendModal.hidden) e.stopImmediatePropagation(); }, true);
   $('cashBtn').addEventListener('click', cashOut);
   const modal = $('payModal');
   $('payBtn').addEventListener('click', () => { modal.hidden = false; });
@@ -9317,7 +9419,7 @@ draw();
       else if (m.op === 'lend') {
         adopt(m.medals);
         sfx.small();
-        setMsg(`メダル ${m.added}枚 を借りました`, `-${fmt(m.added * CONFIG.coinPerMedal)}コイン`);
+        setMsg(`メダル ${fmt(m.added)}枚 を借りました`, `-${fmt(m.added * CONFIG.coinPerMedal)}コイン`);
         burst(innerWidth / 2, innerHeight * 0.75, 14, 'coin');
       } else if (m.op === 'cashout') {
         adopt(m.medals); payout = 0;
@@ -9448,6 +9550,23 @@ draw();
   html:not(.dark) .ctl.drop { color: #ffffff; }
   html:not(.dark) .paytable td:last-child { color: #b45309; }
   html:not(.dark) .ctl:disabled { filter: grayscale(0.9) brightness(1.04); opacity: 0.45; }
+  /* ---------- まとめて借りる画面 ---------- */
+  .lend-sheet h2 { margin-bottom: 4px; }
+  .lend-have { font-size: 12px; color: var(--muted); font-weight: 700; margin-bottom: 12px; }
+  .lend-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+  .lend-opt { position: relative; padding: 10px 12px; border-radius: 14px; text-align: left; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); transition: background 0.15s, transform 0.08s; }
+  .lend-opt:last-child { grid-column: span 2; }
+  .lend-opt b { display: block; font-size: 17px; font-weight: 900; color: #fcd34d; line-height: 1.2; }
+  .lend-opt small { display: block; font-size: 11px; color: var(--muted); font-weight: 700; }
+  .lend-opt .key { position: absolute; top: 6px; right: 9px; font-size: 9px; font-weight: 800; opacity: 0.5; }
+  .lend-opt:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+  .lend-opt:active:not(:disabled) { transform: scale(0.97); }
+  .lend-opt:disabled { opacity: 0.35; }
+  .lend-cancel { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+  html:not(.dark) .lend-opt { background: #f8fafc; }
+  html:not(.dark) .lend-opt:hover:not(:disabled) { background: #f1f5f9; }
+  html:not(.dark) .lend-opt b { color: #b45309; }
+  html:not(.dark) .lend-cancel { background: #e2e8f0; color: #334155; }
 </style>
 <canvas id="fx"></canvas>
 <div class="app">
@@ -9790,19 +9909,19 @@ draw();
   }
 
   function applyConfig() {
-    $('lendNote').textContent = `${CONFIG.lendMedals}枚 / ${fmt(CONFIG.lendMedals * CONFIG.coinPerMedal)}コイン`;
+    $('lendNote').textContent = `${CONFIG.lendMedals}〜1,000枚 ・ 1枚${fmt(CONFIG.coinPerMedal)}コイン`;
     $('rateNote').textContent = `メダル1枚＝${fmt(CONFIG.coinPerMedal)}コイン。やめるときは「精算する」でコインに戻せます。`;
     $('walletLabel').textContent = embedded ? 'Chatterコイン' : 'Chatterコイン（お試し）';
     updateHud();
   }
 
-  function lend() {
-    const cost = CONFIG.lendMedals * CONFIG.coinPerMedal;
+  function lend(n = CONFIG.lendMedals) {
+    const cost = n * CONFIG.coinPerMedal;
     if (coins < cost || busy || !ready || !casinoOn) return;
     holding = false;
-    if (embedded) { busy = true; setMsg('メダルを借りています…'); updateHud(); report(); send('slot-lend'); return; }
-    coins -= cost; credit += CONFIG.lendMedals; sfx.win();
-    setMsg(`メダル ${CONFIG.lendMedals}枚 を借りました（-${fmt(cost)}コイン）`); updateHud();
+    if (embedded) { busy = true; setMsg('メダルを借りています…'); updateHud(); report(); send('slot-lend', { medals: n }); return; }
+    coins -= cost; credit += n; sfx.win();
+    setMsg(`メダル ${fmt(n)}枚 を借りました（-${fmt(cost)}コイン）`); updateHud();
   }
   function cashOut() {
     if (!credit || busy || !ready) return;
@@ -9920,7 +10039,41 @@ draw();
   holdBtn($('dropBtn'), startHold, () => { holding = false; });
   holdBtn($('leftBtn'), () => { aimDir = -1; }, () => { if (aimDir < 0) aimDir = 0; });
   holdBtn($('rightBtn'), () => { aimDir = 1; }, () => { if (aimDir > 0) aimDir = 0; });
-  $('lendBtn').addEventListener('click', lend);
+  $('lendBtn').addEventListener('click', openLend);
+  // ---------- まとめて借りる（「メダルを借りる」を押すと枚数を選ぶ。数字キー 1〜5 でも選べる。Esc・外側で閉じる） ----------
+  const LEND_CHOICES = [50, 100, 200, 500, 1000];
+  const lendModal = document.createElement('div');
+  lendModal.className = 'modal'; lendModal.hidden = true;
+  lendModal.innerHTML = '<div class="sheet lend-sheet" role="dialog" aria-label="メダルを借りる"><h2>メダルを借りる</h2><p class="lend-have"></p><div class="lend-grid"></div><button class="close-btn lend-cancel" type="button">やめる</button></div>';
+  document.body.appendChild(lendModal);
+  const closeLend = () => { lendModal.hidden = true; };
+  function openLend() {
+    if ($('lendBtn').disabled) return;
+    const rate = CONFIG.coinPerMedal;
+    lendModal.querySelector('.lend-have').textContent = `Chatterコイン ${fmt(coins)}枚 ・ メダル1枚 = ${fmt(rate)}コイン`;
+    const grid = lendModal.querySelector('.lend-grid');
+    grid.innerHTML = '';
+    LEND_CHOICES.forEach((n, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'lend-opt'; b.disabled = coins < n * rate;
+      b.innerHTML = `<b>${fmt(n)}枚</b><small>${fmt(n * rate)}コイン</small><span class="key">${i + 1}</span>`;
+      b.addEventListener('click', () => { closeLend(); lend(n); });
+      grid.appendChild(b);
+    });
+    lendModal.hidden = false;
+  }
+  lendModal.querySelector('.lend-cancel').addEventListener('click', closeLend);
+  lendModal.addEventListener('click', (e) => { if (e.target === lendModal) closeLend(); });
+  // 開いている間は、ゲームのキー操作より先に受け取る（ゲームが動いたり、Esc でゲームが閉じたりしないように）
+  window.addEventListener('keydown', (e) => {
+    if (lendModal.hidden) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.key === 'Escape') { closeLend(); return; }
+    const i = Number(e.key) - 1;
+    const b = lendModal.querySelectorAll('.lend-opt')[i];
+    if (b && !b.disabled) b.click();
+  }, true);
+  window.addEventListener('keyup', (e) => { if (!lendModal.hidden) e.stopImmediatePropagation(); }, true);
   $('cashBtn').addEventListener('click', cashOut);
   const modal = $('helpModal');
   $('helpBtn').addEventListener('click', () => { modal.hidden = false; });
@@ -9957,7 +10110,7 @@ draw();
       busy = false; coins = m.coins;
       if (m.ok) adopt(m.medals);
       if (!m.ok) setMsg(m.message || 'うまくいきませんでした', true);
-      else if (m.op === 'lend') { sfx.win(); setMsg(`メダル ${m.added}枚 を借りました（-${fmt(m.added * CONFIG.coinPerMedal)}コイン）`); }
+      else if (m.op === 'lend') { sfx.win(); setMsg(`メダル ${fmt(m.added)}枚 を借りました（-${fmt(m.added * CONFIG.coinPerMedal)}コイン）`); }
       else if (m.op === 'cashout') { sfx.win(); setMsg(`精算：${fmt(m.cashed)}枚 → ${fmt(m.cashed * CONFIG.coinPerMedal)}コイン${m.medals > 0 ? `（今日の上限のため ${fmt(m.medals)}枚 は残しました）` : ''}`); }
       report();
       updateHud();
@@ -10113,6 +10266,23 @@ draw();
   html:not(.dark) .gbtn:disabled, html:not(.dark) .main-btn:disabled { filter: grayscale(0.9) brightness(1.04); opacity: 0.45; }
   /* 暗いまま残した画面・色付きボタンの文字は白のまま */
   html:not(.dark) .gbtn { color: #f8fafc; }
+  /* ---------- まとめて借りる画面 ---------- */
+  .lend-sheet h2 { margin-bottom: 4px; }
+  .lend-have { font-size: 12px; color: var(--muted); font-weight: 700; margin-bottom: 12px; }
+  .lend-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+  .lend-opt { position: relative; padding: 10px 12px; border-radius: 14px; text-align: left; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); transition: background 0.15s, transform 0.08s; }
+  .lend-opt:last-child { grid-column: span 2; }
+  .lend-opt b { display: block; font-size: 17px; font-weight: 900; color: #fcd34d; line-height: 1.2; }
+  .lend-opt small { display: block; font-size: 11px; color: var(--muted); font-weight: 700; }
+  .lend-opt .key { position: absolute; top: 6px; right: 9px; font-size: 9px; font-weight: 800; opacity: 0.5; }
+  .lend-opt:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+  .lend-opt:active:not(:disabled) { transform: scale(0.97); }
+  .lend-opt:disabled { opacity: 0.35; }
+  .lend-cancel { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+  html:not(.dark) .lend-opt { background: #f8fafc; }
+  html:not(.dark) .lend-opt:hover:not(:disabled) { background: #f1f5f9; }
+  html:not(.dark) .lend-opt b { color: #b45309; }
+  html:not(.dark) .lend-cancel { background: #e2e8f0; color: #334155; }
 </style>
 <canvas id="fx"></canvas>
 <div class="app">
@@ -10239,7 +10409,7 @@ draw();
   }
 
   function applyConfig() {
-    $('lendNote').textContent = `${CONFIG.lendMedals}枚 / ${fmt(CONFIG.lendMedals * CONFIG.coinPerMedal)}コイン`;
+    $('lendNote').textContent = `${CONFIG.lendMedals}〜1,000枚 ・ 1枚${fmt(CONFIG.coinPerMedal)}コイン`;
     $('rateNote').textContent = `メダル1枚＝${fmt(CONFIG.coinPerMedal)}コイン。やめるときは「精算する」でコインに戻せます。`;
     $('maxNote').textContent = MAX_WINS;
     $('walletLabel').textContent = embedded ? 'Chatterコイン' : 'Chatterコイン（お試し）';
@@ -10316,12 +10486,12 @@ draw();
     update();
   }
 
-  function lend() {
-    const cost = CONFIG.lendMedals * CONFIG.coinPerMedal;
+  function lend(n = CONFIG.lendMedals) {
+    const cost = n * CONFIG.coinPerMedal;
     if (phase !== 'idle' || coins < cost || busy || !ready || !casinoOn) return;
-    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend'); return; }
-    coins -= cost; credit += CONFIG.lendMedals; sfx.take();
-    setMsg(`メダル ${CONFIG.lendMedals}枚 を借りました（-${fmt(cost)}コイン）`); update();
+    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend', { medals: n }); return; }
+    coins -= cost; credit += n; sfx.take();
+    setMsg(`メダル ${fmt(n)}枚 を借りました（-${fmt(cost)}コイン）`); update();
   }
   function cashOut() {
     if (phase !== 'idle' || !credit || busy || !ready) return;
@@ -10381,7 +10551,41 @@ draw();
   $('highBtn').addEventListener('click', () => guess('high'));
   $('lowBtn').addEventListener('click', () => guess('low'));
   $('mainBtn').addEventListener('click', () => (phase === 'guess' ? take() : deal()));
-  $('lendBtn').addEventListener('click', lend);
+  $('lendBtn').addEventListener('click', openLend);
+  // ---------- まとめて借りる（「メダルを借りる」を押すと枚数を選ぶ。数字キー 1〜5 でも選べる。Esc・外側で閉じる） ----------
+  const LEND_CHOICES = [50, 100, 200, 500, 1000];
+  const lendModal = document.createElement('div');
+  lendModal.className = 'modal'; lendModal.hidden = true;
+  lendModal.innerHTML = '<div class="sheet lend-sheet" role="dialog" aria-label="メダルを借りる"><h2>メダルを借りる</h2><p class="lend-have"></p><div class="lend-grid"></div><button class="close-btn lend-cancel" type="button">やめる</button></div>';
+  document.body.appendChild(lendModal);
+  const closeLend = () => { lendModal.hidden = true; };
+  function openLend() {
+    if ($('lendBtn').disabled) return;
+    const rate = CONFIG.coinPerMedal;
+    lendModal.querySelector('.lend-have').textContent = `Chatterコイン ${fmt(coins)}枚 ・ メダル1枚 = ${fmt(rate)}コイン`;
+    const grid = lendModal.querySelector('.lend-grid');
+    grid.innerHTML = '';
+    LEND_CHOICES.forEach((n, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'lend-opt'; b.disabled = coins < n * rate;
+      b.innerHTML = `<b>${fmt(n)}枚</b><small>${fmt(n * rate)}コイン</small><span class="key">${i + 1}</span>`;
+      b.addEventListener('click', () => { closeLend(); lend(n); });
+      grid.appendChild(b);
+    });
+    lendModal.hidden = false;
+  }
+  lendModal.querySelector('.lend-cancel').addEventListener('click', closeLend);
+  lendModal.addEventListener('click', (e) => { if (e.target === lendModal) closeLend(); });
+  // 開いている間は、ゲームのキー操作より先に受け取る（ゲームが動いたり、Esc でゲームが閉じたりしないように）
+  window.addEventListener('keydown', (e) => {
+    if (lendModal.hidden) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.key === 'Escape') { closeLend(); return; }
+    const i = Number(e.key) - 1;
+    const b = lendModal.querySelectorAll('.lend-opt')[i];
+    if (b && !b.disabled) b.click();
+  }, true);
+  window.addEventListener('keyup', (e) => { if (!lendModal.hidden) e.stopImmediatePropagation(); }, true);
   $('cashBtn').addEventListener('click', cashOut);
   const modal = $('helpModal');
   $('helpBtn').addEventListener('click', () => { modal.hidden = false; });
@@ -10414,7 +10618,7 @@ draw();
     } else if (m.type === 'slot-result') {
       busy = false; coins = m.coins;
       if (!m.ok) setMsg(m.message || 'うまくいきませんでした', 'warn');
-      else if (m.op === 'lend') { adopt(m.medals); sfx.take(); setMsg(`メダル ${m.added}枚 を借りました（-${fmt(m.added * CONFIG.coinPerMedal)}コイン）`); }
+      else if (m.op === 'lend') { adopt(m.medals); sfx.take(); setMsg(`メダル ${fmt(m.added)}枚 を借りました（-${fmt(m.added * CONFIG.coinPerMedal)}コイン）`); }
       else if (m.op === 'cashout') { adopt(m.medals); sfx.take(); setMsg(`精算：${fmt(m.cashed)}枚 → ${fmt(m.cashed * CONFIG.coinPerMedal)}コイン${m.medals > 0 ? `（今日の上限のため ${fmt(m.medals)}枚 は残しました）` : ''}`, 'win'); }
       update();
     } else if (m.type === 'pause') pause();
@@ -10569,6 +10773,23 @@ draw();
   html:not(.dark) .pick:disabled, html:not(.dark) .take:disabled { filter: grayscale(0.9) brightness(1.04); opacity: 0.45; }
   /* 暗いまま残した画面・色付きボタンの文字は白のまま */
   html:not(.dark) .take { color: #f8fafc; }
+  /* ---------- まとめて借りる画面 ---------- */
+  .lend-sheet h2 { margin-bottom: 4px; }
+  .lend-have { font-size: 12px; color: var(--muted); font-weight: 700; margin-bottom: 12px; }
+  .lend-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+  .lend-opt { position: relative; padding: 10px 12px; border-radius: 14px; text-align: left; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); transition: background 0.15s, transform 0.08s; }
+  .lend-opt:last-child { grid-column: span 2; }
+  .lend-opt b { display: block; font-size: 17px; font-weight: 900; color: #fcd34d; line-height: 1.2; }
+  .lend-opt small { display: block; font-size: 11px; color: var(--muted); font-weight: 700; }
+  .lend-opt .key { position: absolute; top: 6px; right: 9px; font-size: 9px; font-weight: 800; opacity: 0.5; }
+  .lend-opt:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+  .lend-opt:active:not(:disabled) { transform: scale(0.97); }
+  .lend-opt:disabled { opacity: 0.35; }
+  .lend-cancel { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+  html:not(.dark) .lend-opt { background: #f8fafc; }
+  html:not(.dark) .lend-opt:hover:not(:disabled) { background: #f1f5f9; }
+  html:not(.dark) .lend-opt b { color: #b45309; }
+  html:not(.dark) .lend-cancel { background: #e2e8f0; color: #334155; }
 </style>
 <canvas id="fx"></canvas>
 <div class="app">
@@ -10680,7 +10901,7 @@ draw();
   }
 
   function applyConfig() {
-    $('lendNote').textContent = `${CONFIG.lendMedals}枚 / ${fmt(CONFIG.lendMedals * CONFIG.coinPerMedal)}コイン`;
+    $('lendNote').textContent = `${CONFIG.lendMedals}〜1,000枚 ・ 1枚${fmt(CONFIG.coinPerMedal)}コイン`;
     $('rateNote').textContent = `メダル1枚＝${fmt(CONFIG.coinPerMedal)}コイン。やめるときは「精算する」でコインに戻せます。`;
     $('multNote').textContent = `×${mult().toFixed(2)}`;
     $('maxNote').textContent = MAX_WINS;
@@ -10744,12 +10965,12 @@ draw();
     update();
   }
 
-  function lend() {
-    const cost = CONFIG.lendMedals * CONFIG.coinPerMedal;
+  function lend(n = CONFIG.lendMedals) {
+    const cost = n * CONFIG.coinPerMedal;
     if (phase !== 'idle' || chain || coins < cost || busy || !ready || !casinoOn) return;
-    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend'); return; }
-    coins -= cost; credit += CONFIG.lendMedals; sfx.take();
-    setMsg(`メダル ${CONFIG.lendMedals}枚 を借りました（-${fmt(cost)}コイン）`); update();
+    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend', { medals: n }); return; }
+    coins -= cost; credit += n; sfx.take();
+    setMsg(`メダル ${fmt(n)}枚 を借りました（-${fmt(cost)}コイン）`); update();
   }
   function cashOut() {
     if (phase !== 'idle' || chain || !credit || busy || !ready) return;
@@ -10809,7 +11030,41 @@ draw();
   $('pickH').addEventListener('click', () => pick('h'));
   $('pickT').addEventListener('click', () => pick('t'));
   $('takeBtn').addEventListener('click', take);
-  $('lendBtn').addEventListener('click', lend);
+  $('lendBtn').addEventListener('click', openLend);
+  // ---------- まとめて借りる（「メダルを借りる」を押すと枚数を選ぶ。数字キー 1〜5 でも選べる。Esc・外側で閉じる） ----------
+  const LEND_CHOICES = [50, 100, 200, 500, 1000];
+  const lendModal = document.createElement('div');
+  lendModal.className = 'modal'; lendModal.hidden = true;
+  lendModal.innerHTML = '<div class="sheet lend-sheet" role="dialog" aria-label="メダルを借りる"><h2>メダルを借りる</h2><p class="lend-have"></p><div class="lend-grid"></div><button class="close-btn lend-cancel" type="button">やめる</button></div>';
+  document.body.appendChild(lendModal);
+  const closeLend = () => { lendModal.hidden = true; };
+  function openLend() {
+    if ($('lendBtn').disabled) return;
+    const rate = CONFIG.coinPerMedal;
+    lendModal.querySelector('.lend-have').textContent = `Chatterコイン ${fmt(coins)}枚 ・ メダル1枚 = ${fmt(rate)}コイン`;
+    const grid = lendModal.querySelector('.lend-grid');
+    grid.innerHTML = '';
+    LEND_CHOICES.forEach((n, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'lend-opt'; b.disabled = coins < n * rate;
+      b.innerHTML = `<b>${fmt(n)}枚</b><small>${fmt(n * rate)}コイン</small><span class="key">${i + 1}</span>`;
+      b.addEventListener('click', () => { closeLend(); lend(n); });
+      grid.appendChild(b);
+    });
+    lendModal.hidden = false;
+  }
+  lendModal.querySelector('.lend-cancel').addEventListener('click', closeLend);
+  lendModal.addEventListener('click', (e) => { if (e.target === lendModal) closeLend(); });
+  // 開いている間は、ゲームのキー操作より先に受け取る（ゲームが動いたり、Esc でゲームが閉じたりしないように）
+  window.addEventListener('keydown', (e) => {
+    if (lendModal.hidden) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.key === 'Escape') { closeLend(); return; }
+    const i = Number(e.key) - 1;
+    const b = lendModal.querySelectorAll('.lend-opt')[i];
+    if (b && !b.disabled) b.click();
+  }, true);
+  window.addEventListener('keyup', (e) => { if (!lendModal.hidden) e.stopImmediatePropagation(); }, true);
   $('cashBtn').addEventListener('click', cashOut);
   const modal = $('helpModal');
   $('helpBtn').addEventListener('click', () => { modal.hidden = false; });
@@ -10842,7 +11097,7 @@ draw();
     } else if (m.type === 'slot-result') {
       busy = false; coins = m.coins;
       if (!m.ok) setMsg(m.message || 'うまくいきませんでした', true);
-      else if (m.op === 'lend') { adopt(m.medals); sfx.take(); setMsg(`メダル ${m.added}枚 を借りました（-${fmt(m.added * CONFIG.coinPerMedal)}コイン）`); }
+      else if (m.op === 'lend') { adopt(m.medals); sfx.take(); setMsg(`メダル ${fmt(m.added)}枚 を借りました（-${fmt(m.added * CONFIG.coinPerMedal)}コイン）`); }
       else if (m.op === 'cashout') { adopt(m.medals); sfx.take(); setMsg(`精算：${fmt(m.cashed)}枚 → ${fmt(m.cashed * CONFIG.coinPerMedal)}コイン${m.medals > 0 ? `（今日の上限のため ${fmt(m.medals)}枚 は残しました）` : ''}`); }
       update();
     } else if (m.type === 'pause') pause();
@@ -10981,6 +11236,23 @@ draw();
   html:not(.dark) .tile.dim { box-shadow: none; }
   html:not(.dark) .chip:not(.active), html:not(.dark) .btn.sub { background: rgba(255, 255, 255, 0.85); border-color: rgba(15, 23, 42, 0.15); color: #334155; }
   html:not(.dark) .btn:disabled { filter: grayscale(0.9) brightness(1.04); opacity: 0.45; }
+  /* ---------- まとめて借りる画面 ---------- */
+  .lend-sheet h2 { margin-bottom: 4px; }
+  .lend-have { font-size: 12px; color: var(--muted); font-weight: 700; margin-bottom: 12px; }
+  .lend-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+  .lend-opt { position: relative; padding: 10px 12px; border-radius: 14px; text-align: left; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); transition: background 0.15s, transform 0.08s; }
+  .lend-opt:last-child { grid-column: span 2; }
+  .lend-opt b { display: block; font-size: 17px; font-weight: 900; color: #fcd34d; line-height: 1.2; }
+  .lend-opt small { display: block; font-size: 11px; color: var(--muted); font-weight: 700; }
+  .lend-opt .key { position: absolute; top: 6px; right: 9px; font-size: 9px; font-weight: 800; opacity: 0.5; }
+  .lend-opt:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+  .lend-opt:active:not(:disabled) { transform: scale(0.97); }
+  .lend-opt:disabled { opacity: 0.35; }
+  .lend-cancel { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+  html:not(.dark) .lend-opt { background: #f8fafc; }
+  html:not(.dark) .lend-opt:hover:not(:disabled) { background: #f1f5f9; }
+  html:not(.dark) .lend-opt b { color: #b45309; }
+  html:not(.dark) .lend-cancel { background: #e2e8f0; color: #334155; }
 </style>
 <canvas id="fx"></canvas>
 <div class="app">
@@ -11094,7 +11366,7 @@ draw();
   }
 
   function applyConfig() {
-    $('lendNote').textContent = `${CONFIG.lendMedals}枚 / ${fmt(CONFIG.lendMedals * CONFIG.coinPerMedal)}コイン`;
+    $('lendNote').textContent = `${CONFIG.lendMedals}〜1,000枚 ・ 1枚${fmt(CONFIG.coinPerMedal)}コイン`;
     $('rateNote').textContent = `メダル1枚＝${fmt(CONFIG.coinPerMedal)}コイン。やめるときは「精算する」でコインに戻せます。`;
     $('walletLabel').textContent = embedded ? 'Chatterコイン' : 'Chatterコイン（お試し）';
     update();
@@ -11164,12 +11436,12 @@ draw();
     open(rest[Math.floor(Math.random() * rest.length)]);
   }
 
-  function lend() {
-    const cost = CONFIG.lendMedals * CONFIG.coinPerMedal;
+  function lend(n = CONFIG.lendMedals) {
+    const cost = n * CONFIG.coinPerMedal;
     if (phase === 'play' || coins < cost || busy || !ready || !casinoOn) return;
-    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend'); return; }
-    coins -= cost; credit += CONFIG.lendMedals; sfx.take();
-    setMsg(`メダル ${CONFIG.lendMedals}枚 を借りました（-${fmt(cost)}コイン）`); update();
+    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend', { medals: n }); return; }
+    coins -= cost; credit += n; sfx.take();
+    setMsg(`メダル ${fmt(n)}枚 を借りました（-${fmt(cost)}コイン）`); update();
   }
   function cashOut() {
     if (phase === 'play' || !credit || busy || !ready) return;
@@ -11230,7 +11502,41 @@ draw();
   mineEls.forEach((c) => c.addEventListener('click', () => { if (phase !== 'play') { mineCount = +c.dataset.m; update(); } }));
   $('mainBtn').addEventListener('click', () => (phase === 'play' ? take() : start()));
   $('randBtn').addEventListener('click', randomOpen);
-  $('lendBtn').addEventListener('click', lend);
+  $('lendBtn').addEventListener('click', openLend);
+  // ---------- まとめて借りる（「メダルを借りる」を押すと枚数を選ぶ。数字キー 1〜5 でも選べる。Esc・外側で閉じる） ----------
+  const LEND_CHOICES = [50, 100, 200, 500, 1000];
+  const lendModal = document.createElement('div');
+  lendModal.className = 'modal'; lendModal.hidden = true;
+  lendModal.innerHTML = '<div class="sheet lend-sheet" role="dialog" aria-label="メダルを借りる"><h2>メダルを借りる</h2><p class="lend-have"></p><div class="lend-grid"></div><button class="close-btn lend-cancel" type="button">やめる</button></div>';
+  document.body.appendChild(lendModal);
+  const closeLend = () => { lendModal.hidden = true; };
+  function openLend() {
+    if ($('lendBtn').disabled) return;
+    const rate = CONFIG.coinPerMedal;
+    lendModal.querySelector('.lend-have').textContent = `Chatterコイン ${fmt(coins)}枚 ・ メダル1枚 = ${fmt(rate)}コイン`;
+    const grid = lendModal.querySelector('.lend-grid');
+    grid.innerHTML = '';
+    LEND_CHOICES.forEach((n, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'lend-opt'; b.disabled = coins < n * rate;
+      b.innerHTML = `<b>${fmt(n)}枚</b><small>${fmt(n * rate)}コイン</small><span class="key">${i + 1}</span>`;
+      b.addEventListener('click', () => { closeLend(); lend(n); });
+      grid.appendChild(b);
+    });
+    lendModal.hidden = false;
+  }
+  lendModal.querySelector('.lend-cancel').addEventListener('click', closeLend);
+  lendModal.addEventListener('click', (e) => { if (e.target === lendModal) closeLend(); });
+  // 開いている間は、ゲームのキー操作より先に受け取る（ゲームが動いたり、Esc でゲームが閉じたりしないように）
+  window.addEventListener('keydown', (e) => {
+    if (lendModal.hidden) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.key === 'Escape') { closeLend(); return; }
+    const i = Number(e.key) - 1;
+    const b = lendModal.querySelectorAll('.lend-opt')[i];
+    if (b && !b.disabled) b.click();
+  }, true);
+  window.addEventListener('keyup', (e) => { if (!lendModal.hidden) e.stopImmediatePropagation(); }, true);
   $('cashBtn').addEventListener('click', cashOut);
   const modal = $('helpModal');
   $('helpBtn').addEventListener('click', () => { modal.hidden = false; });
@@ -11262,7 +11568,7 @@ draw();
     } else if (m.type === 'slot-result') {
       busy = false; coins = m.coins;
       if (!m.ok) setMsg(m.message || 'うまくいきませんでした', 'warn');
-      else if (m.op === 'lend') { adopt(m.medals); sfx.take(); setMsg(`メダル ${m.added}枚 を借りました（-${fmt(m.added * CONFIG.coinPerMedal)}コイン）`); }
+      else if (m.op === 'lend') { adopt(m.medals); sfx.take(); setMsg(`メダル ${fmt(m.added)}枚 を借りました（-${fmt(m.added * CONFIG.coinPerMedal)}コイン）`); }
       else if (m.op === 'cashout') { adopt(m.medals); sfx.take(); setMsg(`精算：${fmt(m.cashed)}枚 → ${fmt(m.cashed * CONFIG.coinPerMedal)}コイン${m.medals > 0 ? `（今日の上限のため ${fmt(m.medals)}枚 は残しました）` : ''}`, 'win'); }
       update();
     } else if (m.type === 'pause') pause();
@@ -11403,6 +11709,23 @@ draw();
   html:not(.dark) .hold-tag:not(.on) { background: rgba(15, 23, 42, 0.08); color: rgba(15, 23, 42, 0.4); }
   html:not(.dark) .btn.sub { background: linear-gradient(180deg, #ffffff, #e2e8f0); color: #334155; border-color: rgba(15, 23, 42, 0.15); box-shadow: 0 4px 0 #cbd5e1; }
   html:not(.dark) .btn:disabled { filter: grayscale(0.9) brightness(1.04); opacity: 0.45; }
+  /* ---------- まとめて借りる画面 ---------- */
+  .lend-sheet h2 { margin-bottom: 4px; }
+  .lend-have { font-size: 12px; color: var(--muted); font-weight: 700; margin-bottom: 12px; }
+  .lend-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+  .lend-opt { position: relative; padding: 10px 12px; border-radius: 14px; text-align: left; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); transition: background 0.15s, transform 0.08s; }
+  .lend-opt:last-child { grid-column: span 2; }
+  .lend-opt b { display: block; font-size: 17px; font-weight: 900; color: #fcd34d; line-height: 1.2; }
+  .lend-opt small { display: block; font-size: 11px; color: var(--muted); font-weight: 700; }
+  .lend-opt .key { position: absolute; top: 6px; right: 9px; font-size: 9px; font-weight: 800; opacity: 0.5; }
+  .lend-opt:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+  .lend-opt:active:not(:disabled) { transform: scale(0.97); }
+  .lend-opt:disabled { opacity: 0.35; }
+  .lend-cancel { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+  html:not(.dark) .lend-opt { background: #f8fafc; }
+  html:not(.dark) .lend-opt:hover:not(:disabled) { background: #f1f5f9; }
+  html:not(.dark) .lend-opt b { color: #b45309; }
+  html:not(.dark) .lend-cancel { background: #e2e8f0; color: #334155; }
 </style>
 <canvas id="fx"></canvas>
 <div class="app">
@@ -11560,7 +11883,7 @@ draw();
   }
 
   function applyConfig() {
-    $('lendNote').textContent = `${CONFIG.lendMedals}枚 / ${fmt(CONFIG.lendMedals * CONFIG.coinPerMedal)}コイン`;
+    $('lendNote').textContent = `${CONFIG.lendMedals}〜1,000枚 ・ 1枚${fmt(CONFIG.coinPerMedal)}コイン`;
     $('rateNote').textContent = `メダル1枚＝${fmt(CONFIG.coinPerMedal)}コイン。やめるときは「精算する」でコインに戻せます。`;
     $('walletLabel').textContent = embedded ? 'Chatterコイン' : 'Chatterコイン（お試し）';
     update();
@@ -11625,12 +11948,12 @@ draw();
     update();
   }
 
-  function lend() {
-    const cost = CONFIG.lendMedals * CONFIG.coinPerMedal;
+  function lend(n = CONFIG.lendMedals) {
+    const cost = n * CONFIG.coinPerMedal;
     if (phase !== 'idle' || coins < cost || busy || !ready || !casinoOn) return;
-    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend'); return; }
-    coins -= cost; credit += CONFIG.lendMedals; sfx.bet();
-    setMsg(`メダル ${CONFIG.lendMedals}枚 を借りました`); update();
+    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); report(); send('slot-lend', { medals: n }); return; }
+    coins -= cost; credit += n; sfx.bet();
+    setMsg(`メダル ${fmt(n)}枚 を借りました`); update();
   }
   function cashOut() {
     if (phase !== 'idle' || !credit || busy || !ready) return;
@@ -11691,7 +12014,41 @@ draw();
   $('betOneBtn').addEventListener('click', betOne);
   $('maxBtn').addEventListener('click', maxBet);
   $('dealBtn').addEventListener('click', () => (phase === 'hold' ? draw() : deal()));
-  $('lendBtn').addEventListener('click', lend);
+  $('lendBtn').addEventListener('click', openLend);
+  // ---------- まとめて借りる（「メダルを借りる」を押すと枚数を選ぶ。数字キー 1〜5 でも選べる。Esc・外側で閉じる） ----------
+  const LEND_CHOICES = [50, 100, 200, 500, 1000];
+  const lendModal = document.createElement('div');
+  lendModal.className = 'modal'; lendModal.hidden = true;
+  lendModal.innerHTML = '<div class="sheet lend-sheet" role="dialog" aria-label="メダルを借りる"><h2>メダルを借りる</h2><p class="lend-have"></p><div class="lend-grid"></div><button class="close-btn lend-cancel" type="button">やめる</button></div>';
+  document.body.appendChild(lendModal);
+  const closeLend = () => { lendModal.hidden = true; };
+  function openLend() {
+    if ($('lendBtn').disabled) return;
+    const rate = CONFIG.coinPerMedal;
+    lendModal.querySelector('.lend-have').textContent = `Chatterコイン ${fmt(coins)}枚 ・ メダル1枚 = ${fmt(rate)}コイン`;
+    const grid = lendModal.querySelector('.lend-grid');
+    grid.innerHTML = '';
+    LEND_CHOICES.forEach((n, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'lend-opt'; b.disabled = coins < n * rate;
+      b.innerHTML = `<b>${fmt(n)}枚</b><small>${fmt(n * rate)}コイン</small><span class="key">${i + 1}</span>`;
+      b.addEventListener('click', () => { closeLend(); lend(n); });
+      grid.appendChild(b);
+    });
+    lendModal.hidden = false;
+  }
+  lendModal.querySelector('.lend-cancel').addEventListener('click', closeLend);
+  lendModal.addEventListener('click', (e) => { if (e.target === lendModal) closeLend(); });
+  // 開いている間は、ゲームのキー操作より先に受け取る（ゲームが動いたり、Esc でゲームが閉じたりしないように）
+  window.addEventListener('keydown', (e) => {
+    if (lendModal.hidden) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.key === 'Escape') { closeLend(); return; }
+    const i = Number(e.key) - 1;
+    const b = lendModal.querySelectorAll('.lend-opt')[i];
+    if (b && !b.disabled) b.click();
+  }, true);
+  window.addEventListener('keyup', (e) => { if (!lendModal.hidden) e.stopImmediatePropagation(); }, true);
   $('cashBtn').addEventListener('click', cashOut);
   const modal = $('helpModal');
   $('helpBtn').addEventListener('click', () => { modal.hidden = false; });
@@ -11724,7 +12081,7 @@ draw();
     } else if (m.type === 'slot-result') {
       busy = false; coins = m.coins;
       if (!m.ok) setMsg(m.message || 'うまくいきませんでした', 'warn');
-      else if (m.op === 'lend') { adopt(m.medals); sfx.bet(); setMsg(`メダル ${m.added}枚 を借りました`); }
+      else if (m.op === 'lend') { adopt(m.medals); sfx.bet(); setMsg(`メダル ${fmt(m.added)}枚 を借りました`); }
       else if (m.op === 'cashout') { adopt(m.medals); setMsg(`精算：${fmt(m.cashed)}枚 → ${fmt(m.cashed * CONFIG.coinPerMedal)}コイン`, 'win'); }
       update();
     } else if (m.type === 'pause') paused = true;
@@ -15131,13 +15488,16 @@ draw();
       catch (e) { console.warn(e); }
     }
     const slotResult = (id, msg) => postToGame(id, { type: "slot-result", coins: walletCoins(), ...msg });
-    async function slotLend(id) {
+    // 1回に借りられる枚数（ゲームの「メダルを借りる」の選択肢。firestore.rules は 50 枚単位・1000 枚までを認める）
+    const SLOT_LEND_CHOICES = [50, 100, 200, 500, 1000];
+    async function slotLend(id, want) {
+      const n = SLOT_LEND_CHOICES.includes(want) ? want : SLOT_LEND;
       try {
         if (!state.me || isRestricted(state.me)) throw new Error("今は遊べません");
         if (!adminSettings.slotOn) throw new Error("カジノはお休み中です");
         slotLocal = slotMedals();
         const medals = slotLocal;
-        if (medals > SLOT_MEDALS_MAX - SLOT_LEND) throw new Error("これ以上は借りられません");
+        if (medals > SLOT_MEDALS_MAX - n) throw new Error("これ以上は借りられません");
         clearTimeout(slotTimer); slotTimer = 0;
         const today = slotDay();
         const coins = await runTransaction(db, async (tx) => {
@@ -15146,20 +15506,20 @@ draw();
           const w = snap.data();
           const b = w.slot || { medals: 0, rate: 0, day: 0, spent: 0, got: 0, last: 0 };
           const rate = b.medals > 0 ? b.rate : adminSettings.slotRate;
-          const cost = SLOT_LEND * rate;
+          const cost = n * rate;
           if ((w.coins || 0) < cost) throw new Error("Chatterコインが足りません");
           const same = b.day === today;
           tx.update(walletRef(), {
             coins: w.coins - cost,
-            slot: { medals: medals + SLOT_LEND, rate, day: today, spent: (same ? b.spent : 0) + cost, got: same ? b.got : 0, last: b.last || 0 },
+            slot: { medals: medals + n, rate, day: today, spent: (same ? b.spent : 0) + cost, got: same ? b.got : 0, last: b.last || 0 },
             updatedAt: serverTimestamp(),
           });
           return w.coins - cost;
         });
         // 返事を待つ間に増減した分（slotLocal - medals）はそのまま残し、あとでまとめて記録する
-        slotLocal = Math.min(SLOT_MEDALS_MAX, slotLocal + SLOT_LEND);
-        if (slotLocal !== medals + SLOT_LEND && !slotTimer) slotTimer = setTimeout(flushSlot, SLOT_SYNC_MS);
-        slotResult(id, { op: "lend", ok: true, added: SLOT_LEND, medals: slotLocal, coins });
+        slotLocal = Math.min(SLOT_MEDALS_MAX, slotLocal + n);
+        if (slotLocal !== medals + n && !slotTimer) slotTimer = setTimeout(flushSlot, SLOT_SYNC_MS);
+        slotResult(id, { op: "lend", ok: true, added: n, medals: slotLocal, coins });
       } catch (e) {
         console.warn(e);
         slotResult(id, { op: "lend", ok: false, message: e.code ? "借りられませんでした" : e.message });
@@ -16874,7 +17234,7 @@ draw();
       else if (d.type === "gameover") { entry.progress = 0; entry.playing = false; saveGameScore(id, d.score); }
       else if (d.type === "achieve" && typeof d.id === "string") unlockAchievement(id, d.id);
       else if (isCasino(id) && d.type === "slot-sync") slotDelta(d.delta);
-      else if (isCasino(id) && d.type === "slot-lend") slotLend(id);
+      else if (isCasino(id) && d.type === "slot-lend") slotLend(id, d.medals);
       else if (isCasino(id) && d.type === "slot-cashout") slotCashout(id);
       else if (d.type === "escape" && id === state.activeGameId && $("#modal-root").hidden) exitGame(); // ゲームの中で Esc を押したとき（モーダル表示中は閉じない）
     });
