@@ -7252,6 +7252,937 @@ document.querySelectorAll('.t-btn').forEach(btn => {
 draw();
 </script>
   </template>
+  <!-- フィーバースロット：Chatterコインで遊ぶゲーム（スコア・ランキング・特典の対象外）。
+       メダルの貸し出し・精算・枚数の記録はアプリが行う（slot-lend / slot-cashout / slot-sync を送り、slot-config・slot-result を受け取る） -->
+  <template id="game-src-slot">
+<style>
+  :root {
+    --sym: clamp(42px, 8.4vh, 62px);
+    --text: #f1f5f9;
+    --muted: #94a3b8;
+    --line: rgba(255, 255, 255, 0.09);
+    --gold: #fbbf24;
+    --pink: #f472b6;
+    --violet: #a78bfa;
+    --cyan: #67e8f9;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "Meiryo", sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(120% 70% at 50% -10%, rgba(124, 58, 237, 0.35) 0%, transparent 60%),
+      radial-gradient(80% 50% at 50% 110%, rgba(236, 72, 153, 0.18) 0%, transparent 60%),
+      linear-gradient(180deg, #0c1022 0%, #070912 100%);
+    display: flex; align-items: center; justify-content: center;
+  }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; touch-action: manipulation; }
+  button:disabled { cursor: not-allowed; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .app {
+    width: 100%; height: 100%; max-width: 440px;
+    display: flex; flex-direction: column; justify-content: center;
+    gap: clamp(6px, 1.2vh, 10px);
+    padding: clamp(8px, 1.6vh, 14px) 12px;
+  }
+
+  /* ---------- 上のバー（Chatterコイン） ---------- */
+  .hud { display: flex; align-items: center; gap: 8px; }
+  .wallet {
+    display: flex; align-items: center; gap: 8px; min-width: 0;
+    padding: 6px 14px 6px 8px; border-radius: 999px;
+    background: rgba(15, 23, 42, 0.7); border: 1px solid var(--line);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  .wallet-ico {
+    width: 30px; height: 30px; border-radius: 50%; flex: none;
+    display: grid; place-items: center; font-size: 16px;
+    background: radial-gradient(circle at 35% 30%, #fde68a, #f59e0b 70%, #b45309);
+    box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.2), 0 0 12px rgba(251, 191, 36, 0.35);
+  }
+  .wallet-label { font-size: 10px; color: var(--muted); font-weight: 600; line-height: 1.2; white-space: nowrap; }
+  .wallet-val { font-size: 17px; font-weight: 800; color: #fcd34d; line-height: 1.1; }
+  .hud-spacer { flex: 1; }
+  .icon-btn {
+    width: 40px; height: 40px; border-radius: 12px; flex: none;
+    display: grid; place-items: center; font-size: 16px; font-weight: 800;
+    background: rgba(15, 23, 42, 0.7); border: 1px solid var(--line);
+    transition: background 0.15s, transform 0.1s;
+  }
+  .icon-btn:hover { background: rgba(30, 41, 59, 0.9); }
+  .icon-btn:active { transform: scale(0.94); }
+
+  /* ---------- 筐体 ---------- */
+  .cabinet {
+    position: relative;
+    display: flex; flex-direction: column;
+    gap: clamp(6px, 1.1vh, 10px);
+    padding: clamp(10px, 1.6vh, 14px);
+    border-radius: 24px;
+    background: linear-gradient(180deg, #1c2244 0%, #131833 50%, #0d1126 100%);
+    border: 1px solid rgba(251, 191, 36, 0.32);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.09),
+      inset 0 0 0 1px rgba(0, 0, 0, 0.4),
+      0 24px 50px rgba(0, 0, 0, 0.5),
+      0 0 40px rgba(167, 139, 250, 0.12);
+    transition: border-color 0.4s;
+  }
+  .cabinet.fever { border-color: rgba(244, 114, 182, 0.85); animation: feverGlow 1.4s ease-in-out infinite; }
+  @keyframes feverGlow {
+    0%, 100% { box-shadow: inset 0 1px 0 rgba(255,255,255,.09), 0 24px 50px rgba(0,0,0,.5), 0 0 26px rgba(244,114,182,.35); }
+    50% { box-shadow: inset 0 1px 0 rgba(255,255,255,.09), 0 24px 50px rgba(0,0,0,.5), 0 0 56px rgba(167,139,250,.6); }
+  }
+  .cabinet.shake { animation: shake 0.42s cubic-bezier(.36,.07,.19,.97); }
+  @keyframes shake {
+    10%, 90% { transform: translateX(-1px); }
+    20%, 80% { transform: translateX(3px); }
+    30%, 50%, 70% { transform: translateX(-5px) rotate(-0.4deg); }
+    40%, 60% { transform: translateX(5px) rotate(0.4deg); }
+  }
+
+  .marquee { display: flex; align-items: center; justify-content: center; position: relative; }
+  .marquee-text {
+    font-size: clamp(20px, 3.2vh, 26px); font-weight: 900; font-style: italic; letter-spacing: 0.14em;
+    background: linear-gradient(90deg, #fde68a, #f472b6, #a78bfa, #67e8f9, #fde68a);
+    background-size: 200% auto;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: shine 4s linear infinite;
+    filter: drop-shadow(0 2px 8px rgba(244, 114, 182, 0.35));
+  }
+  @keyframes shine { to { background-position: 200% center; } }
+
+  .counters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .counter {
+    background: #05070f; border: 1px solid var(--line); border-radius: 10px;
+    padding: 4px 8px 5px; text-align: right;
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.6);
+  }
+  .counter label { display: block; text-align: left; font-size: 9px; font-weight: 700; letter-spacing: 0.12em; color: var(--muted); }
+  .counter b { display: block; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: clamp(17px, 2.8vh, 21px); line-height: 1.15; }
+  .counter.credit b { color: #34d399; text-shadow: 0 0 10px rgba(52, 211, 153, 0.45); }
+  .counter.bet b { color: #e2e8f0; }
+  .counter.pay b { color: var(--gold); text-shadow: 0 0 10px rgba(251, 191, 36, 0.45); }
+
+  /* ---------- リール ---------- */
+  .reels-wrap {
+    position: relative; padding: 8px; border-radius: 16px;
+    background: linear-gradient(180deg, #05070f, #0a0d1c);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 0 0 2px #090c18, inset 0 10px 24px rgba(0, 0, 0, 0.85);
+  }
+  .reels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .reel {
+    position: relative; height: calc(var(--sym) * 3); overflow: hidden; border-radius: 10px;
+    background: linear-gradient(90deg, #cfd5e1 0%, #fdfdfd 22%, #ffffff 50%, #fdfdfd 78%, #cfd5e1 100%);
+    transition: box-shadow 0.2s;
+  }
+  .reel::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(180deg, rgba(8, 10, 22, 0.62) 0%, rgba(8, 10, 22, 0) 30%, rgba(8, 10, 22, 0) 70%, rgba(8, 10, 22, 0.62) 100%);
+  }
+  .strip-box { position: absolute; inset: 0; }
+  .reel.land .strip-box { animation: land 0.18s ease-out; }
+  @keyframes land { 0% { transform: translateY(5px); } 100% { transform: translateY(0); } }
+  .strip { will-change: transform; }
+  .reel.spinning .strip { filter: blur(0.7px); }
+  .reel.reach { box-shadow: 0 0 0 2px var(--pink), 0 0 20px rgba(244, 114, 182, 0.8); animation: reachPulse 0.6s ease-in-out infinite alternate; }
+  @keyframes reachPulse { to { box-shadow: 0 0 0 2px var(--violet), 0 0 28px rgba(167, 139, 250, 0.9); } }
+  .cell { height: var(--sym); display: flex; align-items: center; justify-content: center; }
+  .cell.hit { animation: hit 0.5s ease-in-out 4 alternate; }
+  @keyframes hit { to { transform: scale(1.14); filter: drop-shadow(0 0 8px rgba(251, 191, 36, 0.95)); } }
+  .s-seven {
+    font-family: Impact, "Arial Black", sans-serif; font-weight: 900; font-style: italic;
+    font-size: calc(var(--sym) * 0.8); line-height: 1; color: #e11d2e;
+    text-shadow: 2px 2px 0 #f59e0b, -1px -1px 0 #7f1d1d, 1px -1px 0 #7f1d1d, -1px 1px 0 #7f1d1d;
+  }
+  .s-bar {
+    display: inline-block; padding: 0.16em 0.5em; border-radius: 6px;
+    font-size: calc(var(--sym) * 0.3); font-weight: 900; letter-spacing: 0.08em; line-height: 1.2;
+    background: linear-gradient(180deg, #1f2937, #0b0f19); color: #fff;
+    border: 2px solid #f59e0b; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.5);
+  }
+  .s-emoji { font-size: calc(var(--sym) * 0.6); line-height: 1; filter: drop-shadow(0 2px 1px rgba(0, 0, 0, 0.25)); }
+
+  .payline { position: absolute; left: 4px; right: 4px; top: 50%; height: 2px; transform: translateY(-50%); pointer-events: none; z-index: 2;
+    background: rgba(244, 114, 182, 0.85); box-shadow: 0 0 8px rgba(244, 114, 182, 0.9); }
+  .payline::before, .payline::after { content: ""; position: absolute; top: 50%; transform: translateY(-50%); border: 6px solid transparent; }
+  .payline::before { left: -4px; border-left-color: var(--pink); }
+  .payline::after { right: -4px; border-right-color: var(--pink); }
+  .glass { position: absolute; inset: 8px; border-radius: 10px; pointer-events: none; z-index: 3;
+    background: linear-gradient(165deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0) 32%); }
+
+  /* ---------- ランプと液晶 ---------- */
+  .deck { display: grid; grid-template-columns: clamp(100px, 30%, 126px) 1fr; gap: 8px; }
+  .lamp {
+    height: clamp(56px, 8.6vh, 68px); border-radius: 16px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: radial-gradient(circle at 50% 40%, #1d1530, #0d0a17 75%);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.7);
+  }
+  .lamp-main { font-family: "Arial Black", Impact, sans-serif; font-style: italic; font-weight: 900; font-size: clamp(20px, 3.2vh, 25px); letter-spacing: 0.02em; color: #2c2242; line-height: 1; }
+  .lamp-sub { font-size: 10px; font-weight: 800; letter-spacing: 0.18em; color: #2c2242; margin-top: 3px; }
+  .lamp.on {
+    background: radial-gradient(circle at 50% 42%, #fff1f9 0%, #f472b6 32%, #9333ea 72%, #3b0764 100%);
+    border-color: rgba(255, 210, 240, 0.9);
+    box-shadow: 0 0 26px rgba(244, 114, 182, 0.85), 0 0 54px rgba(147, 51, 234, 0.55), inset 0 0 14px rgba(255, 255, 255, 0.7);
+    animation: lampPulse 0.8s ease-in-out infinite alternate;
+  }
+  .lamp.on .lamp-main, .lamp.on .lamp-sub { color: #fff; text-shadow: 0 0 8px #fff, 0 0 18px #ec4899; }
+  .lamp.rainbow {
+    background: linear-gradient(90deg, #ff4d6d, #ffb703, #fff56d, #4ade80, #22d3ee, #818cf8, #e879f9, #ff4d6d);
+    background-size: 300% 100%;
+    animation: rainbowMove 2.4s linear infinite, lampPulse 0.8s ease-in-out infinite alternate;
+  }
+  .lamp.rainbow .lamp-main, .lamp.rainbow .lamp-sub { text-shadow: 0 0 6px rgba(0,0,0,.35), 0 0 16px #fff; }
+  @keyframes lampPulse { from { filter: brightness(1); } to { filter: brightness(1.25); } }
+  @keyframes rainbowMove { to { background-position: 300% 0; } }
+
+  .lcd {
+    min-width: 0; border-radius: 14px; padding: 6px 10px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 2px;
+    background: linear-gradient(180deg, #03141c, #021016);
+    border: 1px solid rgba(103, 232, 249, 0.3);
+    box-shadow: inset 0 0 14px rgba(34, 211, 238, 0.18);
+    color: var(--cyan); transition: background 0.3s, border-color 0.3s;
+  }
+  .lcd-1 { font-size: clamp(13px, 2.1vh, 15px); font-weight: 800; line-height: 1.3; }
+  .lcd-2 { font-size: 11px; font-weight: 600; opacity: 0.8; line-height: 1.3; min-height: 1.3em; }
+  .lcd.fever { background: linear-gradient(135deg, #be185d, #7c3aed); border-color: rgba(255, 255, 255, 0.6); color: #fff; }
+  .lcd.win { background: linear-gradient(180deg, #2a1c05, #1a1203); border-color: rgba(251, 191, 36, 0.7); color: #fde68a; box-shadow: inset 0 0 16px rgba(251, 191, 36, 0.25); }
+  .lcd.warn { border-color: rgba(251, 113, 133, 0.6); color: #fda4af; box-shadow: inset 0 0 14px rgba(251, 113, 133, 0.15); }
+
+  .datacounter {
+    display: flex; justify-content: space-between; gap: 6px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: var(--muted);
+    padding: 0 4px;
+  }
+  .datacounter b { color: #e2e8f0; font-weight: 800; margin-left: 3px; }
+  .datacounter .big b { color: #fca5a5; }
+  .datacounter .reg b { color: #c4b5fd; }
+
+  /* ---------- 操作 ---------- */
+  .bet-row { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: 6px; }
+  .bet-btn {
+    height: clamp(34px, 5.4vh, 40px); border-radius: 11px; font-weight: 800; font-size: 13px;
+    background: #1d2442; border: 1px solid var(--line); color: #cbd5e1;
+    box-shadow: 0 3px 0 #0a0d1c; transition: transform 0.08s, background 0.15s;
+  }
+  .bet-btn:hover:not(:disabled) { background: #262f56; }
+  .bet-btn:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 0 #0a0d1c; }
+  .bet-btn.active { background: linear-gradient(180deg, #fcd34d, #f59e0b); color: #2a1700; border-color: #fde68a; box-shadow: 0 3px 0 #92400e, 0 0 16px rgba(251, 191, 36, 0.4); }
+  .bet-btn:disabled:not(.active) { opacity: 0.4; }
+
+  .action-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: stretch; }
+  .lever {
+    width: clamp(70px, 21vw, 82px); height: clamp(58px, 9vh, 66px); border-radius: 50%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 13px; letter-spacing: 0.08em; line-height: 1.1;
+    background: radial-gradient(circle at 35% 28%, #6b7280, #1f2937 55%, #0b0f19);
+    border: 2px solid rgba(255, 255, 255, 0.16);
+    box-shadow: 0 5px 0 #05070f, inset 0 2px 4px rgba(255, 255, 255, 0.18);
+    transition: transform 0.08s, border-color 0.2s;
+  }
+  .lever small { font-size: 9px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em; }
+  .lever.ready { border-color: #fcd34d; animation: leverRing 1.2s ease-in-out infinite; }
+  @keyframes leverRing { 0%, 100% { box-shadow: 0 5px 0 #05070f, 0 0 0 0 rgba(251, 191, 36, 0.55); } 50% { box-shadow: 0 5px 0 #05070f, 0 0 0 7px rgba(251, 191, 36, 0); } }
+  .lever:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 2px 0 #05070f; }
+  .lever:disabled { opacity: 0.5; }
+
+  .stops { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .stop-btn {
+    position: relative; border-radius: 16px; font-weight: 900; font-size: 14px; letter-spacing: 0.06em;
+    background: radial-gradient(circle at 40% 28%, #fb7185, #e11d48 55%, #881337);
+    border: 1px solid rgba(255, 200, 210, 0.55);
+    box-shadow: 0 4px 0 #5f0f27, 0 0 16px rgba(244, 63, 94, 0.5);
+    transition: transform 0.08s, filter 0.15s, opacity 0.15s;
+  }
+  .stop-btn .key { position: absolute; top: 5px; right: 7px; font-size: 9px; font-weight: 800; opacity: 0.7; }
+  .stop-btn:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 #5f0f27; }
+  .stop-btn:disabled { filter: grayscale(0.85) brightness(0.55); box-shadow: 0 4px 0 #1a0a10; opacity: 0.8; }
+
+  /* ---------- メダル（貸し出し・精算） ---------- */
+  .medal-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .medal-btn {
+    display: flex; align-items: center; gap: 8px; text-align: left;
+    padding: 7px 12px; border-radius: 14px;
+    background: rgba(15, 23, 42, 0.7); border: 1px solid var(--line);
+    transition: background 0.15s, transform 0.08s, opacity 0.15s;
+  }
+  .medal-btn:hover:not(:disabled) { background: rgba(30, 41, 59, 0.95); }
+  .medal-btn:active:not(:disabled) { transform: scale(0.97); }
+  .medal-btn:disabled { opacity: 0.4; }
+  .medal-btn .ico { font-size: 18px; }
+  .medal-btn b { display: block; font-size: 13px; font-weight: 800; line-height: 1.2; }
+  .medal-btn small { display: block; font-size: 10px; color: var(--muted); font-weight: 600; line-height: 1.3; }
+  .medal-btn.lend b { color: #fcd34d; }
+
+  .hint { text-align: center; font-size: 10px; color: #64748b; font-weight: 600; }
+
+  /* ---------- 演出 ---------- */
+  canvas#fx { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 50; }
+  .cutin {
+    position: fixed; left: 50%; top: 42%; z-index: 60; pointer-events: none; white-space: nowrap;
+    transform: translate(-50%, -50%) scale(0); opacity: 0;
+    font-size: clamp(30px, 9.5vw, 46px); font-weight: 900; font-style: italic; letter-spacing: 0.02em;
+    background: linear-gradient(180deg, #fff 0%, #fde68a 45%, #f59e0b 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 3px 0 #7c2d12) drop-shadow(0 0 18px rgba(244, 114, 182, 0.9));
+  }
+  .cutin.show { animation: cutin 1.5s cubic-bezier(.18,.89,.32,1.28) forwards; }
+  @keyframes cutin {
+    0% { transform: translate(-50%, -50%) scale(0.2) rotate(-8deg); opacity: 0; }
+    14% { transform: translate(-50%, -50%) scale(1.1) rotate(-4deg); opacity: 1; }
+    80% { transform: translate(-50%, -50%) scale(1) rotate(-4deg); opacity: 1; }
+    100% { transform: translate(-50%, -60%) scale(1) rotate(-4deg); opacity: 0; }
+  }
+
+  /* ---------- 配当表 ---------- */
+  .modal { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 16px;
+    background: rgba(3, 5, 12, 0.66); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .modal[hidden] { display: none; }
+  .sheet { width: 100%; max-width: 380px; max-height: 100%; overflow: auto; border-radius: 20px; padding: 18px;
+    background: linear-gradient(180deg, #1c2244, #111530); border: 1px solid rgba(251, 191, 36, 0.3); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6); }
+  .sheet h2 { font-size: 17px; font-weight: 900; margin-bottom: 10px; }
+  .sheet h2 small { font-size: 11px; color: var(--muted); font-weight: 600; margin-left: 6px; }
+  .paytable { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  .paytable td { padding: 6px 4px; border-bottom: 1px solid var(--line); font-size: 13px; vertical-align: middle; }
+  .paytable td:first-child { --sym: 34px; white-space: nowrap; }
+  .paytable td:first-child > span { margin-right: 2px; }
+  .paytable .name { color: var(--muted); font-size: 11px; font-weight: 700; }
+  .paytable .mult { text-align: right; font-weight: 900; color: #fcd34d; white-space: nowrap; }
+  .paytable .big .mult { color: #fca5a5; }
+  .paytable .reg .mult { color: #c4b5fd; }
+  .notes { list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #cbd5e1; line-height: 1.55; margin-bottom: 14px; }
+  .notes li { padding-left: 1.1em; text-indent: -1.1em; }
+  .notes li::before { content: "・"; }
+  .close-btn { width: 100%; height: 42px; border-radius: 12px; font-weight: 800; background: linear-gradient(180deg, #fcd34d, #f59e0b); color: #2a1700; }
+
+  @media (max-height: 660px) {
+    :root { --sym: clamp(38px, 7.6vh, 50px); }
+    .hint { display: none; }
+    .marquee-text { font-size: 18px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cabinet.fever, .lamp.on, .lamp.rainbow, .lever.ready, .reel.reach, .marquee-text { animation: none; }
+    .cabinet.shake { animation: none; }
+  }
+</style>
+<canvas id="fx"></canvas>
+<div class="cutin" id="cutin"></div>
+
+<div class="app">
+  <header class="hud">
+    <div class="wallet">
+      <div class="wallet-ico">🪙</div>
+      <div>
+        <div class="wallet-label" id="walletLabel">Chatterコイン</div>
+        <div class="wallet-val num" id="walletVal">0</div>
+      </div>
+    </div>
+    <div class="hud-spacer"></div>
+    <button class="icon-btn" id="soundBtn" type="button" title="効果音" aria-label="効果音">🔊</button>
+    <button class="icon-btn" id="payBtn" type="button" title="配当表・遊び方" aria-label="配当表・遊び方">?</button>
+  </header>
+
+  <main class="cabinet" id="cabinet">
+    <div class="marquee"><span class="marquee-text">FEVER SLOT</span></div>
+
+    <div class="counters">
+      <div class="counter credit"><label>CREDIT</label><b class="num" id="creditVal">0</b></div>
+      <div class="counter bet"><label>BET</label><b class="num" id="betVal">0</b></div>
+      <div class="counter pay"><label>PAYOUT</label><b class="num" id="payoutVal">0</b></div>
+    </div>
+
+    <div class="reels-wrap">
+      <div class="reels">
+        <div class="reel" data-i="0"><div class="strip-box"><div class="strip"></div></div></div>
+        <div class="reel" data-i="1"><div class="strip-box"><div class="strip"></div></div></div>
+        <div class="reel" data-i="2"><div class="strip-box"><div class="strip"></div></div></div>
+      </div>
+      <div class="payline"></div>
+      <div class="glass"></div>
+    </div>
+
+    <div class="deck">
+      <div class="lamp" id="lamp"><span class="lamp-main">FEVER!</span><span class="lamp-sub">BONUS LAMP</span></div>
+      <div class="lcd" id="lcd"><div class="lcd-1" id="lcd1"></div><div class="lcd-2" id="lcd2"></div></div>
+    </div>
+
+    <div class="datacounter">
+      <span>GAMES<b class="num" id="dcGames">0</b></span>
+      <span class="big">BIG<b class="num" id="dcBig">0</b></span>
+      <span class="reg">REG<b class="num" id="dcReg">0</b></span>
+      <span>TOTAL<b class="num" id="dcTotal">0</b></span>
+    </div>
+
+    <div class="bet-row">
+      <button class="bet-btn" type="button" data-bet="1">1 BET</button>
+      <button class="bet-btn" type="button" data-bet="2">2 BET</button>
+      <button class="bet-btn" type="button" data-bet="3">MAX BET</button>
+    </div>
+
+    <div class="action-row">
+      <button class="lever" id="lever" type="button">LEVER<small>W</small></button>
+      <div class="stops">
+        <button class="stop-btn" id="stop0" type="button" disabled>STOP<span class="key">A</span></button>
+        <button class="stop-btn" id="stop1" type="button" disabled>STOP<span class="key">S</span></button>
+        <button class="stop-btn" id="stop2" type="button" disabled>STOP<span class="key">D</span></button>
+      </div>
+    </div>
+  </main>
+
+  <footer class="medal-row">
+    <button class="medal-btn lend" id="lendBtn" type="button"><span class="ico">🎰</span><span><b>メダルを借りる</b><small id="lendNote">50枚 / 500コイン</small></span></button>
+    <button class="medal-btn" id="cashBtn" type="button"><span class="ico">💰</span><span><b>精算する</b><small id="cashNote">コインに戻す</small></span></button>
+  </footer>
+  <p class="hint">W：レバー　｜　A・S・D：各リール停止　｜　1・2・3：BET数</p>
+</div>
+
+<div class="modal" id="payModal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="payTitle">
+    <h2 id="payTitle">配当表<small>BET 1枚あたりの払い出し</small></h2>
+    <table class="paytable">
+      <tr class="big"><td><span class="s-seven">7</span><span class="s-seven">7</span><span class="s-seven">7</span></td><td class="name">BIG</td><td class="mult" id="payBIG"></td></tr>
+      <tr class="reg"><td><span class="s-seven">7</span><span class="s-seven">7</span><span class="s-bar">BAR</span></td><td class="name">REG</td><td class="mult" id="payREG"></td></tr>
+      <tr><td><span class="s-emoji">🤡🤡🤡</span></td><td class="name">ピエロ</td><td class="mult" id="payCLOWN"></td></tr>
+      <tr><td><span class="s-emoji">🔔🔔🔔</span></td><td class="name">ベル</td><td class="mult" id="payBELL"></td></tr>
+      <tr><td><span class="s-emoji">🍇🍇🍇</span></td><td class="name">ぶどう</td><td class="mult" id="payGRAPE"></td></tr>
+      <tr><td><span class="s-emoji">🍒</span><span class="name"> 左リール</span></td><td class="name">チェリー</td><td class="mult" id="payCHERRY"></td></tr>
+    </table>
+    <ul class="notes">
+      <li>BET を選んでレバー、STOP で3つのリールを止めます。W キーでレバー、A・S・D キーで左・中・右のリールを止められます。</li>
+      <li>「FEVER!」ランプが光ったらボーナス確定！ STOP を押すだけで 7 が揃います（目押しサポート）。</li>
+      <li>止まったあとに光る「後告知」のときは、次のゲームで揃います。</li>
+      <li>🌈 虹色に光ったら BIG 確定！</li>
+      <li>ボーナスの払い出しは、ランプが光ったゲームの BET 数で決まります。</li>
+      <li id="rateNote"></li>
+    </ul>
+    <button class="close-btn" id="payClose" type="button">とじる</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ============================================================
+  // 設定（Chatter に組み込むときは、管理者メニューの値で上書きする）
+  //   coinPerMedal：メダル1枚あたりの Chatterコイン
+  //   lendMedals  ：1回で借りるメダルの枚数
+  //   setting     ：設定 1〜6（ボーナスの当たりやすさ）
+  // ============================================================
+  const CONFIG = { coinPerMedal: 10, lendMedals: 50, setting: 2, demoCoins: 10000 };
+
+  // 払い出し（BET 1枚あたり）。小役の確率は設定によらず同じ
+  const PAY = { BIG: 60, REG: 24, CLOWN: 10, BELL: 8, GRAPE: 3, CHERRY: 2 };
+  const SMALL_PROB = [['CLOWN', 1 / 200], ['BELL', 1 / 128], ['CHERRY', 1 / 36], ['GRAPE', 1 / 8]];
+  // 設定ごとの [BIG, REG] の確率。機械割の目安：0≒70% 1≒95% 2≒98% 3≒100% 4≒103% 5≒106% 6≒111%
+  const BONUS_PROB = {
+    0: [1 / 469, 1 / 782], 1: [1 / 180, 1 / 300], 2: [1 / 170, 1 / 280], 3: [1 / 162, 1 / 260],
+    4: [1 / 154, 1 / 240], 5: [1 / 146, 1 / 220], 6: [1 / 134, 1 / 200],
+  };
+  const PRE_NOTICE = 0.7;      // 先告知（レバーで光る）の割合。残りは後告知
+  const RAINBOW_BIG = 0.3;     // BIG のときに虹色で光る割合（虹 = BIG 確定）
+
+  const SYM_HTML = {
+    SEVEN: '<span class="s-seven">7</span>',
+    BAR: '<span class="s-bar">BAR</span>',
+    GRAPE: '<span class="s-emoji">🍇</span>',
+    CHERRY: '<span class="s-emoji">🍒</span>',
+    BELL: '<span class="s-emoji">🔔</span>',
+    CLOWN: '<span class="s-emoji">🤡</span>',
+  };
+  const S = 'SEVEN', B = 'BAR', G = 'GRAPE', C = 'CHERRY', L = 'BELL', P = 'CLOWN';
+  // リールの絵柄の並び（21コマ）
+  const STRIPS = [
+    [S, G, C, L, G, B, P, G, C, S, G, L, B, G, P, C, G, L, S, G, B],
+    [S, G, L, P, G, B, C, G, L, S, G, P, G, B, L, G, C, S, G, B, P],
+    [S, L, G, B, P, G, C, S, G, L, B, G, P, G, S, C, G, L, B, G, P],
+  ];
+  const N = 21;
+  const mod = (a, n) => ((a % n) + n) % n;
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => Math.round(n).toLocaleString('ja-JP');
+  const embedded = window.parent !== window;
+
+  // ---------- 状態 ----------
+  let coins = CONFIG.demoCoins;
+  let credit = 0, bet = 0, lastBet = 3, payout = 0;
+  let phase = 'idle';            // idle | spin
+  let outcome = 'NONE';          // このゲームで揃える役
+  let bonus = null;              // { type, bet, ready, late, rainbow }
+  const dc = { games: 0, big: 0, reg: 0, total: 0 };
+  let paused = false;
+  // Chatter の中で動くとき：メダルとコインはアプリが記録する（貸し出し・精算はアプリに頼み、結果を待つ）
+  let ready = !embedded, slotOn = true, busy = false, capLeft = Infinity;
+  const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
+
+  // ---------- 画面の部品 ----------
+  const cabinet = $('cabinet'), lamp = $('lamp'), lcd = $('lcd'), lever = $('lever');
+  const betBtns = [...document.querySelectorAll('.bet-btn')];
+  const stopBtns = [0, 1, 2].map((i) => $('stop' + i));
+
+  const reels = [0, 1, 2].map((i) => {
+    const el = document.querySelector(`.reel[data-i="${i}"]`);
+    const strip = el.querySelector('.strip');
+    strip.innerHTML = Array.from({ length: N + 3 }, (_, k) => `<div class="cell">${SYM_HTML[STRIPS[i][k % N]]}</div>`).join('');
+    return { i, el, strip, pos: Math.floor(Math.random() * N), spinning: false, ready: false, stop: null, final: null, speed: 17.5 + i * 0.7 };
+  });
+  let symH = 60;
+  function measure() { symH = reels[0].el.clientHeight / 3 || symH; reels.forEach(render); }
+  function render(r) { r.strip.style.transform = `translate3d(0, ${(-mod(r.pos, N) * symH).toFixed(2)}px, 0)`; }
+  const centerIndex = (r) => mod(Math.round(r.pos), N) + 1; // strip の子要素の番号（真ん中の段）
+
+  // ---------- 抽選 ----------
+  function draw() {
+    const [pBig, pReg] = BONUS_PROB[CONFIG.setting] || BONUS_PROB[2];
+    let r = Math.random();
+    if ((r -= pBig) < 0) return 'BIG';
+    if ((r -= pReg) < 0) return 'REG';
+    for (const [id, p] of SMALL_PROB) if ((r -= p) < 0) return id;
+    return 'NONE';
+  }
+
+  function evaluate(c) {
+    if (c[0] === S && c[1] === S && c[2] === S) return 'BIG';
+    if (c[0] === S && c[1] === S && c[2] === B) return 'REG';
+    if (c[0] === c[1] && c[1] === c[2] && (c[0] === G || c[0] === L || c[0] === P)) return c[0];
+    if (c[0] === C) return 'CHERRY';
+    return 'NONE';
+  }
+
+  // リール i を sym で止めてよいか（いま決まっている役 outcome に合わせて引き込む・はずす）
+  function allowed(i, sym, decided) {
+    switch (outcome) {
+      case 'BIG': return sym === S;
+      case 'REG': return sym === (i === 2 ? B : S);
+      case 'GRAPE': case 'BELL': case 'CLOWN': return sym === outcome;
+      case 'CHERRY': return i !== 0 || sym === C;
+      default: {
+        if (i === 0 && sym === C) return false;
+        const c = decided.slice(); c[i] = sym;
+        if (c.every(Boolean)) return c[0] !== c[1] || c[1] !== c[2] ? evaluate(c) === 'NONE' : false;
+        return true;
+      }
+    }
+  }
+
+  // ---------- 表示 ----------
+  function setMsg(a, b = '', mode = '') {
+    $('lcd1').textContent = a; $('lcd2').textContent = b;
+    lcd.className = 'lcd' + (mode ? ' ' + mode : '');
+  }
+
+  let creditShown = 0, payoutShown = 0, tweenId = 0;
+  function tweenNumbers(ms = 700) {
+    const id = ++tweenId, c0 = creditShown, p0 = payoutShown, start = performance.now();
+    const step = (now) => {
+      if (id !== tweenId) return;
+      const t = Math.min(1, (now - start) / ms), e = 1 - Math.pow(1 - t, 3);
+      creditShown = c0 + (credit - c0) * e; payoutShown = p0 + (payout - p0) * e;
+      $('creditVal').textContent = fmt(creditShown); $('payoutVal').textContent = fmt(payoutShown);
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  function update({ tween = false } = {}) {
+    if (tween) tweenNumbers();
+    else {
+      tweenId++; creditShown = credit; payoutShown = payout;
+      $('creditVal').textContent = fmt(credit); $('payoutVal').textContent = fmt(payout);
+    }
+    $('betVal').textContent = bet;
+    $('walletVal').textContent = fmt(coins);
+    const idle = phase === 'idle';
+    betBtns.forEach((b) => {
+      const n = +b.dataset.bet;
+      b.classList.toggle('active', bet === n);
+      b.disabled = !idle || credit + bet < n;
+    });
+    const canPlay = idle && ready && slotOn && !busy;
+    betBtns.forEach((b) => { if (!canPlay) b.disabled = true; });
+    lever.disabled = !canPlay || credit + bet === 0;
+    lever.classList.toggle('ready', idle && bet > 0);
+    const lendCost = CONFIG.lendMedals * CONFIG.coinPerMedal;
+    $('lendBtn').disabled = !canPlay || coins < lendCost;
+    $('cashBtn').disabled = !idle || !ready || busy || credit + bet === 0 || !!bonus;
+    $('cashNote').textContent = bonus ? 'ボーナス中は精算できません' : `${fmt(credit + bet)}枚 → ${fmt((credit + bet) * CONFIG.coinPerMedal)}コイン`;
+    $('dcGames').textContent = dc.games; $('dcBig').textContent = dc.big;
+    $('dcReg').textContent = dc.reg; $('dcTotal').textContent = dc.total;
+  }
+
+  function applyConfig() {
+    $('lendNote').textContent = `${CONFIG.lendMedals}枚 / ${fmt(CONFIG.lendMedals * CONFIG.coinPerMedal)}コイン`;
+    $('rateNote').textContent = `メダル1枚＝${fmt(CONFIG.coinPerMedal)}コイン。やめるときは「精算する」でコインに戻せます。`;
+    for (const k of Object.keys(PAY)) $('pay' + k).textContent = `×${PAY[k]}`;
+    $('walletLabel').textContent = embedded ? 'Chatterコイン' : 'Chatterコイン（お試し）';
+    update();
+  }
+
+  // ---------- 操作 ----------
+  function selectBet(n) {
+    if (phase !== 'idle' || !ready || !slotOn || busy) return false;
+    n = Math.min(n, credit + bet);
+    if (n <= 0) { setMsg('メダルがありません', '下の「メダルを借りる」から', 'warn'); return false; }
+    credit += bet - n; bet = n; lastBet = n; payout = 0;
+    sfx.bet();
+    if (!bonus) setMsg(`${n}枚 BET`, 'レバーを叩け！');
+    update();
+    return true;
+  }
+
+  function pullLever() {
+    if (phase !== 'idle' || !ready || !slotOn || busy) return;
+    if (bet === 0 && !selectBet(lastBet)) return;
+    phase = 'spin'; payout = 0;
+    clearHits();
+    dc.games++; dc.total++;
+
+    if (bonus && bonus.ready) {
+      outcome = bonus.type;
+      setMsg('ボーナス確定中！', 'STOP を押すだけで 7 が揃う！', 'fever');
+    } else {
+      const res = draw();
+      if (res === 'BIG' || res === 'REG') {
+        bonus = { type: res, bet, ready: false, late: false, rainbow: res === 'BIG' && Math.random() < RAINBOW_BIG };
+        if (Math.random() < PRE_NOTICE) {
+          bonus.ready = true; outcome = res;
+          setTimeout(() => peka(), 160);
+          setMsg('ペカッ!! ボーナス確定！', 'STOP を押すだけで 7 が揃う！', 'fever');
+        } else {
+          bonus.late = true; outcome = 'NONE';
+          setMsg(Math.random() < 0.5 ? '第3停止に注目…!?' : '回転中…', 'STOP で止めよう');
+        }
+      } else {
+        outcome = res;
+        setMsg(Math.random() < 0.04 ? '第3停止に注目…!?' : '回転中…', 'STOP で止めよう');
+      }
+    }
+
+    sfx.lever();
+    const now = performance.now();
+    reels.forEach((r, i) => {
+      r.spinning = true; r.ready = false; r.stop = null; r.final = null;
+      r.el.classList.add('spinning'); r.el.classList.remove('reach');
+      setTimeout(() => { if (r.spinning && !r.stop) { r.ready = true; stopBtns[i].disabled = false; } }, 320 + i * 60);
+    });
+    update();
+  }
+
+  function pressStop(i) {
+    const r = reels[i];
+    if (phase !== 'spin' || !r.spinning || !r.ready || r.stop) return;
+    const decided = reels.map((x) => x.final);
+    const base = Math.floor(r.pos);
+    let pick = base;
+    for (let k = 0; k < N; k++) {
+      if (allowed(i, STRIPS[i][mod(base - k + 1, N)], decided)) { pick = base - k; break; }
+    }
+    r.final = STRIPS[i][mod(pick + 1, N)];
+    const d = r.pos - pick;
+    r.stop = { from: r.pos, to: pick, start: performance.now(), dur: Math.min(1300, Math.max(90, (3 * d / r.speed) * 1000)) };
+    stopBtns[i].disabled = true;
+    sfx.stop();
+    // リーチ（2つ止めて 7 が2つ並んだ）
+    const f = reels.map((x) => x.final);
+    if (f.filter(Boolean).length === 2 && f.filter((s) => s === S).length === 2) {
+      const rest = reels.find((x) => !x.final);
+      rest.el.classList.add('reach');
+      if (!bonus || !bonus.ready) setMsg('リーチ!!', '7 来い…！', bonus ? '' : '');
+      sfx.reach();
+    }
+  }
+
+  function onReelStopped() {
+    if (reels.some((r) => r.spinning)) return;
+    settle();
+  }
+
+  function settle() {
+    const c = reels.map((r) => r.final);
+    const res = evaluate(c);
+    let win = 0;
+    if (res === 'BIG' || res === 'REG') {
+      win = PAY[res] * bonus.bet;
+      dc[res === 'BIG' ? 'big' : 'reg']++; dc.games = 0;
+      bonus = null;
+      markHits(res);
+      celebrate(res, win);
+    } else if (res !== 'NONE') {
+      win = PAY[res] * bet;
+      markHits(res);
+      sfx.small();
+      const name = { CLOWN: '🤡 ピエロ', BELL: '🔔 ベル', GRAPE: '🍇 ぶどう', CHERRY: '🍒 チェリー' }[res];
+      setMsg(`${name} +${win}枚`, bonus && bonus.ready ? 'ボーナス確定中！' : '次のゲームへ', 'win');
+      burst(innerWidth / 2, innerHeight * 0.4, res === 'CLOWN' || res === 'BELL' ? 26 : 12, 'coin');
+    } else if (bonus && bonus.late && !bonus.ready) {
+      bonus.ready = true;
+      peka(true);
+      setMsg('後告知ペカッ!!', '次のゲームで 7 が揃う！', 'fever');
+    } else if (bonus && bonus.ready) {
+      setMsg('ボーナス確定中！', 'レバーで 7 を揃えよう', 'fever');
+    } else {
+      setMsg(credit === 0 ? 'メダルがなくなりました' : 'ハズレ…', credit === 0 ? '「メダルを借りる」で続けよう' : 'W でもう1回');
+    }
+    credit += win; payout = win; bet = 0;
+    phase = 'idle';
+    if (!bonus) { cabinet.classList.remove('fever'); }
+    stopBtns.forEach((b) => (b.disabled = true));
+    update({ tween: win > 0 });
+    if (embedded) send('slot-sync', { medals: credit });
+  }
+
+  function markHits(res) {
+    const cols = res === 'CHERRY' ? [0] : [0, 1, 2];
+    cols.forEach((i) => reels[i].strip.children[centerIndex(reels[i])].classList.add('hit'));
+  }
+  function clearHits() { document.querySelectorAll('.cell.hit').forEach((e) => e.classList.remove('hit')); }
+
+  function lend() {
+    const cost = CONFIG.lendMedals * CONFIG.coinPerMedal;
+    if (phase !== 'idle' || coins < cost || busy || !ready || !slotOn) return;
+    if (embedded) { busy = true; setMsg('メダルを借りています…'); update(); send('slot-lend', { medals: credit + bet }); return; }
+    coins -= cost; credit += CONFIG.lendMedals;
+    sfx.small();
+    setMsg(`メダル ${CONFIG.lendMedals}枚 を借りました`, `-${fmt(cost)}コイン`);
+    burst(innerWidth / 2, innerHeight * 0.75, 14, 'coin');
+    update({ tween: true });
+  }
+
+  function cashOut() {
+    if (phase !== 'idle' || bonus) return;
+    const medals = credit + bet;
+    if (medals === 0 || busy || !ready) return;
+    if (embedded) { busy = true; setMsg('精算しています…'); update(); send('slot-cashout', { medals }); return; }
+    const got = medals * CONFIG.coinPerMedal;
+    coins += got; credit = 0; bet = 0; payout = 0;
+    sfx.small();
+    setMsg(`精算：${fmt(medals)}枚 → ${fmt(got)}コイン`, 'おつかれさまでした！', 'win');
+    burst(80, 40, 30, 'coin');
+    update();
+  }
+
+  // ---------- 演出 ----------
+  function peka(late = false) {
+    const rb = bonus && bonus.rainbow;
+    lamp.classList.add('on');
+    lamp.classList.toggle('rainbow', !!rb);
+    cabinet.classList.add('fever');
+    shake();
+    showCutin(rb ? '🌈 BIG確定!! 🌈' : late ? 'ペカッ!!' : 'ペカッ!!');
+    burst(innerWidth / 2, innerHeight * 0.5, rb ? 110 : 70, 'confetti');
+    sfx.peka();
+  }
+
+  function celebrate(type, win) {
+    setMsg(type === 'BIG' ? '🎉 BIG BONUS!!' : '✨ REG BONUS!!', `+${fmt(win)}枚 獲得！`, 'win');
+    showCutin(`${type} +${fmt(win)}枚`);
+    shake();
+    sfx.big();
+    let n = 0;
+    const iv = setInterval(() => {
+      burst(innerWidth * (0.2 + Math.random() * 0.6), innerHeight * (0.15 + Math.random() * 0.4), type === 'BIG' ? 50 : 30, n % 2 ? 'confetti' : 'coin');
+      if (++n >= (type === 'BIG' ? 7 : 4)) clearInterval(iv);
+    }, 230);
+    setTimeout(() => { if (!bonus) { lamp.classList.remove('on', 'rainbow'); cabinet.classList.remove('fever'); } }, 1800);
+  }
+
+  function shake() {
+    cabinet.classList.remove('shake'); void cabinet.offsetWidth; cabinet.classList.add('shake');
+    setTimeout(() => cabinet.classList.remove('shake'), 450);
+  }
+
+  const cutinEl = $('cutin');
+  function showCutin(text) {
+    cutinEl.textContent = text;
+    cutinEl.classList.remove('show'); void cutinEl.offsetWidth; cutinEl.classList.add('show');
+  }
+
+  // ---------- パーティクル（コインと紙吹雪） ----------
+  const cv = $('fx'), cx = cv.getContext('2d');
+  let parts = [];
+  function resizeFx() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+    cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  const CONFETTI = ['#f472b6', '#a78bfa', '#67e8f9', '#fde68a', '#4ade80', '#fb7185', '#ffffff'];
+  function burst(x, y, n, kind) {
+    for (let k = 0; k < n; k++) {
+      const a = Math.random() * Math.PI * 2, sp = 160 + Math.random() * 420;
+      parts.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 260,
+        rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 14,
+        size: kind === 'coin' ? 7 + Math.random() * 5 : 5 + Math.random() * 5,
+        life: 1, decay: 0.45 + Math.random() * 0.4, kind,
+        color: CONFETTI[(Math.random() * CONFETTI.length) | 0],
+      });
+    }
+    if (parts.length > 700) parts.splice(0, parts.length - 700);
+  }
+  function drawParts(dt) {
+    cx.clearRect(0, 0, innerWidth, innerHeight);
+    for (let k = parts.length - 1; k >= 0; k--) {
+      const p = parts[k];
+      p.vy += 900 * dt; p.vx *= 0.99; p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
+      p.life -= p.decay * dt;
+      if (p.life <= 0 || p.y > innerHeight + 40) { parts.splice(k, 1); continue; }
+      cx.globalAlpha = Math.min(1, p.life * 1.6);
+      cx.save(); cx.translate(p.x, p.y);
+      if (p.kind === 'coin') {
+        const w = Math.max(0.15, Math.abs(Math.cos(p.rot)));
+        cx.scale(w, 1);
+        cx.beginPath(); cx.arc(0, 0, p.size, 0, Math.PI * 2);
+        cx.fillStyle = '#f59e0b'; cx.fill();
+        cx.beginPath(); cx.arc(0, 0, p.size * 0.72, 0, Math.PI * 2);
+        cx.fillStyle = '#fcd34d'; cx.fill();
+        cx.fillStyle = 'rgba(255,255,255,.7)'; cx.fillRect(-p.size * 0.35, -p.size * 0.5, p.size * 0.22, p.size * 0.5);
+      } else {
+        cx.rotate(p.rot); cx.fillStyle = p.color;
+        cx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+      }
+      cx.restore();
+    }
+    cx.globalAlpha = 1;
+  }
+
+  // ---------- 効果音（WebAudio で作る短い音） ----------
+  let audio = null, soundOn = true;
+  function ac() {
+    if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } }
+    if (audio.state === 'suspended') audio.resume();
+    return audio;
+  }
+  function tone(f, d, type = 'square', v = 0.05, when = 0, f2 = 0) {
+    if (!soundOn) return;
+    const a = ac(); if (!a) return;
+    const t = a.currentTime + when, o = a.createOscillator(), g = a.createGain();
+    o.type = type; o.frequency.setValueAtTime(f, t);
+    if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + d);
+    g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g).connect(a.destination); o.start(t); o.stop(t + d + 0.03);
+  }
+  const sfx = {
+    bet: () => tone(990, 0.04, 'square', 0.03),
+    lever: () => { tone(150, 0.07, 'square', 0.06); tone(75, 0.12, 'triangle', 0.08, 0.02); },
+    stop: () => tone(430, 0.07, 'triangle', 0.09),
+    reach: () => tone(620, 0.25, 'sawtooth', 0.025, 0, 930),
+    peka: () => { tone(95, 0.1, 'square', 0.09); tone(1320, 0.28, 'sine', 0.06, 0.07, 1980); tone(1760, 0.34, 'sine', 0.05, 0.16, 2640); },
+    small: () => [880, 1109, 1319].forEach((f, k) => tone(f, 0.08, 'square', 0.03, k * 0.06)),
+    big: () => [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, k) => tone(f, 0.15, 'square', 0.045, k * 0.11)),
+  };
+  $('soundBtn').addEventListener('click', () => {
+    soundOn = !soundOn;
+    $('soundBtn').textContent = soundOn ? '🔊' : '🔇';
+    if (soundOn) sfx.bet();
+  });
+
+  // ---------- ループ ----------
+  let last = performance.now(), raf = 0;
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    for (const r of reels) {
+      if (r.stop) {
+        const t = Math.min(1, (now - r.stop.start) / r.stop.dur), e = 1 - Math.pow(1 - t, 3);
+        r.pos = r.stop.from + (r.stop.to - r.stop.from) * e;
+        if (t >= 1) {
+          r.pos = mod(r.stop.to, N); r.stop = null; r.spinning = false; r.ready = false;
+          r.el.classList.remove('spinning', 'reach', 'land'); void r.el.offsetWidth; r.el.classList.add('land');
+          render(r); onReelStopped(); continue;
+        }
+        render(r);
+      } else if (r.spinning) { r.pos -= r.speed * dt; render(r); }
+    }
+    drawParts(dt);
+    raf = requestAnimationFrame(frame);
+  }
+  let pausedAt = 0;
+  function pause() { if (paused) return; paused = true; pausedAt = performance.now(); cancelAnimationFrame(raf); }
+  function resume() {
+    if (!paused) return; paused = false;
+    const gap = performance.now() - pausedAt;
+    reels.forEach((r) => { if (r.stop) r.stop.start += gap; });
+    last = performance.now(); raf = requestAnimationFrame(frame);
+  }
+
+  // ---------- 入力 ----------
+  betBtns.forEach((b) => b.addEventListener('click', () => selectBet(+b.dataset.bet)));
+  lever.addEventListener('click', pullLever);
+  stopBtns.forEach((b, i) => b.addEventListener('click', () => pressStop(i)));
+  $('lendBtn').addEventListener('click', lend);
+  $('cashBtn').addEventListener('click', cashOut);
+  const modal = $('payModal');
+  $('payBtn').addEventListener('click', () => { modal.hidden = false; });
+  $('payClose').addEventListener('click', () => { modal.hidden = true; });
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (!modal.hidden) { modal.hidden = true; return; }
+      if (embedded) try { parent.postMessage({ source: 'chatter-game', type: 'escape' }, '*'); } catch (err) {}
+      return;
+    }
+    if (!modal.hidden) return;
+    const stopKey = { KeyA: 0, KeyS: 1, KeyD: 2 }[e.code];
+    if (e.code === 'KeyW') {
+      e.preventDefault();
+      if (!e.repeat) pullLever();
+    } else if (stopKey !== undefined) {
+      e.preventDefault();
+      if (!e.repeat) pressStop(stopKey);
+    } else if (e.key === '1' || e.key === '2' || e.key === '3') {
+      const n = +e.key;
+      if (phase === 'idle') selectBet(n);
+    }
+  });
+
+  window.addEventListener('message', (e) => {
+    const m = e.data;
+    if (!m || m.source !== 'chatter') return;
+    if (m.type === 'slot-config') {
+      CONFIG.setting = m.setting; CONFIG.coinPerMedal = m.rate; coins = m.coins; capLeft = m.capLeft;
+      const wasOn = slotOn; slotOn = m.on;
+      if (!ready && Number.isInteger(m.medals)) {
+        credit = m.medals; ready = true;
+        setMsg(credit > 0 ? `メダル ${fmt(credit)}枚 から再開` : 'メダルを借りてスタート！', 'BET を選んでレバーを叩け');
+      }
+      if (!slotOn && phase === 'idle') setMsg('スロットはお休み中です', '精算はいつでもできます', 'warn');
+      else if (slotOn && !wasOn) setMsg('スロットが再開しました', 'BET を選んでレバーを叩け');
+      applyConfig();
+    } else if (m.type === 'slot-result') {
+      busy = false;
+      coins = m.coins;
+      if (!m.ok) { setMsg(m.message || 'うまくいきませんでした', 'もう一度お試しください', 'warn'); }
+      else if (m.op === 'lend') {
+        credit += m.added;
+        sfx.small();
+        setMsg(`メダル ${m.added}枚 を借りました`, `-${fmt(m.added * CONFIG.coinPerMedal)}コイン`);
+        burst(innerWidth / 2, innerHeight * 0.75, 14, 'coin');
+      } else if (m.op === 'cashout') {
+        credit = m.medals; bet = 0; payout = 0;
+        sfx.small();
+        setMsg(`精算：${fmt(m.cashed)}枚 → ${fmt(m.cashed * CONFIG.coinPerMedal)}コイン`, m.medals > 0 ? `今日の上限のため ${fmt(m.medals)}枚 は残しました` : 'おつかれさまでした！', 'win');
+        burst(80, 40, 30, 'coin');
+      }
+      update({ tween: true });
+    } else if (m.type === 'pause') pause();
+    else if (m.type === 'resume') resume();
+  });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); else resume(); });
+  window.addEventListener('resize', () => { measure(); resizeFx(); });
+
+  // ---------- 開始 ----------
+  measure(); resizeFx(); applyConfig();
+  if (embedded) setMsg('読み込み中…'); else setMsg('メダルを借りてスタート！', 'BET を選んでレバーを叩け');
+  raf = requestAnimationFrame(frame);
+})();
+</script>
+  </template>
   <template id="game-src-stack">
 <style>
     :root {
@@ -10109,6 +11040,9 @@ draw();
     const FRAME_BY_ID = Object.fromEntries(FRAMES.map((f, i) => [f.id, { ...f, tier: i }]));
     const GAME_SCORE_MAX = 10000000; // 1回で記録できるスコアの上限（firestore.rules と合わせる）
     const gameById = (id) => GAMES.find((g) => g.id === id) || null;
+    // Chatterコインで遊ぶゲーム（スコア・ランキング・特典の対象外なので GAMES には入れない。<template id="game-src-slot">）
+    const SLOT_GAME = { id: "slot", name: "フィーバースロット", emoji: "🎰", desc: "Chatterコインをメダルに替えて遊ぶスロット", bg: "from-fuchsia-400 to-violet-600" };
+    const playableById = (id) => gameById(id) || (id === SLOT_GAME.id ? SLOT_GAME : null);
     const gameThumb = (g, cls) => `<div class="${cls} shrink-0 rounded-2xl bg-gradient-to-br ${g.bg} grid place-items-center shadow-sm" aria-hidden="true">${g.emoji}</div>`;
     // 得点の合計（以前の記録で total が無いものは、少なくとも best はあるので best とみなす。ルールと同じ）
     const gameTotal = (s) => (s ? (Number.isInteger(s.total) ? s.total : s.best || 0) : 0);
@@ -10583,6 +11517,113 @@ draw();
       $("#toast-root").prepend(el);
     }
 
+    // ============================================================
+    // フィーバースロット（wallet/main の slot = { medals, rate, day, spent, got, last }。firestore.rules の slotOk と合わせる）
+    // medals：持っているメダル / rate：メダル1枚のコイン数（借りたときの設定。メダルが0になるまで変わらない）
+    // day：日本時間の日付の通し番号 / spent・got：その日に借りた・精算したコイン / last：最後に精算したメダルの枚数
+    // コインが動くのは「借りる」「精算」のときだけ。遊んでいる間のメダルの数は、少し待ってまとめて記録する
+    // ============================================================
+    const SLOT_LEND = 50, SLOT_MEDALS_MAX = 100000, SLOT_SYNC_MS = 4000;
+    const SLOT_RATES = [5, 10, 20, 50];
+    const SLOT_CAPS = [0, 5000, 10000, 20000, 50000, 100000];
+    const SLOT_RTP = ["約70%", "約95%", "約98%", "約100%", "約103%", "約106%", "約111%"];
+    const slotDay = () => Math.floor((Date.now() + 9 * 3600000) / 86400000);
+    const walletSlot = () => state.wallet?.slot || null;
+    const slotRate = () => { const s = walletSlot(); return s && s.medals > 0 ? s.rate : adminSettings.slotRate; };
+    function slotCapLeft() {
+      if (!adminSettings.slotCap) return null;
+      const s = walletSlot();
+      const same = s && s.day === slotDay();
+      return Math.max(0, adminSettings.slotCap - (same ? s.got - s.spent : 0));
+    }
+    let slotInitSent = false, slotPending = null, slotTimer = 0;
+    function sendSlotConfig() {
+      const e = gameFrames.get(SLOT_GAME.id);
+      if (!e?.loaded || !state.walletLoaded) return;
+      const msg = { type: "slot-config", setting: adminSettings.slotSetting, rate: slotRate(), coins: walletCoins(), on: adminSettings.slotOn, capLeft: slotCapLeft() };
+      if (!slotInitSent) { msg.medals = walletSlot()?.medals || 0; slotInitSent = true; }
+      postToGame(SLOT_GAME.id, msg);
+    }
+    const walletRef = () => doc(db, "users", state.me.id, "wallet", "main");
+    function queueSlotSync(medals) {
+      if (!Number.isInteger(medals) || medals < 0 || medals > SLOT_MEDALS_MAX) return;
+      slotPending = medals;
+      clearTimeout(slotTimer);
+      slotTimer = setTimeout(flushSlot, SLOT_SYNC_MS);
+    }
+    async function flushSlot() {
+      clearTimeout(slotTimer);
+      if (slotPending === null || !state.me) return;
+      const medals = slotPending;
+      slotPending = null;
+      const s = walletSlot();
+      if (!s || s.medals === medals) return;
+      try { await updateDoc(walletRef(), { "slot.medals": medals, updatedAt: serverTimestamp() }); }
+      catch (e) { console.warn(e); }
+    }
+    const slotResult = (msg) => postToGame(SLOT_GAME.id, { type: "slot-result", coins: walletCoins(), ...msg });
+    async function slotLend(medals) {
+      try {
+        if (!state.me || isRestricted(state.me)) throw new Error("今は遊べません");
+        if (!adminSettings.slotOn) throw new Error("スロットはお休み中です");
+        if (!Number.isInteger(medals) || medals < 0 || medals > SLOT_MEDALS_MAX - SLOT_LEND) throw new Error("これ以上は借りられません");
+        clearTimeout(slotTimer); slotPending = null;
+        const today = slotDay();
+        const coins = await runTransaction(db, async (tx) => {
+          const snap = await tx.get(walletRef());
+          if (!snap.exists()) throw new Error("Chatterコインが足りません");
+          const w = snap.data();
+          const b = w.slot || { medals: 0, rate: 0, day: 0, spent: 0, got: 0, last: 0 };
+          const rate = b.medals > 0 ? b.rate : adminSettings.slotRate;
+          const cost = SLOT_LEND * rate;
+          if ((w.coins || 0) < cost) throw new Error("Chatterコインが足りません");
+          const same = b.day === today;
+          tx.update(walletRef(), {
+            coins: w.coins - cost,
+            slot: { medals: medals + SLOT_LEND, rate, day: today, spent: (same ? b.spent : 0) + cost, got: same ? b.got : 0, last: b.last || 0 },
+            updatedAt: serverTimestamp(),
+          });
+          return w.coins - cost;
+        });
+        slotResult({ op: "lend", ok: true, added: SLOT_LEND, coins });
+      } catch (e) {
+        console.warn(e);
+        slotResult({ op: "lend", ok: false, message: e.code ? "借りられませんでした" : e.message });
+      }
+    }
+    async function slotCashout(medals) {
+      try {
+        if (!state.me) throw new Error("精算できませんでした");
+        if (!Number.isInteger(medals) || medals <= 0 || medals > SLOT_MEDALS_MAX) throw new Error("精算するメダルがありません");
+        clearTimeout(slotTimer); slotPending = null;
+        const today = slotDay();
+        const r = await runTransaction(db, async (tx) => {
+          const snap = await tx.get(walletRef());
+          const w = snap.exists() ? snap.data() : null;
+          const b = w?.slot;
+          if (!b) throw new Error("精算するメダルがありません");
+          const same = b.day === today;
+          const spent = same ? b.spent : 0, got = same ? b.got : 0;
+          let cash = medals;
+          if (adminSettings.slotCap > 0) cash = Math.min(cash, Math.floor((adminSettings.slotCap - (got - spent)) / b.rate));
+          if (cash <= 0) throw new Error("今日の精算の上限に達しました（明日また精算できます）");
+          const add = cash * b.rate;
+          tx.update(walletRef(), {
+            coins: (w.coins || 0) + add,
+            slot: { medals: medals - cash, rate: b.rate, day: today, spent, got: got + add, last: cash },
+            updatedAt: serverTimestamp(),
+          });
+          return { cash, add, coins: (w.coins || 0) + add };
+        });
+        slotResult({ op: "cashout", ok: true, cashed: r.cash, medals: medals - r.cash, coins: r.coins });
+        toast(`🪙 精算して Chatterコインを ${r.add.toLocaleString()} 枚受け取りました`);
+      } catch (e) {
+        console.warn(e);
+        slotResult({ op: "cashout", ok: false, message: e.code ? "精算できませんでした" : e.message });
+      }
+    }
+    window.addEventListener("pagehide", () => flushSlot());
+
     function subscribeWallet() {
       state.unsub.wallet = onSnapshot(
         doc(db, "users", state.me.id, "wallet", "main"),
@@ -10593,6 +11634,7 @@ draw();
           if (SHOP_ITEMS.every((it) => state.wallet.items?.[it.id] === true)) unlockAchievement("shop", "shop-master");
           if (state.tab === "games" || state.tab === "shop") renderSidebar();
           if (gachaView) renderGacha();
+          sendSlotConfig();
           showGrantNotice();
         },
         (e) => { console.warn(e); state.walletLoaded = true; },
@@ -11362,7 +12404,28 @@ draw();
               <span class="w-9 h-9 shrink-0 rounded-full grid place-items-center text-slate-300 group-hover:text-indigo-500 group-hover:bg-indigo-50 transition">${icon("chevron", "w-5 h-5")}</span>
             </button>`;
         }).join("") +
+        renderSlotRow() +
         `<p class="px-3 pt-4 text-center text-xs text-slate-400">ゲームは今後も追加予定です</p>`;
+    }
+
+    // ゲーム一覧の下：コインで遊ぶゲーム（スロット）
+    function renderSlotRow() {
+      const g = SLOT_GAME;
+      const medals = walletSlot()?.medals || 0;
+      return `
+        <p class="px-3 pt-4 pb-2 text-xs font-medium text-slate-400">Chatterコインで遊ぶ</p>
+        <button type="button" data-action="open-game" data-id="${g.id}" class="list-row group ${g.id === state.activeGameId ? "is-active" : ""}">
+          ${gameThumb(g, "w-12 h-12 text-2xl")}
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="font-semibold truncate text-slate-800">${esc(g.name)}</span>
+              ${adminSettings.slotOn ? "" : `<span class="shrink-0 px-1.5 py-px rounded-md bg-slate-100 text-slate-500 text-[10px] font-semibold">お休み中</span>`}
+            </div>
+            <div class="text-xs text-slate-500 truncate">${esc(g.desc)}</div>
+            <div class="text-[11px] text-amber-700 truncate">🪙 メダル1枚 = ${slotRate().toLocaleString()}コイン${medals > 0 ? ` ・ 持っているメダル ${medals.toLocaleString()}枚` : ""}</div>
+          </div>
+          <span class="w-9 h-9 shrink-0 rounded-full grid place-items-center text-slate-300 group-hover:text-indigo-500 group-hover:bg-indigo-50 transition">${icon("chevron", "w-5 h-5")}</span>
+        </button>`;
     }
 
     // 獲得条件の一覧（ゲームごとの得点の合計）
@@ -11762,6 +12825,12 @@ draw();
     // keys：KeyboardEvent.code（先頭が、ゲームに伝えるキー）
     // ============================================================
     const GAME_KEYS = {
+      slot: [
+        { id: "lever", label: "レバー", keys: ["KeyW"] },
+        { id: "stopL", label: "左リールを止める", keys: ["KeyA"] },
+        { id: "stopC", label: "中リールを止める", keys: ["KeyS"] },
+        { id: "stopR", label: "右リールを止める", keys: ["KeyD"] },
+      ],
       suika: [
         { id: "left", label: "左へ動かす", keys: ["ArrowLeft", "KeyA"] },
         { id: "right", label: "右へ動かす", keys: ["ArrowRight", "KeyD"] },
@@ -12024,11 +13093,22 @@ draw();
     }, true);
 
     function renderGameHeader() {
-      const g = gameById(state.activeGameId);
+      const g = playableById(state.activeGameId);
       if (!g) return;
       const s = state.gameStats.get(g.id);
       $("#game-keys-btn").hidden = !GAME_KEYS[g.id];
+      const restartBtn = document.querySelector('[data-action="restart-game"]');
+      if (restartBtn) restartBtn.hidden = g === SLOT_GAME;
       renderGamePad();
+      if (g === SLOT_GAME) {
+        $("#game-header-main").innerHTML = `
+          ${gameThumb(g, "w-10 h-10 text-xl")}
+          <div class="min-w-0">
+            <div class="font-semibold truncate text-slate-800">${esc(g.name)}</div>
+            <div class="text-xs text-slate-400 truncate">メダル1枚 = ${slotRate().toLocaleString()}コイン・やめるときは「精算する」</div>
+          </div>`;
+        return;
+      }
       $("#game-header-main").innerHTML = `
         ${gameThumb(g, "w-10 h-10 text-xl")}
         <div class="min-w-0">
@@ -12062,6 +13142,12 @@ draw();
       frame.setAttribute("sandbox", "allow-scripts");
       frame.srcdoc = `<!DOCTYPE html><html lang="ja"${isDark() ? ` class="dark"` : ""}><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${esc(g.name)}</title><script>${KEYMAP_SCRIPT}(${JSON.stringify(keyTable(g.id))});<\/script></head><body>${src.innerHTML}</body></html>`;
       frame.addEventListener("load", () => {
+        if (g.id === SLOT_GAME.id) {
+          const e = gameFrames.get(g.id);
+          if (e?.frame === frame) { e.loaded = true; slotInitSent = false; sendSlotConfig(); }
+          if (state.activeGameId === g.id && !isCoarse()) frame.focus();
+          return;
+        }
         if (!state.gameStatsLoaded) return;
         postToGame(g.id, { type: "best", best: state.gameStats.get(g.id)?.best ?? 0 });
         if (state.activeGameId === g.id && !isCoarse()) frame.focus(); // キーボードで操作できるように
@@ -12072,9 +13158,10 @@ draw();
     }
 
     function openGame(id) {
-      const g = gameById(id);
+      const g = playableById(id);
       const src = document.getElementById(`game-src-${id}`);
       if (!g || !src || isRestricted(state.me)) return;
+      if (g === SLOT_GAME && !state.walletLoaded) { toast("Chatterコインを読み込み中です。少し待ってからもう一度開いてください"); return; }
       if (state.activeRoomId) closeRoom();
       if (state.activeGameId !== id) {
         if (state.activeGameId) pauseGame(state.activeGameId);
@@ -12104,6 +13191,7 @@ draw();
     function pauseGame(id) {
       const entry = gameFrames.get(id);
       if (!entry) return;
+      if (id === SLOT_GAME.id) flushSlot();
       postToGame(id, { type: "pause" });
       entry.frame.hidden = true;
       entry.frame.blur();
@@ -12124,6 +13212,7 @@ draw();
       const entry = gameFrames.get(id);
       if (!entry) return;
       if (record && entry.progress > 0) saveGameScore(id, entry.progress);
+      if (id === SLOT_GAME.id) { if (record) flushSlot(); slotInitSent = false; }
       entry.frame.remove();
       gameFrames.delete(id);
     }
@@ -12165,6 +13254,9 @@ draw();
       else if (d.type === "start") { entry.progress = 0; entry.playing = true; }
       else if (d.type === "gameover") { entry.progress = 0; entry.playing = false; saveGameScore(id, d.score); }
       else if (d.type === "achieve" && typeof d.id === "string") unlockAchievement(id, d.id);
+      else if (id === SLOT_GAME.id && d.type === "slot-sync") queueSlotSync(d.medals);
+      else if (id === SLOT_GAME.id && d.type === "slot-lend") slotLend(d.medals);
+      else if (id === SLOT_GAME.id && d.type === "slot-cashout") slotCashout(d.medals);
       else if (d.type === "escape" && id === state.activeGameId && $("#modal-root").hidden) exitGame(); // ゲームの中で Esc を押したとき（モーダル表示中は閉じない）
     });
 
@@ -16835,7 +17927,9 @@ draw();
     // longText：長文の送信。全ユーザーの1メッセージの最大文字数を切り替える（文書に無ければオン）
     // rawImage：画像ファイルのまま送る機能（Storage にアップロードする画像）。全ユーザーに効く（文書に無ければオン）
     // adminScores：管理者のゲームのスコアをランキングに記録する（文書に無ければオン）。オフの間に遊んだスコアはランキングに載らない
-    let adminSettings = { signupOpen: true, readReceipts: true, hideOnline: false, longText: true, rawImage: true, adminScores: true };
+    // slotOn：フィーバースロットを遊べる（無ければオン）/ slotSetting：設定 0〜6（無ければ 2）/ slotRate：メダル1枚のコイン数（無ければ 10）
+    // slotCap：1日に精算で増やせるコインの上限（0 は上限なし。無ければ 20000）
+    let adminSettings = { signupOpen: true, readReceipts: true, hideOnline: false, longText: true, rawImage: true, adminScores: true, slotOn: true, slotSetting: 2, slotRate: 10, slotCap: 20000 };
     const maxText = () => (adminSettings.longText ? MAX_TEXT_LONG : MAX_TEXT_SHORT);
     // 管理者メニューのパスワードのハッシュ。メニューを開いている間だけ持ち、閉じたら消す
     let adminKey = null;
@@ -16851,7 +17945,13 @@ draw();
         doc(db, "admin", "settings"),
         (snap) => {
           const d = snap.data();
-          applySettings({ signupOpen: d?.signupOpen !== false, readReceipts: d?.readReceipts !== false, hideOnline: d?.hideOnline === true, longText: d?.longText !== false, rawImage: d?.rawImage !== false, adminScores: d?.adminScores !== false });
+          applySettings({
+            signupOpen: d?.signupOpen !== false, readReceipts: d?.readReceipts !== false, hideOnline: d?.hideOnline === true, longText: d?.longText !== false, rawImage: d?.rawImage !== false, adminScores: d?.adminScores !== false,
+            slotOn: d?.slotOn !== false,
+            slotSetting: Number.isInteger(d?.slotSetting) && d.slotSetting >= 0 && d.slotSetting <= 6 ? d.slotSetting : 2,
+            slotRate: SLOT_RATES.includes(d?.slotRate) ? d.slotRate : 10,
+            slotCap: SLOT_CAPS.includes(d?.slotCap) ? d.slotCap : 20000,
+          });
         },
         (e) => console.warn(e), // 読めないときは既定の設定（募集中・既読を表示）のまま
       );
@@ -16862,6 +17962,8 @@ draw();
       const rawChanged = next.rawImage !== adminSettings.rawImage;
       adminSettings = next;
       if (rawChanged) renderRawImageButton();
+      sendSlotConfig();
+      if (state.me && state.tab === "games") renderSidebar();
       $("#msg-input").maxLength = maxText();
       renderSignupState();
       renderAdminSettings();
@@ -16965,6 +18067,20 @@ draw();
           ${adminSwitch("longText", `全ユーザーの、1回に送信できる文字数を切り替えます。オンで最大${MAX_TEXT_LONG}文字、オフで最大${MAX_TEXT_SHORT}文字です（メッセージの編集も同じです）。送信済みのメッセージはそのまま残ります。`)}
           ${adminSwitch("rawImage", "オフにすると、全ユーザーが画像を送るときの「元の画像ファイルのまま送る」が使えなくなり、画像ファイルのままの画像の転送もできなくなります（SVG に埋め込んで送る方法はこれまでどおり使えます）。送信済みの画像はそのまま表示されます。")}
           ${adminSwitch("adminScores", "オフの間にあなたが遊んだゲームのスコアは、ランキングに載りません（オンに戻しても、オフの間のスコアは載りません）。自己ベスト・得点の合計など、あなた自身の記録と特典の獲得には、これまでどおり反映されます。")}
+          ${adminSwitch("slotOn", "オフにすると、全ユーザーがフィーバースロットでメダルを借りたり遊んだりできなくなります。持っているメダルの精算はいつでもできます。")}
+          <form id="form-admin-slot" class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4 space-y-3">
+            <div class="text-sm font-semibold text-slate-800">フィーバースロットの設定</div>
+            <div class="grid grid-cols-3 gap-2">
+              <label class="text-xs text-slate-500">設定
+                <select name="setting" class="input mt-1 py-1.5">${SLOT_RTP.map((r, i) => `<option value="${i}" ${adminSettings.slotSetting === i ? "selected" : ""}>${i}（${r}）</option>`).join("")}</select></label>
+              <label class="text-xs text-slate-500">メダル1枚
+                <select name="rate" class="input mt-1 py-1.5">${SLOT_RATES.map((r) => `<option value="${r}" ${adminSettings.slotRate === r ? "selected" : ""}>${r}コイン</option>`).join("")}</select></label>
+              <label class="text-xs text-slate-500">1日の上限
+                <select name="cap" class="input mt-1 py-1.5">${SLOT_CAPS.map((c) => `<option value="${c}" ${adminSettings.slotCap === c ? "selected" : ""}>${c ? `+${c.toLocaleString()}` : "なし"}</option>`).join("")}</select></label>
+            </div>
+            <p class="text-xs text-slate-400 leading-relaxed">設定はボーナスの当たりやすさで、（ ）は賭けたコインのうち戻ってくる割合の目安です。100% を超えると、遊ぶほどコインが増えます。メダル1枚のコイン数を変えても、すでにメダルを持っている人は、メダルが0になるまで借りたときの値のままです。「1日の上限」は、1日（日本時間）に精算で増やせるコイン（精算 − 借りた分）の上限です。</p>
+            <button type="submit" class="btn-primary w-full">スロットの設定を保存</button>
+          </form>
           <div class="!mt-5 space-y-3 lg:space-y-0 lg:!mt-2 lg:col-span-2 lg:grid lg:grid-cols-2 lg:gap-3">
             <button type="button" data-action="admin-restrict" class="btn-secondary w-full">${icon("alert", "w-5 h-5")}アカウントの制限</button>
             <button type="button" data-action="admin-reset" class="btn-secondary w-full">${icon("key", "w-5 h-5")}パスワードのリセット</button>
@@ -17048,6 +18164,7 @@ draw();
       hideOnline: { label: "オンラインを隠す", on: "隠している", off: "隠していない", toastOn: "オンライン状態と入力中を隠しました", toastOff: "オンライン状態と入力中を表示するようにしました" },
       longText: { label: "長文の送信", on: `オン（最大${MAX_TEXT_LONG}文字）`, off: `オフ（最大${MAX_TEXT_SHORT}文字）`, toastOn: `1回に送信できる文字数を最大${MAX_TEXT_LONG}文字にしました`, toastOff: `1回に送信できる文字数を最大${MAX_TEXT_SHORT}文字にしました` },
       rawImage: { label: "画像ファイルのまま送る", on: "使える", off: "使えない", toastOn: "画像ファイルのまま送れるようにしました", toastOff: "画像ファイルのまま送れないようにしました" },
+      slotOn: { label: "フィーバースロット", on: "遊べる", off: "お休み中", toastOn: "フィーバースロットを遊べるようにしました", toastOff: "フィーバースロットをお休みにしました" },
       adminScores: { label: `管理者（@${ADMIN_ID}）のスコアをランキングに記録`, on: "記録する", off: "記録しない", toastOn: "管理者のスコアをランキングに記録するようにしました", toastOff: "管理者のスコアをランキングに記録しないようにしました" },
     };
     const adminSwitch = (key, note) => `
@@ -17088,6 +18205,15 @@ draw();
       }
       applySettings({ ...adminSettings, [key]: on });
       toast(on ? sw.toastOn : sw.toastOff);
+    }
+
+    async function saveSlotSettings(fd) {
+      if (!isAdmin() || !adminKey) return;
+      const slotSetting = Number(fd.get("setting")), slotRate = Number(fd.get("rate")), slotCap = Number(fd.get("cap"));
+      if (!(Number.isInteger(slotSetting) && slotSetting >= 0 && slotSetting <= 6) || !SLOT_RATES.includes(slotRate) || !SLOT_CAPS.includes(slotCap)) return;
+      await adminWrite(adminKey, { settings: { slotSetting, slotRate, slotCap } });
+      applySettings({ ...adminSettings, slotSetting, slotRate, slotCap });
+      toast(`スロットを 設定${slotSetting}・1枚${slotRate}コイン・上限${slotCap ? slotCap.toLocaleString() : "なし"} にしました`);
     }
 
     function openAdminPassword() {
@@ -17978,6 +19104,7 @@ draw();
       "form-admin-unlock-timed": (fd) => startAdminUnlock(fd.get("hours"), fd.get("minutes")),
       "form-admin-password": (fd) => changeAdminPassword(fd.get("current"), fd.get("password"), fd.get("password2")),
       "form-admin-restrict": (fd) => restrictUser(fd.get("user"), fd.get("hours"), fd.get("minutes"), fd.get("direct") === "1"),
+      "form-admin-slot": (fd) => saveSlotSettings(fd),
       "form-admin-grant": (fd) => grantCoinsToAll(fd.get("message"), fd.get("coins"), fd.get("target") === "some" ? fd.getAll("users") : null),
     };
 
