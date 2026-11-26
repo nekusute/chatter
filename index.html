@@ -7571,6 +7571,47 @@ draw();
     .cabinet.fever, .lamp.on, .lamp.rainbow, .lever.ready, .reel.reach, .marquee-text { animation: none; }
     .cabinet.shake { animation: none; }
   }
+  /* 画面が低いときは上下を切らずにスクロールできるように（高さに余裕があれば今までどおり真ん中） */
+  html { overflow: hidden; }
+  body { overflow-x: hidden; overflow-y: auto; align-items: flex-start; }
+  .app { height: auto; min-height: 100%; margin: 0 auto; }
+
+  /* ---------- ライトモード（Chatter の <html> に dark が付いていないとき。台の画面部分は機械の画面なので暗いまま） ---------- */
+  html:not(.dark) { --text: #0f172a; --muted: #64748b; --line: rgba(15, 23, 42, 0.12); --gold: #b45309; color-scheme: light; }
+  html:not(.dark) body { background: radial-gradient(120% 70% at 50% -10%, rgba(124, 58, 237, 0.16) 0%, transparent 60%), linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%); }
+  html:not(.dark) .wallet, html:not(.dark) .icon-btn, html:not(.dark) .medal-btn { background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .icon-btn:hover, html:not(.dark) .medal-btn:hover:not(:disabled) { background: #ffffff; border-color: rgba(15, 23, 42, 0.22); }
+  html:not(.dark) .wallet-val, html:not(.dark) .medal-btn.lend b { color: #b45309; }
+  html:not(.dark) .counter { background: rgba(255, 255, 255, 0.92); box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .counter.credit b { color: #059669; text-shadow: none; }
+  html:not(.dark) .counter.win b, html:not(.dark) .counter.pay b { color: #b45309; text-shadow: none; }
+  html:not(.dark) .msg { color: #334155; }
+  html:not(.dark) .msg.warn { color: #e11d48; }
+  html:not(.dark) .msg.win { color: #b45309; }
+  html:not(.dark) .hint { color: #64748b; }
+  html:not(.dark) .modal { background: rgba(15, 23, 42, 0.35); }
+  html:not(.dark) .sheet { background: #ffffff; border-color: rgba(15, 23, 42, 0.12); box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25); }
+  html:not(.dark) .notes { color: #334155; }
+  html:not(.dark) .cabinet { background: linear-gradient(180deg, #ffffff 0%, #f5f3ff 55%, #ede9fe 100%); border-color: rgba(217, 119, 6, 0.45); box-shadow: inset 0 1px 0 #ffffff, 0 14px 34px rgba(15, 23, 42, 0.12), 0 0 30px rgba(167, 139, 250, 0.18); }
+  html:not(.dark) .marquee-text { background-image: linear-gradient(90deg, #d97706, #db2777, #7c3aed, #0891b2, #d97706); filter: none; }
+  html:not(.dark) .counter.bet b { color: #334155; }
+  html:not(.dark) .reels-wrap { background: linear-gradient(180deg, #e2e8f0, #cbd5e1); border-color: rgba(15, 23, 42, 0.1); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.6), inset 0 6px 14px rgba(15, 23, 42, 0.18); }
+  html:not(.dark) .reel::after { background: linear-gradient(180deg, rgba(15, 23, 42, 0.28) 0%, rgba(15, 23, 42, 0) 30%, rgba(15, 23, 42, 0) 70%, rgba(15, 23, 42, 0.28) 100%); }
+  html:not(.dark) .datacounter b { color: #334155; }
+  html:not(.dark) .datacounter .big b { color: #dc2626; }
+  html:not(.dark) .datacounter .reg b { color: #7c3aed; }
+  html:not(.dark) .bet-btn:not(.active) { background: #ffffff; color: #334155; border-color: rgba(15, 23, 42, 0.14); box-shadow: 0 3px 0 #cbd5e1; }
+  html:not(.dark) .bet-btn:not(.active):hover:not(:disabled) { background: #f1f5f9; }
+  html:not(.dark) .lever { background: radial-gradient(circle at 35% 28%, #ffffff, #cbd5e1 55%, #94a3b8); color: #1e293b; border-color: rgba(15, 23, 42, 0.18); box-shadow: 0 5px 0 #94a3b8, inset 0 2px 4px #ffffff; }
+  html:not(.dark) .lever.ready { border-color: #f59e0b; animation-name: leverRingLight; }
+  @keyframes leverRingLight { 0%, 100% { box-shadow: 0 5px 0 #94a3b8, 0 0 0 0 rgba(245, 158, 11, 0.55); } 50% { box-shadow: 0 5px 0 #94a3b8, 0 0 0 7px rgba(245, 158, 11, 0); } }
+  html:not(.dark) .lever:active:not(:disabled) { box-shadow: 0 2px 0 #94a3b8; }
+  html:not(.dark) .stop-btn:disabled { filter: grayscale(0.85) brightness(0.92); box-shadow: 0 4px 0 #cbd5e1; opacity: 0.6; }
+  html:not(.dark) .paytable .mult { color: #b45309; }
+  html:not(.dark) .paytable .big .mult { color: #dc2626; }
+  html:not(.dark) .paytable .reg .mult { color: #7c3aed; }
+  /* 暗いまま残した画面・色付きボタンの文字は白のまま */
+  html:not(.dark) .stop-btn { color: #f8fafc; }
 </style>
 <canvas id="fx"></canvas>
 <div class="cutin" id="cutin"></div>
@@ -7709,6 +7750,8 @@ draw();
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => Math.round(n).toLocaleString('ja-JP');
   const embedded = window.parent !== window;
+  // 単体で開いたときは OS の設定に合わせる（Chatter の中では、アプリが <html> に dark を付けて渡す）
+  if (!embedded && matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
 
   // ---------- 状態 ----------
   let coins = CONFIG.demoCoins;
@@ -8151,6 +8194,7 @@ draw();
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (!m || m.source !== 'chatter') return;
+    if (m.type === 'theme') { document.documentElement.classList.toggle('dark', !!m.dark); return; }
     if (m.type === 'slot-config') {
       CONFIG.setting = m.setting; CONFIG.coinPerMedal = m.rate; coins = m.coins; capLeft = m.capLeft;
       const wasOn = slotOn; slotOn = m.on;
@@ -8482,6 +8526,38 @@ draw();
     .cabinet.rush, #modeTag.rush, .lever.ready { animation: none; }
     .cabinet.shake { animation: none; }
   }
+  /* 画面が低いときは上下を切らずにスクロールできるように（高さに余裕があれば今までどおり真ん中） */
+  html { overflow: hidden; }
+  body { overflow-x: hidden; overflow-y: auto; align-items: flex-start; }
+  .app { height: auto; min-height: 100%; margin: 0 auto; }
+
+  /* ---------- ライトモード（Chatter の <html> に dark が付いていないとき。台の画面部分は機械の画面なので暗いまま） ---------- */
+  html:not(.dark) { --text: #0f172a; --muted: #64748b; --line: rgba(15, 23, 42, 0.12); --gold: #b45309; color-scheme: light; }
+  html:not(.dark) body { background: radial-gradient(120% 70% at 50% -10%, rgba(225, 29, 72, 0.14) 0%, transparent 60%), linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%); }
+  html:not(.dark) .wallet, html:not(.dark) .icon-btn, html:not(.dark) .medal-btn { background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .icon-btn:hover, html:not(.dark) .medal-btn:hover:not(:disabled) { background: #ffffff; border-color: rgba(15, 23, 42, 0.22); }
+  html:not(.dark) .wallet-val, html:not(.dark) .medal-btn.lend b { color: #b45309; }
+  html:not(.dark) .counter { background: rgba(255, 255, 255, 0.92); box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .counter.credit b { color: #059669; text-shadow: none; }
+  html:not(.dark) .counter.win b, html:not(.dark) .counter.pay b { color: #b45309; text-shadow: none; }
+  html:not(.dark) .msg { color: #334155; }
+  html:not(.dark) .msg.warn { color: #e11d48; }
+  html:not(.dark) .msg.win { color: #b45309; }
+  html:not(.dark) .hint { color: #64748b; }
+  html:not(.dark) .modal { background: rgba(15, 23, 42, 0.35); }
+  html:not(.dark) .sheet { background: #ffffff; border-color: rgba(15, 23, 42, 0.12); box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25); }
+  html:not(.dark) .notes { color: #334155; }
+  html:not(.dark) .cabinet { background: linear-gradient(180deg, #fffaf5 0%, #fff1f2 55%, #ffe4e6 100%); border-color: rgba(217, 119, 6, 0.45); box-shadow: inset 0 1px 0 #ffffff, 0 14px 34px rgba(15, 23, 42, 0.12), 0 0 30px var(--aura); }
+  html:not(.dark) .marquee-text { background-image: linear-gradient(180deg, #f59e0b 0%, #ea580c 55%, #b91c1c 100%); }
+  html:not(.dark) .stars { background: rgba(15, 23, 42, 0.06); }
+  html:not(.dark) .star:not(.on) { background: #ffffff; border-color: #f1c6d3; color: #e3a9bb; }
+  html:not(.dark) .counter.sets b { color: #e11d48; }
+  html:not(.dark) .reels-wrap { background: linear-gradient(180deg, #e7e5e4, #d6d3d1); border-color: rgba(15, 23, 42, 0.1); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.6), inset 0 6px 14px rgba(15, 23, 42, 0.18); }
+  html:not(.dark) .reel::after { background: linear-gradient(180deg, rgba(41, 20, 30, 0.28) 0%, rgba(41, 20, 30, 0) 30%, rgba(41, 20, 30, 0) 70%, rgba(41, 20, 30, 0.28) 100%); }
+  html:not(.dark) .stop-btn:disabled { filter: grayscale(0.85) brightness(0.92); box-shadow: 0 4px 0 #cbd5e1; opacity: 0.6; }
+  html:not(.dark) .paytable .mult { color: #b45309; }
+  /* 暗いまま残した画面・色付きボタンの文字は白のまま */
+  html:not(.dark) .lcd, html:not(.dark) .freeze, html:not(.dark) .battle button, html:not(.dark) .lever, html:not(.dark) .stop-btn, html:not(.dark) .cutin { color: #f8fafc; }
 </style>
 <canvas id="fx"></canvas>
 <div class="freeze" id="freeze">
@@ -8706,6 +8782,8 @@ draw();
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => Math.round(n).toLocaleString('ja-JP');
   const embedded = window.parent !== window;
+  // 単体で開いたときは OS の設定に合わせる（Chatter の中では、アプリが <html> に dark を付けて渡す）
+  if (!embedded && matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
   const rnd = () => Math.random();
 
   // ---------- 状態 ----------
@@ -9180,6 +9258,7 @@ draw();
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (!m || m.source !== 'chatter') return;
+    if (m.type === 'theme') { document.documentElement.classList.toggle('dark', !!m.dark); return; }
     if (m.type === 'slot-config') {
       CONFIG.setting = m.setting; CONFIG.coinPerMedal = m.rate; coins = m.coins;
       const wasOn = casinoOn; casinoOn = m.on;
@@ -9262,7 +9341,7 @@ draw();
   .stock i { width: 9px; height: 9px; border-radius: 50%; background: #1e293b; }
   .stock i.on { background: #38bdf8; box-shadow: 0 0 6px #38bdf8; }
 
-  .field-wrap { position: relative; width: 100%; aspect-ratio: 348 / 452; max-height: 52vh; margin: 0 auto; touch-action: none; cursor: crosshair; }
+  .field-wrap { position: relative; width: min(100%, calc(52vh * 348 / 452)); aspect-ratio: 348 / 452; margin: 0 auto; touch-action: none; cursor: crosshair; }
   #field { position: absolute; inset: 0; width: 100%; height: 100%; display: block; border-radius: 14px; }
 
   .counters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
@@ -9303,6 +9382,33 @@ draw();
   .notes li { padding-left: 1.1em; text-indent: -1.1em; }
   .notes li::before { content: "・"; }
   .close-btn { width: 100%; height: 42px; border-radius: 12px; font-weight: 800; background: linear-gradient(180deg, #fcd34d, #f59e0b); color: #2a1700; }
+  /* 画面が低いときは上下を切らずにスクロールできるように（高さに余裕があれば今までどおり真ん中） */
+  html { overflow: hidden; }
+  body { overflow-x: hidden; overflow-y: auto; align-items: flex-start; }
+  .app { height: auto; min-height: 100%; margin: 0 auto; }
+
+  /* ---------- ライトモード（Chatter の <html> に dark が付いていないとき。台の画面部分は機械の画面なので暗いまま） ---------- */
+  html:not(.dark) { --text: #0f172a; --muted: #64748b; --line: rgba(15, 23, 42, 0.12); --gold: #b45309; color-scheme: light; }
+  html:not(.dark) body { background: radial-gradient(120% 70% at 50% -10%, rgba(14, 165, 233, 0.16) 0%, transparent 60%), linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%); }
+  html:not(.dark) .wallet, html:not(.dark) .icon-btn, html:not(.dark) .medal-btn { background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .icon-btn:hover, html:not(.dark) .medal-btn:hover:not(:disabled) { background: #ffffff; border-color: rgba(15, 23, 42, 0.22); }
+  html:not(.dark) .wallet-val, html:not(.dark) .medal-btn.lend b { color: #b45309; }
+  html:not(.dark) .counter { background: rgba(255, 255, 255, 0.92); box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .counter.credit b { color: #059669; text-shadow: none; }
+  html:not(.dark) .counter.win b, html:not(.dark) .counter.pay b { color: #b45309; text-shadow: none; }
+  html:not(.dark) .msg { color: #334155; }
+  html:not(.dark) .msg.warn { color: #e11d48; }
+  html:not(.dark) .msg.win { color: #b45309; }
+  html:not(.dark) .hint { color: #64748b; }
+  html:not(.dark) .modal { background: rgba(15, 23, 42, 0.35); }
+  html:not(.dark) .sheet { background: #ffffff; border-color: rgba(15, 23, 42, 0.12); box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25); }
+  html:not(.dark) .notes { color: #334155; }
+  html:not(.dark) .cabinet { background: linear-gradient(180deg, #f8fbff 0%, #e6f1fb 100%); border-color: rgba(14, 165, 233, 0.35); box-shadow: inset 0 1px 0 #ffffff, 0 14px 34px rgba(15, 23, 42, 0.12); }
+  html:not(.dark) .ctl:not(.drop) { background: linear-gradient(180deg, #ffffff, #e2e8f0); color: #334155; border-color: rgba(15, 23, 42, 0.15); box-shadow: 0 4px 0 #cbd5e1; }
+  html:not(.dark) .ctl:not(.drop):active:not(:disabled), html:not(.dark) .ctl:not(.drop).held { box-shadow: 0 1px 0 #cbd5e1; }
+  html:not(.dark) .ctl.drop { color: #ffffff; }
+  html:not(.dark) .paytable td:last-child { color: #b45309; }
+  html:not(.dark) .ctl:disabled { filter: grayscale(0.9) brightness(1.04); opacity: 0.45; }
 </style>
 <canvas id="fx"></canvas>
 <div class="app">
@@ -9449,6 +9555,8 @@ draw();
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => Math.floor(n).toLocaleString('ja-JP');
   const embedded = window.parent !== window;
+  // 単体で開いたときは OS の設定に合わせる（Chatter の中では、アプリが <html> に dark を付けて渡す）
+  if (!embedded && matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
 
   let coins = CONFIG.demoCoins, credit = 0, inCount = 0, outCount = 0;
   let ready = !embedded, casinoOn = true, busy = false, known = 0, paused = false;
@@ -9502,7 +9610,8 @@ draw();
     g.clearRect(0, 0, w, h);
     // 受け皿（手前）
     let gr = g.createLinearGradient(0, sy(FH), 0, h);
-    gr.addColorStop(0, '#1e293b'); gr.addColorStop(1, '#020617');
+    const dark = document.documentElement.classList.contains('dark');
+    gr.addColorStop(0, dark ? '#1e293b' : '#cbd5e1'); gr.addColorStop(1, dark ? '#020617' : '#94a3b8');
     g.fillStyle = gr; g.fillRect(0, sy(FH), w, h - sy(FH));
     // 左右の穴（手前）と壁（奥）
     g.fillStyle = '#01040a';
@@ -9758,8 +9867,10 @@ draw();
   // ---------- 入力 ----------
   const wrap = $('fieldWrap');
   const toFieldX = (e) => { const r = cv.getBoundingClientRect(); return Math.max(MR, Math.min(FW - MR, (e.clientX - r.left) / r.width * VW + VX0)); };
-  wrap.addEventListener('pointerdown', (e) => { e.preventDefault(); wrap.setPointerCapture(e.pointerId); aim = toFieldX(e); holding = true; });
+  wrap.addEventListener('pointerdown', (e) => { e.preventDefault(); wrap.setPointerCapture(e.pointerId); aim = toFieldX(e); startHold(); });
   wrap.addEventListener('pointermove', (e) => { if (holding || e.pointerType === 'mouse') aim = toFieldX(e); });
+  // 押した瞬間に1枚入れる（短いタップでも入るように）。押し続けると DROP_GAP ごとに続けて入る
+  function startHold() { holding = true; if (dropCooldown <= 0 && drop()) dropCooldown = DROP_GAP; }
   const stopHold = () => { holding = false; };
   wrap.addEventListener('pointerup', stopHold); wrap.addEventListener('pointercancel', stopHold);
   function holdBtn(el, on, off) {
@@ -9767,7 +9878,7 @@ draw();
     const end = () => { el.classList.remove('held'); off(); };
     el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end); el.addEventListener('lostpointercapture', end);
   }
-  holdBtn($('dropBtn'), () => { holding = true; }, () => { holding = false; });
+  holdBtn($('dropBtn'), startHold, () => { holding = false; });
   holdBtn($('leftBtn'), () => { aimDir = -1; }, () => { if (aimDir < 0) aimDir = 0; });
   holdBtn($('rightBtn'), () => { aimDir = 1; }, () => { if (aimDir > 0) aimDir = 0; });
   $('lendBtn').addEventListener('click', lend);
@@ -9779,7 +9890,7 @@ draw();
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { if (!modal.hidden) { modal.hidden = true; return; } if (embedded) send('escape'); return; }
     if (!modal.hidden) return;
-    if (e.code === 'Space') { e.preventDefault(); holding = true; }
+    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) startHold(); }
     else if (e.code === 'KeyA' || e.code === 'ArrowLeft') { e.preventDefault(); aimDir = -1; }
     else if (e.code === 'KeyD' || e.code === 'ArrowRight') { e.preventDefault(); aimDir = 1; }
   });
@@ -9792,6 +9903,7 @@ draw();
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (!m || m.source !== 'chatter') return;
+    if (m.type === 'theme') { document.documentElement.classList.toggle('dark', !!m.dark); return; }
     if (m.type === 'slot-config') {
       CONFIG.setting = m.setting; CONFIG.coinPerMedal = m.rate; coins = m.coins;
       const wasOn = casinoOn; casinoOn = m.on;
@@ -9930,6 +10042,38 @@ draw();
   .close-btn { width: 100%; height: 42px; border-radius: 12px; font-weight: 800; background: linear-gradient(180deg, #fcd34d, #f59e0b); color: #2a1700; }
   @media (max-height: 620px) { .hint { display: none; } }
   @media (prefers-reduced-motion: reduce) { .card-inner { transition-duration: 0.1s; } }
+  /* 画面が低いときは上下を切らずにスクロールできるように（高さに余裕があれば今までどおり真ん中） */
+  html { overflow: hidden; }
+  body { overflow-x: hidden; overflow-y: auto; align-items: flex-start; }
+  .app { height: auto; min-height: 100%; margin: 0 auto; }
+
+  /* ---------- ライトモード（Chatter の <html> に dark が付いていないとき。台の画面部分は機械の画面なので暗いまま） ---------- */
+  html:not(.dark) { --text: #0f172a; --muted: #64748b; --line: rgba(15, 23, 42, 0.12); --gold: #b45309; color-scheme: light; }
+  html:not(.dark) body { background: radial-gradient(120% 70% at 50% -10%, rgba(59, 130, 246, 0.16) 0%, transparent 60%), linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%); }
+  html:not(.dark) .wallet, html:not(.dark) .icon-btn, html:not(.dark) .medal-btn { background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .icon-btn:hover, html:not(.dark) .medal-btn:hover:not(:disabled) { background: #ffffff; border-color: rgba(15, 23, 42, 0.22); }
+  html:not(.dark) .wallet-val, html:not(.dark) .medal-btn.lend b { color: #b45309; }
+  html:not(.dark) .counter { background: rgba(255, 255, 255, 0.92); box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .counter.credit b { color: #059669; text-shadow: none; }
+  html:not(.dark) .counter.win b, html:not(.dark) .counter.pay b { color: #b45309; text-shadow: none; }
+  html:not(.dark) .msg { color: #334155; }
+  html:not(.dark) .msg.warn { color: #e11d48; }
+  html:not(.dark) .msg.win { color: #b45309; }
+  html:not(.dark) .hint { color: #64748b; }
+  html:not(.dark) .modal { background: rgba(15, 23, 42, 0.35); }
+  html:not(.dark) .sheet { background: #ffffff; border-color: rgba(15, 23, 42, 0.12); box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25); }
+  html:not(.dark) .notes { color: #334155; }
+  html:not(.dark) .table { background: radial-gradient(130% 90% at 50% 30%, #f5f9ff 0%, #dbeafe 60%, #bfdbfe 100%); border-color: rgba(217, 119, 6, 0.4); box-shadow: inset 0 0 0 6px rgba(255, 255, 255, 0.55), 0 14px 34px rgba(15, 23, 42, 0.12); }
+  html:not(.dark) .title { color: #1d4ed8; }
+  html:not(.dark) .slot label { color: #1e40af; }
+  html:not(.dark) .vs { color: #2563eb; }
+  html:not(.dark) .side { box-shadow: 0 6px 16px rgba(15, 23, 42, 0.18); }
+  html:not(.dark) .card.empty .back { background: rgba(255, 255, 255, 0.5); border-color: rgba(30, 64, 175, 0.25); }
+  html:not(.dark) .ladder span:not(.w):not(.l) { background: rgba(15, 23, 42, 0.07); color: #475569; }
+  html:not(.dark) .chip:not(.active) { background: rgba(255, 255, 255, 0.85); border-color: rgba(15, 23, 42, 0.22); color: #334155; }
+  html:not(.dark) .gbtn:disabled, html:not(.dark) .main-btn:disabled { filter: grayscale(0.9) brightness(1.04); opacity: 0.45; }
+  /* 暗いまま残した画面・色付きボタンの文字は白のまま */
+  html:not(.dark) .gbtn { color: #f8fafc; }
 </style>
 <canvas id="fx"></canvas>
 <div class="app">
@@ -9997,6 +10141,8 @@ draw();
   const fmt = (n) => Math.floor(n).toLocaleString('ja-JP');
   const fmt1 = (n) => (n < 1000 && n % 1 ? (Math.floor(n * 10) / 10).toLocaleString('ja-JP', { minimumFractionDigits: 1 }) : fmt(n));
   const embedded = window.parent !== window;
+  // 単体で開いたときは OS の設定に合わせる（Chatter の中では、アプリが <html> に dark を付けて渡す）
+  if (!embedded && matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
 
   let coins = CONFIG.demoCoins, credit = 0;
   let bet = 10, chain = 0, wins = 0, phase = 'idle', paused = false; // idle | guess | reveal
@@ -10063,7 +10209,7 @@ draw();
 
   function deal() {
     if (phase !== 'idle' || !ready || busy || !casinoOn) return;
-    if (credit < bet) { setMsg('メダルが足りません。「メダルを借りる」から', 'warn'); return; }
+    if (credit < bet) { setMsg(credit >= 1 ? `メダルが足りません（手元 ${fmt(credit)}枚）。賭ける枚数を下げるか、メダルを借りてください` : 'メダルがありません。「メダルを借りる」から', 'warn'); return; }
     credit -= bet; report();
     chain = bet; wins = 0; ladder = [];
     cur = drawCard();
@@ -10215,6 +10361,7 @@ draw();
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (!m || m.source !== 'chatter') return;
+    if (m.type === 'theme') { document.documentElement.classList.toggle('dark', !!m.dark); return; }
     if (m.type === 'slot-config') {
       CONFIG.setting = m.setting; CONFIG.coinPerMedal = m.rate; coins = m.coins;
       const wasOn = casinoOn; casinoOn = m.on;
@@ -10353,6 +10500,36 @@ draw();
   .close-btn { width: 100%; height: 42px; border-radius: 12px; font-weight: 800; background: linear-gradient(180deg, #fcd34d, #f59e0b); color: #2a1700; }
   @media (max-height: 620px) { .hint { display: none; } }
   @media (prefers-reduced-motion: reduce) { .toss.up, .stage.flying .shadow { animation: none; } .coin { transition-duration: 0.3s; } }
+  /* 画面が低いときは上下を切らずにスクロールできるように（高さに余裕があれば今までどおり真ん中） */
+  html { overflow: hidden; }
+  body { overflow-x: hidden; overflow-y: auto; align-items: flex-start; }
+  .app { height: auto; min-height: 100%; margin: 0 auto; }
+
+  /* ---------- ライトモード（Chatter の <html> に dark が付いていないとき。台の画面部分は機械の画面なので暗いまま） ---------- */
+  html:not(.dark) { --text: #0f172a; --muted: #64748b; --line: rgba(15, 23, 42, 0.12); --gold: #b45309; color-scheme: light; }
+  html:not(.dark) body { background: radial-gradient(120% 70% at 50% -10%, rgba(20, 184, 166, 0.16) 0%, transparent 60%), linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%); }
+  html:not(.dark) .wallet, html:not(.dark) .icon-btn, html:not(.dark) .medal-btn { background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .icon-btn:hover, html:not(.dark) .medal-btn:hover:not(:disabled) { background: #ffffff; border-color: rgba(15, 23, 42, 0.22); }
+  html:not(.dark) .wallet-val, html:not(.dark) .medal-btn.lend b { color: #b45309; }
+  html:not(.dark) .counter { background: rgba(255, 255, 255, 0.92); box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .counter.credit b { color: #059669; text-shadow: none; }
+  html:not(.dark) .counter.win b, html:not(.dark) .counter.pay b { color: #b45309; text-shadow: none; }
+  html:not(.dark) .msg { color: #334155; }
+  html:not(.dark) .msg.warn { color: #e11d48; }
+  html:not(.dark) .msg.win { color: #b45309; }
+  html:not(.dark) .hint { color: #64748b; }
+  html:not(.dark) .modal { background: rgba(15, 23, 42, 0.35); }
+  html:not(.dark) .sheet { background: #ffffff; border-color: rgba(15, 23, 42, 0.12); box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25); }
+  html:not(.dark) .notes { color: #334155; }
+  html:not(.dark) .table { background: radial-gradient(130% 90% at 50% 30%, #f0fdf9 0%, #ccfbef 60%, #a7f3d0 100%); border-color: rgba(217, 119, 6, 0.4); box-shadow: inset 0 0 0 6px rgba(255, 255, 255, 0.55), 0 14px 34px rgba(15, 23, 42, 0.12); }
+  html:not(.dark) .title { color: #b45309; text-shadow: none; }
+  html:not(.dark) .shadow { background: rgba(15, 23, 42, 0.18); }
+  html:not(.dark) .result.win { color: #b45309; text-shadow: none; }
+  html:not(.dark) .result.lose { color: #e11d48; }
+  html:not(.dark) .chip:not(.active) { background: rgba(255, 255, 255, 0.85); border-color: rgba(15, 23, 42, 0.22); color: #334155; }
+  html:not(.dark) .pick:disabled, html:not(.dark) .take:disabled { filter: grayscale(0.9) brightness(1.04); opacity: 0.45; }
+  /* 暗いまま残した画面・色付きボタンの文字は白のまま */
+  html:not(.dark) .take { color: #f8fafc; }
 </style>
 <canvas id="fx"></canvas>
 <div class="app">
@@ -10423,6 +10600,8 @@ draw();
   const fmt = (n) => Math.floor(n).toLocaleString('ja-JP');
   const fmt1 = (n) => (n < 1000 && n % 1 ? (Math.floor(n * 10) / 10).toLocaleString('ja-JP', { minimumFractionDigits: 1 }) : fmt(n));
   const embedded = window.parent !== window;
+  // 単体で開いたときは OS の設定に合わせる（Chatter の中では、アプリが <html> に dark を付けて渡す）
+  if (!embedded && matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
 
   let coins = CONFIG.demoCoins, credit = 0;
   let bet = 10, chain = 0, wins = 0, phase = 'idle', paused = false;
@@ -10475,7 +10654,7 @@ draw();
     if (phase !== 'idle' || !ready || busy || !casinoOn) return;
     let stake = chain;
     if (!chain) {
-      if (credit < bet) { setMsg('メダルが足りません。「メダルを借りる」から', true); return; }
+      if (credit < bet) { setMsg(credit >= 1 ? `メダルが足りません（手元 ${fmt(credit)}枚）。賭ける枚数を下げるか、メダルを借りてください` : 'メダルがありません。「メダルを借りる」から', true); return; }
       credit -= bet; stake = bet; report();
     }
     phase = 'flip';
@@ -10610,6 +10789,7 @@ draw();
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (!m || m.source !== 'chatter') return;
+    if (m.type === 'theme') { document.documentElement.classList.toggle('dark', !!m.dark); return; }
     if (m.type === 'slot-config') {
       CONFIG.setting = m.setting; CONFIG.coinPerMedal = m.rate; coins = m.coins;
       const wasOn = casinoOn; casinoOn = m.on;
@@ -10731,6 +10911,37 @@ draw();
   .notes li::before { content: "・"; }
   .close-btn { width: 100%; height: 42px; border-radius: 12px; font-weight: 800; background: linear-gradient(180deg, #fcd34d, #f59e0b); color: #2a1700; }
   @media (prefers-reduced-motion: reduce) { .tile.gem, .tile.bomb { animation: none; } }
+  /* 画面が低いときは上下を切らずにスクロールできるように（高さに余裕があれば今までどおり真ん中） */
+  html { overflow: hidden; }
+  body { overflow-x: hidden; overflow-y: auto; align-items: flex-start; }
+  .app { height: auto; min-height: 100%; margin: 0 auto; }
+
+  /* ---------- ライトモード（Chatter の <html> に dark が付いていないとき。台の画面部分は機械の画面なので暗いまま） ---------- */
+  html:not(.dark) { --text: #0f172a; --muted: #64748b; --line: rgba(15, 23, 42, 0.12); --gold: #b45309; color-scheme: light; }
+  html:not(.dark) body { background: radial-gradient(120% 70% at 50% -10%, rgba(139, 92, 246, 0.16) 0%, transparent 60%), linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%); }
+  html:not(.dark) .wallet, html:not(.dark) .icon-btn, html:not(.dark) .medal-btn { background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .icon-btn:hover, html:not(.dark) .medal-btn:hover:not(:disabled) { background: #ffffff; border-color: rgba(15, 23, 42, 0.22); }
+  html:not(.dark) .wallet-val, html:not(.dark) .medal-btn.lend b { color: #b45309; }
+  html:not(.dark) .counter { background: rgba(255, 255, 255, 0.92); box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .counter.credit b { color: #059669; text-shadow: none; }
+  html:not(.dark) .counter.win b, html:not(.dark) .counter.pay b { color: #b45309; text-shadow: none; }
+  html:not(.dark) .msg { color: #334155; }
+  html:not(.dark) .msg.warn { color: #e11d48; }
+  html:not(.dark) .msg.win { color: #b45309; }
+  html:not(.dark) .hint { color: #64748b; }
+  html:not(.dark) .modal { background: rgba(15, 23, 42, 0.35); }
+  html:not(.dark) .sheet { background: #ffffff; border-color: rgba(15, 23, 42, 0.12); box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25); }
+  html:not(.dark) .notes { color: #334155; }
+  html:not(.dark) .table { background: linear-gradient(180deg, #faf8ff 0%, #ede9fe 100%); border-color: rgba(124, 58, 237, 0.28); box-shadow: inset 0 1px 0 #ffffff, 0 14px 34px rgba(15, 23, 42, 0.12); }
+  html:not(.dark) .title, html:not(.dark) .next { color: #6d28d9; }
+  html:not(.dark) .next b { color: #b45309; }
+  html:not(.dark) .tile:not(.gem):not(.bomb) { background: linear-gradient(180deg, #a78bfa, #8b5cf6); box-shadow: 0 4px 0 #6d28d9, inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+  html:not(.dark) .tile:not(.gem):not(.bomb):hover:not(:disabled) { background: linear-gradient(180deg, #b9a3fc, #9a70f8); }
+  html:not(.dark) .tile.gem { background: radial-gradient(circle at 50% 40%, #f0fdfa, #ccfbf1); box-shadow: inset 0 0 0 2px #14b8a6, 0 0 12px rgba(20, 184, 166, 0.35); }
+  html:not(.dark) .tile.bomb { background: radial-gradient(circle at 50% 40%, #fff1f2, #fecdd3); box-shadow: inset 0 0 0 2px #e11d48, 0 0 14px rgba(225, 29, 72, 0.35); }
+  html:not(.dark) .tile.dim { box-shadow: none; }
+  html:not(.dark) .chip:not(.active), html:not(.dark) .btn.sub { background: rgba(255, 255, 255, 0.85); border-color: rgba(15, 23, 42, 0.15); color: #334155; }
+  html:not(.dark) .btn:disabled { filter: grayscale(0.9) brightness(1.04); opacity: 0.45; }
 </style>
 <canvas id="fx"></canvas>
 <div class="app">
@@ -10793,6 +11004,8 @@ draw();
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => Math.floor(n).toLocaleString('ja-JP');
   const embedded = window.parent !== window;
+  // 単体で開いたときは OS の設定に合わせる（Chatter の中では、アプリが <html> に dark を付けて渡す）
+  if (!embedded && matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
 
   let coins = CONFIG.demoCoins, credit = 0;
   let bet = 10, mineCount = 3, phase = 'idle', paused = false; // idle | play | over
@@ -10852,7 +11065,7 @@ draw();
 
   function start() {
     if (phase === 'play' || !ready || busy || !casinoOn) return;
-    if (credit < bet) { setMsg('メダルが足りません。「メダルを借りる」から', 'warn'); return; }
+    if (credit < bet) { setMsg(credit >= 1 ? `メダルが足りません（手元 ${fmt(credit)}枚）。賭ける枚数を下げるか、メダルを借りてください` : 'メダルがありません。「メダルを借りる」から', 'warn'); return; }
     credit -= bet; report();
     mines = new Set();
     while (mines.size < mineCount) mines.add(Math.floor(Math.random() * CELLS));
@@ -10996,6 +11209,7 @@ draw();
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (!m || m.source !== 'chatter') return;
+    if (m.type === 'theme') { document.documentElement.classList.toggle('dark', !!m.dark); return; }
     if (m.type === 'slot-config') {
       CONFIG.setting = m.setting; CONFIG.coinPerMedal = m.rate; coins = m.coins;
       const wasOn = casinoOn; casinoOn = m.on;
@@ -11064,7 +11278,7 @@ draw();
 
   .hand { display: grid; grid-template-columns: repeat(5, 1fr); gap: clamp(4px, 1.2vw, 8px); }
   .cardbox { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-  .card { position: relative; width: 100%; aspect-ratio: 5 / 7; perspective: 600px; max-height: 20vh; }
+  .card { position: relative; width: min(100%, calc(20vh * 5 / 7)); justify-self: center; aspect-ratio: 5 / 7; perspective: 600px; }
   .card-inner { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform 0.32s cubic-bezier(.3, .7, .3, 1); }
   .card.down .card-inner { transform: rotateY(180deg); }
   .side { position: absolute; inset: 0; border-radius: 9px; backface-visibility: hidden; -webkit-backface-visibility: hidden; box-shadow: 0 6px 14px rgba(0, 0, 0, 0.45); }
@@ -11117,6 +11331,39 @@ draw();
   .close-btn { width: 100%; height: 42px; border-radius: 12px; font-weight: 800; background: linear-gradient(180deg, #fcd34d, #f59e0b); color: #2a1700; }
   @media (max-height: 640px) { .hint { display: none; } }
   @media (prefers-reduced-motion: reduce) { .card-inner { transition-duration: 0.1s; } }
+  /* 画面が低いときは上下を切らずにスクロールできるように（高さに余裕があれば今までどおり真ん中） */
+  html { overflow: hidden; }
+  body { overflow-x: hidden; overflow-y: auto; align-items: flex-start; }
+  .app { height: auto; min-height: 100%; margin: 0 auto; }
+
+  /* ---------- ライトモード（Chatter の <html> に dark が付いていないとき。台の画面部分は機械の画面なので暗いまま） ---------- */
+  html:not(.dark) { --text: #0f172a; --muted: #64748b; --line: rgba(15, 23, 42, 0.12); --gold: #b45309; color-scheme: light; }
+  html:not(.dark) body { background: radial-gradient(120% 70% at 50% -10%, rgba(220, 38, 38, 0.12) 0%, transparent 60%), linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%); }
+  html:not(.dark) .wallet, html:not(.dark) .icon-btn, html:not(.dark) .medal-btn { background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .icon-btn:hover, html:not(.dark) .medal-btn:hover:not(:disabled) { background: #ffffff; border-color: rgba(15, 23, 42, 0.22); }
+  html:not(.dark) .wallet-val, html:not(.dark) .medal-btn.lend b { color: #b45309; }
+  html:not(.dark) .counter { background: rgba(255, 255, 255, 0.92); box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.08); }
+  html:not(.dark) .counter.credit b { color: #059669; text-shadow: none; }
+  html:not(.dark) .counter.win b, html:not(.dark) .counter.pay b { color: #b45309; text-shadow: none; }
+  html:not(.dark) .msg { color: #334155; }
+  html:not(.dark) .msg.warn { color: #e11d48; }
+  html:not(.dark) .msg.win { color: #b45309; }
+  html:not(.dark) .hint { color: #64748b; }
+  html:not(.dark) .modal { background: rgba(15, 23, 42, 0.35); }
+  html:not(.dark) .sheet { background: #ffffff; border-color: rgba(15, 23, 42, 0.12); box-shadow: 0 24px 60px rgba(15, 23, 42, 0.25); }
+  html:not(.dark) .notes { color: #334155; }
+  html:not(.dark) .table { background: radial-gradient(130% 90% at 50% 35%, #f0fdf4 0%, #dcfce7 60%, #bbf7d0 100%); border-color: rgba(217, 119, 6, 0.4); box-shadow: inset 0 0 0 6px rgba(255, 255, 255, 0.55), 0 14px 34px rgba(15, 23, 42, 0.12); }
+  html:not(.dark) .paytable { background: rgba(255, 255, 255, 0.75); }
+  html:not(.dark) .paytable tr:not(.hit) td { color: #92400e; }
+  html:not(.dark) .paytable tr:not(.hit) td:first-child { color: #78350f; }
+  html:not(.dark) .paytable tr:not(.hit) td.col { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
+  html:not(.dark) .msg-line { color: #14532d; text-shadow: none; }
+  html:not(.dark) .msg-line.win { color: #b45309; }
+  html:not(.dark) .msg-line.warn { color: #e11d48; }
+  html:not(.dark) .side { box-shadow: 0 4px 12px rgba(15, 23, 42, 0.18); }
+  html:not(.dark) .hold-tag:not(.on) { background: rgba(15, 23, 42, 0.08); color: rgba(15, 23, 42, 0.4); }
+  html:not(.dark) .btn.sub { background: linear-gradient(180deg, #ffffff, #e2e8f0); color: #334155; border-color: rgba(15, 23, 42, 0.15); box-shadow: 0 4px 0 #cbd5e1; }
+  html:not(.dark) .btn:disabled { filter: grayscale(0.9) brightness(1.04); opacity: 0.45; }
 </style>
 <canvas id="fx"></canvas>
 <div class="app">
@@ -11187,6 +11434,8 @@ draw();
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => Math.floor(n).toLocaleString('ja-JP');
   const embedded = window.parent !== window;
+  // 単体で開いたときは OS の設定に合わせる（Chatter の中では、アプリが <html> に dark を付けて渡す）
+  if (!embedded && matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
 
   let coins = CONFIG.demoCoins, credit = 0;
   let bet = 1, win = 0, phase = 'idle'; // idle | hold | anim
@@ -11283,7 +11532,7 @@ draw();
 
   function deal() {
     if (phase !== 'idle' || !ready || busy || !casinoOn) return;
-    if (credit < bet) { setMsg('メダルが足りません。「メダルを借りる」から', 'warn'); return; }
+    if (credit < bet) { setMsg(credit >= 1 ? `メダルが足りません（手元 ${fmt(credit)}枚）。賭ける枚数を下げるか、メダルを借りてください` : 'メダルがありません。「メダルを借りる」から', 'warn'); return; }
     credit -= bet; report();
     win = 0; lastHand = null;
     shuffle();
@@ -11422,6 +11671,7 @@ draw();
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (!m || m.source !== 'chatter') return;
+    if (m.type === 'theme') { document.documentElement.classList.toggle('dark', !!m.dark); return; }
     if (m.type === 'slot-config') {
       CONFIG.coinPerMedal = m.rate; coins = m.coins;
       const wasOn = casinoOn; casinoOn = m.on;
