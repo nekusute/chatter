@@ -7820,6 +7820,9 @@ draw();
   // Chatter の中で動くとき：メダルとコインはアプリが記録する（貸し出し・精算はアプリに頼み、結果を待つ）
   let ready = !embedded, slotOn = true, busy = false, capLeft = Infinity;
   const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
+  // 実績（Chatter の中で遊んでいるときだけアプリに送る。同じものは開いている間に1回だけ）
+  const achSent = new Set();
+  const achieve = (id) => { if (!embedded || achSent.has(id)) return; achSent.add(id); send('achieve', { id }); };
   // メダルはほかのカジノのゲームと共通。アプリには増減（delta）を知らせ、開き直したときはアプリの枚数に合わせる
   let known = 0;
   const holdings = () => (phase === 'spin' ? credit : credit + bet); // 回っている間に賭けたメダルは含めない
@@ -7948,6 +7951,7 @@ draw();
     report();
     clearHits();
     dc.games++; dc.total++;
+    if (dc.total >= 300) achieve('slot-games300');
 
     if (bonus && bonus.ready) {
       outcome = bonus.type;
@@ -8016,11 +8020,13 @@ draw();
     if (res === 'BIG' || res === 'REG') {
       win = PAY[res] * bonus.bet;
       dc[res === 'BIG' ? 'big' : 'reg']++; dc.games = 0;
+      achieve(res === 'BIG' ? 'slot-big' : 'slot-reg'); if (bonus.rainbow) achieve('slot-rainbow'); if (bonus.late) achieve('slot-late'); if (dc.big >= 3) achieve('slot-big3');
       bonus = null;
       markHits(res);
       celebrate(res, win);
     } else if (res !== 'NONE') {
       win = PAY[res] * bet;
+      if (res === 'CLOWN') achieve('slot-clown');
       markHits(res);
       sfx.small();
       const name = { CLOWN: '🤡 ピエロ', BELL: '🔔 ベル', GRAPE: '🍇 ぶどう', CHERRY: '🍒 チェリー' }[res];
@@ -8904,6 +8910,9 @@ draw();
   // Chatter の中で動くとき：メダルの数はアプリが記録する（増減を知らせ、貸し出し・精算はアプリに頼む）
   let ready = !embedded, casinoOn = true, busy = false, known = 0;
   const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
+  // 実績（Chatter の中で遊んでいるときだけアプリに送る。同じものは開いている間に1回だけ）
+  const achSent = new Set();
+  const achieve = (id) => { if (!embedded || achSent.has(id)) return; achSent.add(id); send('achieve', { id }); };
   // アプリに記録されているはずの枚数（回っている間に賭けたメダルは含めない）
   function report() {
     const d = credit - known;
@@ -9048,6 +9057,7 @@ draw();
     const el = $('freeze');
     el.classList.add('show');
     sfx.freeze();
+    achieve('dragon-freeze');
     setTimeout(() => {
       el.classList.remove('show');
       showCutin('覚醒RUSH 確定!!', 'rainbow');
@@ -9114,6 +9124,7 @@ draw();
       return;
     }
     if (ev.auraUp) setAura();
+    if (ev.cz === 'in') achieve('dragon-cz');
     if (res === 'CHERRY') setMsg(`チェリー +${ev.pay}枚`, ev.cz === 'in' ? '前兆ステージ突入！ 赤7のチャンス' : ev.auraUp ? `オーラが${AURA_INFO[st.aura].name}に昇格！` : ev.star ? 'パワーランプ点灯！' : '次のゲームへ', 'win');
     else if (res === 'MELON') setMsg(`スイカ +${ev.pay}枚`, ev.auraUp ? `オーラが${AURA_INFO[st.aura].name}に昇格！` : ev.star ? 'パワーランプ点灯！' : '次のゲームへ', 'win');
     else if (res === 'BELL') setMsg(`ベル +${ev.pay}枚`, st.cz ? '前兆ステージ継続中' : '次のゲームへ', 'win');
@@ -9134,6 +9145,7 @@ draw();
 
   function enterBonus(kind, fromStars) {
     const pay = startBonus(st, kind);
+    achieve('dragon-bonus'); if (kind === 'RUSH') achieve('dragon-rush'); if (fromStars) achieve('dragon-stars');
     credit += pay; payout = pay;
     setAura();
     if (kind === 'RUSH') {
@@ -9177,6 +9189,8 @@ draw();
         payout = 0;
       } else {
         credit += r.pay; payout = r.pay;
+        if (r.res === 'REVIVE') achieve('dragon-revive'); if (r.promoted) achieve('dragon-rush');
+        [5, 10, 20].forEach((n) => { if (r.sets >= n) achieve(n === 20 ? 'dragon-sets20' : `dragon-sets${n}`); });
         const head = r.res === 'REVIVE' ? '逆転の復活!!' : '勝利!! 継続!!';
         showCutin(`${head} ${r.sets}連目`, r.promoted || st.bonus.kind === 'RUSH' ? 'rainbow' : 'gold');
         setMsg(`${head} +${r.pay}枚`, r.promoted ? `覚醒RUSH に昇格！ 継続率 ${Math.round(AURA_RATE.RAINBOW * 100)}%` : `${r.sets}連目・レバーで4ゲーム消化`);
@@ -9719,6 +9733,9 @@ draw();
   let coins = CONFIG.demoCoins, credit = 0, inCount = 0, outCount = 0;
   let ready = !embedded, casinoOn = true, busy = false, known = 0, paused = false;
   const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
+  // 実績（Chatter の中で遊んでいるときだけアプリに送る。同じものは開いている間に1回だけ）
+  const achSent = new Set();
+  const achieve = (id) => { if (!embedded || achSent.has(id)) return; achSent.add(id); send('achieve', { id }); };
   // 借りる・精算の返事を待っている間は知らせない（返事の枚数に合わせてから知らせる）
   function report() { clearTimeout(repTimer); repTimer = 0; if (busy) return; const d = credit - known; if (!d) return; known = credit; if (embedded) send('slot-sync', { delta: d }); }
   let repTimer = 0;
@@ -9846,7 +9863,7 @@ draw();
     sfx.drop();
     if (inChecker(x) && Math.random() < CHECK_P) {
       checkerFlash = 0.5;
-      if (stock < STOCK_MAX) { stock++; sfx.checker(); } else setMsg('保留がいっぱいです');
+      if (stock < STOCK_MAX) { stock++; sfx.checker(); if (stock === STOCK_MAX) achieve('pusher-stock5'); } else setMsg('保留がいっぱいです');
     }
     scheduleReport();
     updateHud();
@@ -9886,6 +9903,7 @@ draw();
       const { kind, pay } = lotto.r;
       if (pay) {
         shower += pay;
+        achieve('pusher-hit'); if (kind === 'TRIPLE') achieve('pusher-triple'); if (kind === 'JP') achieve('pusher-jp');
         const hits = kind === 'DOUBLE' ? [0, 1] : [0, 1, 2];
         hits.forEach((i) => $('d' + i).classList.add('hit'));
         setLotto(kind === 'JP' ? 'JACKPOT!! 50枚' : `当たり！ ${pay}枚`, 'メダルが降ってくる！', true);
@@ -9955,6 +9973,7 @@ draw();
     }
     if (won) {
       credit = Math.min(MEDAL_MAX, credit + won); outCount += won;
+      if (outCount >= 100) achieve('pusher-out100'); if (outCount >= 1000) achieve('pusher-out1000');
       sfx.win1();
       scheduleReport();
       updateHud();
@@ -10358,6 +10377,9 @@ draw();
   let cur = null, ladder = [];
   let ready = !embedded, casinoOn = true, busy = false, known = 0;
   const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
+  // 実績（Chatter の中で遊んでいるときだけアプリに送る。同じものは開いている間に1回だけ）
+  const achSent = new Set();
+  const achieve = (id) => { if (!embedded || achSent.has(id)) return; achSent.add(id); send('achieve', { id }); };
   function report() { const d = credit - known; if (!d) return; known = credit; if (embedded) send('slot-sync', { delta: d }); }
   function adopt(m) { credit = Math.max(0, credit + m - known); known = m; }
 
@@ -10448,6 +10470,7 @@ draw();
       const ok = dir === 'high' ? next.r > cur.r : next.r < cur.r;
       if (ok) {
         wins++;
+        [3, 5, 8, 12].forEach((n) => { if (wins >= n) achieve(`hl-win${n}`); });
         chain = Math.min(MEDAL_MAX, chain * m);
         ladder.push({ t: `×${m.toFixed(2)}`, cls: 'w' });
         b.classList.add('win');
@@ -10465,6 +10488,7 @@ draw();
         }, 650);
       } else {
         ladder.push({ t: next.r === cur.r ? '同じ' : '×', cls: 'l' });
+        if (next.r === cur.r) achieve('hl-tie');
         b.classList.add('lose');
         sfx.lose();
         setMsg(next.r === cur.r ? '同じ数字… 負けです' : wins ? `はずれ… ${wins}連勝で終了` : 'はずれ…', 'warn');
@@ -10477,6 +10501,7 @@ draw();
   function take() {
     if (phase !== 'guess' || !wins) return;
     const n = Math.floor(chain);
+    if (n >= 1000) achieve('hl-take1000');
     credit = Math.min(MEDAL_MAX, credit + n);
     chain = 0; wins = 0; phase = 'idle';
     report();
@@ -10868,6 +10893,9 @@ draw();
   const hist = [];
   let ready = !embedded, casinoOn = true, busy = false, known = 0;
   const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
+  // 実績（Chatter の中で遊んでいるときだけアプリに送る。同じものは開いている間に1回だけ）
+  const achSent = new Set();
+  const achieve = (id) => { if (!embedded || achSent.has(id)) return; achSent.add(id); send('achieve', { id }); };
   function report() { const d = credit - known; if (!d) return; known = credit; if (embedded) send('slot-sync', { delta: d }); }
   function adopt(m) { credit = Math.max(0, credit + m - known); known = m; }
   const mult = () => Math.floor(2 * (RTP[CONFIG.setting] ?? RTP[2]) * 100) / 100;
@@ -10935,8 +10963,10 @@ draw();
   function finish(guess, res, stake) {
     phase = 'idle';
     hist.unshift(res); if (hist.length > 14) hist.pop();
+    if (hist.length >= 5 && hist.slice(0, 5).every((h) => h === res)) achieve('ct-same5');
     if (guess === res) {
       wins++;
+      [3, 5, 10].forEach((n) => { if (wins >= n) achieve(`ct-win${n}`); });
       chain = Math.min(MEDAL_MAX, stake * mult());
       setResult(`${res === 'h' ? '表' : '裏'}！ 当たり`, 'win');
       sfx.win();
@@ -10956,6 +10986,7 @@ draw();
   function take() {
     if (phase !== 'idle' || !chain) return;
     const n = Math.floor(chain);
+    if (n >= 1000) achieve('ct-take1000');
     credit = Math.min(MEDAL_MAX, credit + n);
     chain = 0; wins = 0;
     report();
@@ -11323,6 +11354,9 @@ draw();
   let mines = new Set(), opened = new Set(), lastLose = -1;
   let ready = !embedded, casinoOn = true, busy = false, known = 0;
   const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
+  // 実績（Chatter の中で遊んでいるときだけアプリに送る。同じものは開いている間に1回だけ）
+  const achSent = new Set();
+  const achieve = (id) => { if (!embedded || achSent.has(id)) return; achSent.add(id); send('achieve', { id }); };
   function report() { const d = credit - known; if (!d) return; known = credit; if (embedded) send('slot-sync', { delta: d }); }
   function adopt(m) { credit = Math.max(0, credit + m - known); known = m; }
 
@@ -11394,6 +11428,7 @@ draw();
     if (mines.has(i)) {
       t.classList.add('bomb'); t.textContent = '💣';
       lastLose = i;
+      if (!opened.size) achieve('mines-boom1');
       phase = 'over';
       sfx.boom();
       revealAll();
@@ -11420,6 +11455,9 @@ draw();
   function take() {
     if (phase !== 'play' || !opened.size) return;
     const n = payout();
+    const k = opened.size, x = multAt(k);
+    if (k >= 5) achieve('mines-gem5'); if (k >= 10) achieve('mines-gem10'); if (x >= 10) achieve('mines-x10'); if (x >= 100) achieve('mines-x100');
+    if (mineCount === 24) achieve('mines-24'); if (k === CELLS - mineCount && mineCount >= 3) achieve('mines-all3');
     credit = Math.min(MEDAL_MAX, credit + n);
     phase = 'over';
     report();
@@ -11804,6 +11842,9 @@ draw();
   let deck = [], hand = [], held = [false, false, false, false, false], lastHand = null;
   let ready = !embedded, casinoOn = true, busy = false, known = 0;
   const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
+  // 実績（Chatter の中で遊んでいるときだけアプリに送る。同じものは開いている間に1回だけ）
+  const achSent = new Set();
+  const achieve = (id) => { if (!embedded || achSent.has(id)) return; achSent.add(id); send('achieve', { id }); };
   function report() { const d = credit - known; if (!d) return; known = credit; if (embedded) send('slot-sync', { delta: d }); }
   function adopt(m) { credit = Math.max(0, credit + m - known); known = m; }
 
@@ -11937,6 +11978,8 @@ draw();
       win = payFor(ev.hand, bet);
       credit += win;
       lastHand = ev.hand.id;
+      const ach = { '2P': 'poker-2p', '3K': 'poker-3k', ST: 'poker-st', FL: 'poker-fl', FH: 'poker-fh', '4K': 'poker-4k', SF: 'poker-sf', RF: 'poker-rf' }[ev.hand.id];
+      if (ach) achieve(ach); if (ev.hand.id === 'RF' && bet === 5) achieve('poker-rf5');
       ev.used.forEach((i) => cardEls[i].classList.add('win'));
       setMsg(`${ev.hand.name}！ +${fmt(win)}枚`, 'win');
       sfx.win(ev.hand.pay);
@@ -13458,6 +13501,7 @@ draw();
       download: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4",
       upload: "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12",
       shield: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z",
+      bank: "M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-6 9 6M4 10h16v11H4V10z",
     };
     ICONS.moon = "M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z";
     ICONS.sun = "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z";
@@ -15321,11 +15365,75 @@ draw();
       { id: "stack-thin", game: "stack", name: "綱渡り", desc: "幅15以下の細いブロックを積んだ" },
       { id: "stack-plays10", game: "stack", name: "常連さん", desc: "10回遊んだ", plays: 10 },
       { id: "stack-plays100", game: "stack", name: "やりこみ勢", desc: "100回遊んだ", plays: 100 },
+      // カジノ（game: "casino"。カジノのどのゲームからでも送れる。sub は一覧で見出しを分けるためのゲーム ID、all はカジノ全体。
+      // casino- で始まるものはアプリが確かめる：借りる・精算・メダルの枚数・7つのゲームを遊んだか・1日の上限）
+      { id: "casino-lend", game: "casino", sub: "all", name: "いらっしゃいませ", desc: "はじめてメダルを借りた" },
+      { id: "casino-lend500", game: "casino", sub: "all", name: "まとめ借り", desc: "1回で500枚以上のメダルを借りた" },
+      { id: "casino-lend1000", game: "casino", sub: "all", name: "大口のお客様", desc: "1回で1,000枚のメダルを借りた" },
+      { id: "casino-cash", game: "casino", sub: "all", name: "おつかれさまでした", desc: "はじめてメダルを精算した" },
+      { id: "casino-cash1000", game: "casino", sub: "all", name: "勝ち逃げ", desc: "1回の精算で1,000枚以上をコインに戻した" },
+      { id: "casino-cash5000", game: "casino", sub: "all", name: "大勝ち", desc: "1回の精算で5,000枚以上をコインに戻した" },
+      { id: "casino-cash20000", game: "casino", sub: "all", name: "伝説の大勝ち", desc: "1回の精算で20,000枚以上をコインに戻した" },
+      { id: "casino-medals1000", game: "casino", sub: "all", name: "メダル持ち", desc: "メダルを1,000枚以上持った" },
+      { id: "casino-medals10000", game: "casino", sub: "all", name: "メダル長者", desc: "メダルを10,000枚以上持った" },
+      { id: "casino-medals50000", game: "casino", sub: "all", name: "メダル王", desc: "メダルを50,000枚以上持った" },
+      { id: "casino-all", game: "casino", sub: "all", name: "全台制覇", desc: "カジノの7つのゲームをすべて遊んだ" },
+      { id: "casino-cap", game: "casino", sub: "all", name: "今日はここまで", desc: "1日の精算の上限に達した" },
+      { id: "slot-reg", game: "casino", sub: "slot", name: "REG BONUS", desc: "REG BONUS を引いた" },
+      { id: "slot-big", game: "casino", sub: "slot", name: "BIG BONUS", desc: "BIG BONUS を引いた" },
+      { id: "slot-big3", game: "casino", sub: "slot", name: "BIG 3回", desc: "開いている間に BIG BONUS を3回引いた" },
+      { id: "slot-rainbow", game: "casino", sub: "slot", name: "虹色のペカ", desc: "虹色に光る BIG BONUS を引いた" },
+      { id: "slot-late", game: "casino", sub: "slot", name: "あとからペカッ", desc: "あとから光る告知でボーナスを引いた" },
+      { id: "slot-clown", game: "casino", sub: "slot", name: "ピエロ参上", desc: "ピエロをそろえた" },
+      { id: "slot-games300", game: "casino", sub: "slot", name: "回し続けて", desc: "開いている間に300ゲーム回した" },
+      { id: "dragon-bonus", game: "casino", sub: "dragon", name: "初陣", desc: "ボーナスに突入した" },
+      { id: "dragon-cz", game: "casino", sub: "dragon", name: "前兆", desc: "前兆ステージに入った" },
+      { id: "dragon-stars", game: "casino", sub: "dragon", name: "覚醒ランプ", desc: "7つのランプをそろえてボーナスに入った" },
+      { id: "dragon-rush", game: "casino", sub: "dragon", name: "覚醒RUSH", desc: "覚醒RUSH に突入した" },
+      { id: "dragon-freeze", game: "casino", sub: "dragon", name: "フリーズ!!", desc: "フリーズを引いた" },
+      { id: "dragon-revive", game: "casino", sub: "dragon", name: "逆転の復活", desc: "負けたバトルから復活した" },
+      { id: "dragon-sets5", game: "casino", sub: "dragon", name: "5連", desc: "ボーナスを5連させた" },
+      { id: "dragon-sets10", game: "casino", sub: "dragon", name: "10連", desc: "ボーナスを10連させた" },
+      { id: "dragon-sets20", game: "casino", sub: "dragon", name: "竜の覇者", desc: "ボーナスを20連させた" },
+      { id: "pusher-hit", game: "casino", sub: "pusher", name: "当たり！", desc: "チェッカーの抽選に当たった" },
+      { id: "pusher-triple", game: "casino", sub: "pusher", name: "ゾロ目", desc: "抽選で3つそろいを出した" },
+      { id: "pusher-jp", game: "casino", sub: "pusher", name: "JACKPOT", desc: "抽選で 777 の JACKPOT を出した" },
+      { id: "pusher-stock5", game: "casino", sub: "pusher", name: "保留満タン", desc: "抽選の保留を5個ためた" },
+      { id: "pusher-out100", game: "casino", sub: "pusher", name: "押し出し名人", desc: "開いている間にメダルを100枚落とした" },
+      { id: "pusher-out1000", game: "casino", sub: "pusher", name: "押し出しの達人", desc: "開いている間にメダルを1,000枚落とした" },
+      { id: "hl-win3", game: "casino", sub: "highlow", name: "3連勝", desc: "3回続けて当てた" },
+      { id: "hl-win5", game: "casino", sub: "highlow", name: "5連勝", desc: "5回続けて当てた" },
+      { id: "hl-win8", game: "casino", sub: "highlow", name: "8連勝", desc: "8回続けて当てた" },
+      { id: "hl-win12", game: "casino", sub: "highlow", name: "完全読破", desc: "12回続けて当てた（上限）" },
+      { id: "hl-tie", game: "casino", sub: "highlow", name: "同じ数字", desc: "同じ数字が出て負けた" },
+      { id: "hl-take1000", game: "casino", sub: "highlow", name: "一攫千金", desc: "1回で1,000枚以上回収した" },
+      { id: "ct-win3", game: "casino", sub: "cointoss", name: "3連勝", desc: "3回続けて当てた" },
+      { id: "ct-win5", game: "casino", sub: "cointoss", name: "5連勝", desc: "5回続けて当てた" },
+      { id: "ct-win10", game: "casino", sub: "cointoss", name: "コインの神様", desc: "10回続けて当てた（上限）" },
+      { id: "ct-same5", game: "casino", sub: "cointoss", name: "かたより", desc: "同じ面が5回続けて出た" },
+      { id: "ct-take1000", game: "casino", sub: "cointoss", name: "一攫千金", desc: "1回で1,000枚以上回収した" },
+      { id: "mines-boom1", game: "casino", sub: "mines", name: "いきなり💣", desc: "最初のマスで💣を開けた" },
+      { id: "mines-gem5", game: "casino", sub: "mines", name: "宝探し", desc: "1回で💎を5個開けて回収した" },
+      { id: "mines-gem10", game: "casino", sub: "mines", name: "宝の山", desc: "1回で💎を10個開けて回収した" },
+      { id: "mines-x10", game: "casino", sub: "mines", name: "10倍", desc: "倍率10倍以上で回収した" },
+      { id: "mines-x100", game: "casino", sub: "mines", name: "100倍", desc: "倍率100倍以上で回収した" },
+      { id: "mines-24", game: "casino", sub: "mines", name: "一発勝負", desc: "💣24個で💎を見つけた" },
+      { id: "mines-all3", game: "casino", sub: "mines", name: "完全攻略", desc: "💣3個以上で、すべての💎を見つけた" },
+      { id: "poker-2p", game: "casino", sub: "poker", name: "ツーペア", desc: "ツーペアを出した" },
+      { id: "poker-3k", game: "casino", sub: "poker", name: "スリーカード", desc: "スリーカードを出した" },
+      { id: "poker-st", game: "casino", sub: "poker", name: "ストレート", desc: "ストレートを出した" },
+      { id: "poker-fl", game: "casino", sub: "poker", name: "フラッシュ", desc: "フラッシュを出した" },
+      { id: "poker-fh", game: "casino", sub: "poker", name: "フルハウス", desc: "フルハウスを出した" },
+      { id: "poker-4k", game: "casino", sub: "poker", name: "フォーカード", desc: "フォーカードを出した" },
+      { id: "poker-sf", game: "casino", sub: "poker", name: "ストレートフラッシュ", desc: "ストレートフラッシュを出した" },
+      { id: "poker-rf", game: "casino", sub: "poker", name: "ロイヤルストレートフラッシュ", desc: "ロイヤルストレートフラッシュを出した" },
+      { id: "poker-rf5", game: "casino", sub: "poker", name: "4,000枚", desc: "5枚がけでロイヤルストレートフラッシュを出した" },
       // 隠し実績（hidden：解除するまで名前と条件を「？？？」にする。実績の一覧の「隠し」のタブに出す。game はゲーム以外の ID）
       // shop-master：ショップの商品（SHOP_ITEMS）をすべて買うと解除（firestore.rules でも wallet/main の items の数を確かめる）
       { id: "shop-master", game: "shop", name: "買い物の達人", desc: "ショップの商品をすべて購入した", hidden: true },
     ];
     const ACH_SECRET = "secret"; // 実績の一覧の「隠し」のタブ
+    const ACH_CASINO = "casino"; // 実績の一覧の「カジノ」のタブ（カジノの7つのゲームをまとめる）
     const ACH_BY_ID = Object.fromEntries(ACHIEVEMENTS.map((a) => [a.id, a]));
     function subscribeAchievements() {
       state.unsub.achievements = onSnapshot(
@@ -15346,7 +15454,8 @@ draw();
     const achievementsQueued = []; // 実績の一覧を読み込む前に届いたもの [ゲームID, 実績ID]
     async function unlockAchievement(gameId, id) {
       const a = ACH_BY_ID[id];
-      if (!state.me || !a || a.game !== gameId || isRestricted(state.me)) return;
+      if (!state.me || !a || isRestricted(state.me)) return;
+      if (a.game !== gameId && !(a.game === ACH_CASINO && isCasino(gameId))) return;
       if (!state.achievementsLoaded) { achievementsQueued.push([gameId, id]); return; }
       if (state.achievements.has(id) || achievementsPending.has(id)) return;
       achievementsPending.add(id);
@@ -15364,11 +15473,12 @@ draw();
     // 実績の一覧（ゲームごと）
     let achView = null; // { gameId }
     function openAchievements(gameId = state.activeGameId || GAMES[0].id) {
-      achView = { gameId: gameById(gameId) || gameId === ACH_SECRET ? gameId : GAMES[0].id };
+      if (isCasino(gameId)) gameId = ACH_CASINO;
+      achView = { gameId: gameById(gameId) || gameId === ACH_SECRET || gameId === ACH_CASINO ? gameId : GAMES[0].id };
       openModal(`
         ${modalHead(`🏅 実績`, `解除した実績 <b id="ach-count"></b>`)}
         <div class="px-6 pb-6">
-          <div id="ach-tabs" class="grid grid-cols-5 gap-1 p-1 bg-slate-100 rounded-2xl mb-3" role="tablist"></div>
+          <div id="ach-tabs" class="grid grid-cols-6 gap-1 p-1 bg-slate-100 rounded-2xl mb-3" role="tablist"></div>
           <div id="ach-body"></div>
         </div>`, () => { achView = null; });
       renderAchievements();
@@ -15379,7 +15489,7 @@ draw();
       count.textContent = `${ACHIEVEMENTS.filter((a) => state.achievements.has(a.id)).length} / ${ACHIEVEMENTS.length}`;
       // ゲームごとのタブと、最後に「隠し」のタブ
       const inTab = (a, tab) => (tab === ACH_SECRET ? !!a.hidden : !a.hidden && a.game === tab);
-      tabs.innerHTML = [...GAMES, { id: ACH_SECRET, emoji: "✨" }].map((g) => {
+      tabs.innerHTML = [...GAMES, { id: ACH_CASINO, emoji: "🎰" }, { id: ACH_SECRET, emoji: "✨" }].map((g) => {
         const all = ACHIEVEMENTS.filter((a) => inTab(a, g.id));
         const got = all.filter((a) => state.achievements.has(a.id)).length;
         return `
@@ -15387,10 +15497,13 @@ draw();
             <span class="text-lg leading-none">${g.emoji}</span><span>${got}/${all.length}</span>
           </button>`;
       }).join("");
-      body.innerHTML = `${achView.gameId === ACH_SECRET ? `<p class="text-xs text-slate-500 mb-2">ゲーム以外で解除できる、ひみつの実績です。解除するまで内容は「？？？」です。</p>` : ""}<div class="space-y-2">${ACHIEVEMENTS.filter((a) => inTab(a, achView.gameId)).map((a) => {
+      body.innerHTML = `${achView.gameId === ACH_SECRET ? `<p class="text-xs text-slate-500 mb-2">ゲーム以外で解除できる、ひみつの実績です。解除するまで内容は「？？？」です。</p>` : ""}<div class="space-y-2">${ACHIEVEMENTS.filter((a) => inTab(a, achView.gameId)).map((a, i, list) => {
         const got = state.achievements.get(a.id);
+        // カジノのタブは、ゲームごとに見出しを付ける
+        const sub = a.sub && a.sub !== list[i - 1]?.sub ? (a.sub === "all" ? { emoji: "🎰", name: "カジノ全体" } : casinoById(a.sub)) : null;
+        const head = sub ? `<div class="${i ? "pt-2" : ""} text-xs font-bold text-slate-500">${sub.emoji} ${esc(sub.name)}</div>` : "";
         const secret = a.hidden && !got; // 解除していない隠し実績は、名前と条件を見せない
-        return `
+        return `${head}
           <div class="flex items-center gap-3 p-3 rounded-2xl ${got ? "bg-amber-50 ring-1 ring-amber-200" : "bg-slate-50"}">
             <div class="w-10 h-10 shrink-0 rounded-full grid place-items-center text-xl ${got ? "bg-amber-100" : "bg-slate-200 grayscale opacity-60"}">${got ? "🏅" : "🔒"}</div>
             <div class="min-w-0 flex-1">
@@ -15472,20 +15585,60 @@ draw();
       for (const [gid, e] of gameFrames) if (isCasino(gid) && e.loaded) postToGame(gid, msg);
     }
     const walletRef = () => doc(db, "users", state.me.id, "wallet", "main");
+    // 銀行（admin/bank = { medals, earned, paid, updatedAt }。firestore.rules の match /admin/bank と合わせる）。
+    // カジノで遊んで減ったメダル（記録済みの枚数 − いまの枚数）を、wallet/main の slot を書く同じ書き込み（w：取引か一括書き込み）で足す
+    const bankRef = () => doc(db, "admin", "bank");
+    function slotBankDeposit(w, lost) {
+      if (!Number.isInteger(lost) || lost <= 0 || lost > SLOT_MEDALS_MAX) return;
+      w.set(bankRef(), { medals: increment(lost), earned: increment(lost), updatedAt: serverTimestamp() }, { merge: true });
+    }
+    // 借りる・精算の取引。fn(tx, bank) の bank が true なら銀行にも入れる。銀行の分で断られたときは、銀行に入れずにもう一度だけ試す
+    async function slotTransaction(fn) {
+      try { return await runTransaction(db, (tx) => fn(tx, true)); }
+      catch (e) {
+        if (e.code !== "permission-denied") throw e;
+        console.warn(e);
+        return await runTransaction(db, (tx) => fn(tx, false));
+      }
+    }
     // ゲームで増減したメダル。記録はまとめて（最初の増減から SLOT_SYNC_MS 後に）行う
     function slotDelta(d) {
       if (!Number.isInteger(d) || !d || Math.abs(d) > SLOT_MEDALS_MAX) return;
       slotLocal = Math.min(SLOT_MEDALS_MAX, Math.max(0, slotMedals() + d));
       if (!slotTimer) slotTimer = setTimeout(flushSlot, SLOT_SYNC_MS);
       if (state.tab === "games") renderSidebar();
+      casinoMedalAch();
+    }
+    // カジノ全体の実績（アプリで確かめる）：メダルの枚数・7つのゲームをすべて遊んだか（遊んだゲームはこの端末に覚えておく）
+    const CASINO_ACH_MEDALS = [[1000, "casino-medals1000"], [10000, "casino-medals10000"], [50000, "casino-medals50000"]];
+    function casinoMedalAch() {
+      const m = slotMedals();
+      CASINO_ACH_MEDALS.forEach(([n, a]) => { if (m >= n) unlockAchievement(ACH_CASINO, a); });
+    }
+    function casinoPlayed(id) {
+      if (!state.me) return;
+      const key = `chatter.casinoPlayed.${state.me.id}`;
+      const played = new Set(store.json(key, []));
+      if (!played.has(id)) { played.add(id); store.set(key, JSON.stringify([...played])); }
+      if (CASINO_GAMES.every((g) => played.has(g.id))) unlockAchievement(ACH_CASINO, "casino-all");
     }
     async function flushSlot() {
       clearTimeout(slotTimer); slotTimer = 0;
       if (slotLocal === null || !state.me) return;
       const s = walletSlot();
       if (!s || s.medals === slotLocal) return;
-      try { await updateDoc(walletRef(), { "slot.medals": slotLocal, updatedAt: serverTimestamp() }); }
-      catch (e) { console.warn(e); }
+      const medals = slotLocal, lost = s.medals - medals;
+      const data = { "slot.medals": medals, updatedAt: serverTimestamp() };
+      try {
+        const b = writeBatch(db);
+        b.update(walletRef(), data);
+        slotBankDeposit(b, lost);
+        await b.commit();
+      } catch (e) {
+        console.warn(e);
+        // 銀行に入れられなかったとき（ほかのタブで遊んだなど）も、メダルの枚数だけは記録する
+        if (lost > 0) { try { await updateDoc(walletRef(), data); } catch (e2) { console.warn(e2); } }
+      }
     }
     const slotResult = (id, msg) => postToGame(id, { type: "slot-result", coins: walletCoins(), ...msg });
     // 1回に借りられる枚数（ゲームの「メダルを借りる」の選択肢。firestore.rules は 50 枚単位・1000 枚までを認める）
@@ -15500,7 +15653,7 @@ draw();
         if (medals > SLOT_MEDALS_MAX - n) throw new Error("これ以上は借りられません");
         clearTimeout(slotTimer); slotTimer = 0;
         const today = slotDay();
-        const coins = await runTransaction(db, async (tx) => {
+        const coins = await slotTransaction(async (tx, bank) => {
           const snap = await tx.get(walletRef());
           if (!snap.exists()) throw new Error("Chatterコインが足りません");
           const w = snap.data();
@@ -15509,6 +15662,7 @@ draw();
           const cost = n * rate;
           if ((w.coins || 0) < cost) throw new Error("Chatterコインが足りません");
           const same = b.day === today;
+          if (bank) slotBankDeposit(tx, b.medals - medals);
           tx.update(walletRef(), {
             coins: w.coins - cost,
             slot: { medals: medals + n, rate, day: today, spent: (same ? b.spent : 0) + cost, got: same ? b.got : 0, last: b.last || 0 },
@@ -15520,11 +15674,16 @@ draw();
         slotLocal = Math.min(SLOT_MEDALS_MAX, slotLocal + n);
         if (slotLocal !== medals + n && !slotTimer) slotTimer = setTimeout(flushSlot, SLOT_SYNC_MS);
         slotResult(id, { op: "lend", ok: true, added: n, medals: slotLocal, coins });
+        unlockAchievement(ACH_CASINO, "casino-lend");
+        if (n >= 500) unlockAchievement(ACH_CASINO, "casino-lend500");
+        if (n >= 1000) unlockAchievement(ACH_CASINO, "casino-lend1000");
+        casinoMedalAch();
       } catch (e) {
         console.warn(e);
         slotResult(id, { op: "lend", ok: false, message: e.code ? "借りられませんでした" : e.message });
       }
     }
+    const SLOT_CAP_ERROR = "今日の精算の上限に達しました（明日また精算できます）";
     async function slotCashout(id) {
       try {
         if (!state.me) throw new Error("精算できませんでした");
@@ -15533,7 +15692,7 @@ draw();
         if (medals <= 0) throw new Error("精算するメダルがありません");
         clearTimeout(slotTimer); slotTimer = 0;
         const today = slotDay();
-        const r = await runTransaction(db, async (tx) => {
+        const r = await slotTransaction(async (tx, bank) => {
           const snap = await tx.get(walletRef());
           const w = snap.exists() ? snap.data() : null;
           const b = w?.slot;
@@ -15542,19 +15701,23 @@ draw();
           const spent = same ? b.spent : 0, got = same ? b.got : 0;
           let cash = medals;
           if (adminSettings.slotCap > 0 && !slotCapOff()) cash = Math.min(cash, Math.floor((adminSettings.slotCap - (got - spent)) / b.rate));
-          if (cash <= 0) throw new Error("今日の精算の上限に達しました（明日また精算できます）");
+          if (cash <= 0) throw new Error(SLOT_CAP_ERROR);
           const add = cash * b.rate;
+          if (bank) slotBankDeposit(tx, b.medals - medals);
           tx.update(walletRef(), {
             coins: (w.coins || 0) + add,
             slot: { medals: medals - cash, rate: b.rate, day: today, spent, got: got + add, last: cash },
             updatedAt: serverTimestamp(),
           });
-          return { cash, add, coins: (w.coins || 0) + add };
+          return { cash, add, coins: (w.coins || 0) + add, capped: cash < medals };
         });
         slotLocal = Math.max(0, slotLocal - r.cash);
         if (slotLocal !== medals - r.cash && !slotTimer) slotTimer = setTimeout(flushSlot, SLOT_SYNC_MS);
         slotResult(id, { op: "cashout", ok: true, cashed: r.cash, medals: slotLocal, coins: r.coins });
         toast(`🪙 精算して Chatterコインを ${r.add.toLocaleString()} 枚受け取りました`);
+        unlockAchievement(ACH_CASINO, "casino-cash");
+        [[1000, "casino-cash1000"], [5000, "casino-cash5000"], [20000, "casino-cash20000"]].forEach(([c, a]) => { if (r.cash >= c) unlockAchievement(ACH_CASINO, a); });
+        if (r.capped) unlockAchievement(ACH_CASINO, "casino-cap");
       } catch (e) {
         console.warn(e);
         slotResult(id, { op: "cashout", ok: false, message: e.code ? "精算できませんでした" : e.message });
@@ -17233,7 +17396,7 @@ draw();
       else if (d.type === "start") { entry.progress = 0; entry.playing = true; }
       else if (d.type === "gameover") { entry.progress = 0; entry.playing = false; saveGameScore(id, d.score); }
       else if (d.type === "achieve" && typeof d.id === "string") unlockAchievement(id, d.id);
-      else if (isCasino(id) && d.type === "slot-sync") slotDelta(d.delta);
+      else if (isCasino(id) && d.type === "slot-sync") { slotDelta(d.delta); casinoPlayed(id); }
       else if (isCasino(id) && d.type === "slot-lend") slotLend(id, d.medals);
       else if (isCasino(id) && d.type === "slot-cashout") slotCashout(id);
       else if (d.type === "escape" && id === state.activeGameId && $("#modal-root").hidden) exitGame(); // ゲームの中で Esc を押したとき（モーダル表示中は閉じない）
@@ -22072,6 +22235,7 @@ draw();
             <button type="button" data-action="admin-reset" class="btn-secondary w-full">${icon("key", "w-5 h-5")}パスワードのリセット</button>
             <button type="button" data-action="admin-plans" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}プランの加入状況</button>
             <button type="button" data-action="admin-grant" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}コインを配る</button>
+            <button type="button" data-action="admin-bank" class="btn-secondary w-full">${icon("bank", "w-5 h-5")}銀行</button>
             <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
           </div>
           <div id="admin-lock-box" class="lg:col-span-2"></div>
@@ -22496,6 +22660,182 @@ draw();
       }
       closeModal();
       toast(`${people}人に反映しました（合計 ${Math.abs(total).toLocaleString()} コイン${total >= 0 ? "配布" : "減少"}${skipped ? `、減らせなかった人 ${skipped}人` : ""}）`);
+    }
+
+    // 管理者メニュー：銀行（admin/bank。全ユーザーがカジノで遊んで減ったメダルが貯まる）。
+    // 引き出すと、メダル1枚をいまの「メダル1枚」のコイン数（adminSettings.slotRate）でコインにして、自分・全員・選んだ人に渡す。
+    // 1回の取引で銀行のメダルを減らし（paid を増やし）、相手の wallet/main に grant と同じ形で足す（firestore.rules の match /admin/bank・grantOk と合わせる）
+    let bankData = null;
+    const bankOthers = () => [...state.users.values()].filter((u) => !u.deleted && u.id !== state.me.id)
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), "ja"));
+    const bankMaxPer = () => Math.floor(GRANT_MAX_COINS / adminSettings.slotRate);
+    async function openAdminBank() {
+      if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
+      const users = bankOthers();
+      openAdminModal(`
+        ${modalHead("銀行", "全ユーザーがカジノ（コインで借りたメダルを賭けるゲーム）で遊んで減ったメダルが、ここに貯まります。引き出すと、メダルをコインにして自分やみんなに渡せます。")}
+        <div class="px-6"><div id="bank-summary" class="rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4 text-sm text-slate-400">読み込み中…</div></div>
+        <form id="form-admin-bank" class="px-6 pt-4 pb-6 space-y-4">
+          <div>
+            <span class="label">渡す相手</span>
+            <div class="flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-700">
+              <label class="flex items-center gap-2"><input type="radio" name="target" value="self" checked /> 自分（引き出す）</label>
+              <label class="flex items-center gap-2"><input type="radio" name="target" value="all" /> 全員に分配（あなた以外 ${users.length}人）</label>
+              <label class="flex items-center gap-2"><input type="radio" name="target" value="some" /> 選んだ人に分配</label>
+            </div>
+            <div id="bank-users" hidden class="mt-2 max-h-56 overflow-y-auto scroll-thin rounded-2xl ring-1 ring-slate-100 divide-y divide-slate-100">
+              ${users.map((u) => `<label class="flex items-center gap-3 px-3 py-2 text-sm cursor-pointer"><input type="checkbox" name="users" value="${esc(u.id)}" class="shrink-0" /><span class="truncate">${esc(u.name)}<span class="text-xs text-slate-400"> @${esc(u.id)}</span></span></label>`).join("") || `<p class="text-sm text-slate-400 text-center py-4">他のユーザーはまだいません</p>`}
+            </div>
+          </div>
+          <div>
+            <label class="label" for="bank-medals">メダルの数（1人あたり）</label>
+            <div class="flex gap-2">
+              <input id="bank-medals" name="medals" type="number" min="1" max="${bankMaxPer()}" step="1" inputmode="numeric" class="input" placeholder="例：100" />
+              <button type="button" data-action="admin-bank-max" class="btn-secondary shrink-0 px-4">全部</button>
+            </div>
+            <p id="bank-preview" class="mt-1.5 text-xs text-slate-500"></p>
+          </div>
+          <div id="bank-message-box" hidden>
+            <label class="label" for="bank-message">メッセージ</label>
+            <textarea id="bank-message" name="message" class="input" rows="2" maxlength="${GRANT_MAX_MESSAGE}">銀行からのおすそ分けです！</textarea>
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-2">
+            <button type="button" data-action="admin-menu" class="btn-secondary flex-1">戻る</button>
+            <button type="submit" class="btn-primary flex-1">引き出す</button>
+          </div>
+        </form>`);
+      const form = $("#form-admin-bank");
+      form?.addEventListener("change", (e) => {
+        // ユーザーにチェックを付けたら「選んだ人に分配」に切り替える
+        if (e.target.name === "users" && e.target.checked) form.querySelector('input[name="target"][value="some"]').checked = true;
+        renderBankForm();
+      });
+      form?.addEventListener("input", () => renderBankForm());
+      renderBankForm();
+      await loadBank();
+    }
+    async function loadBank() {
+      try {
+        const snap = await getDoc(bankRef());
+        bankData = snap.exists() ? snap.data() : { medals: 0, earned: 0, paid: 0 };
+      } catch (e) {
+        console.warn(e);
+        const box = $("#bank-summary");
+        if (box) box.innerHTML = `<span class="text-rose-500">読み込めませんでした（ルールが最新か確かめてください）</span>`;
+        return;
+      }
+      renderBankSummary();
+      renderBankForm();
+    }
+    function renderBankSummary() {
+      const box = $("#bank-summary");
+      if (!box || !bankData) return;
+      const rate = adminSettings.slotRate, m = bankData.medals || 0;
+      box.className = "rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4";
+      box.innerHTML = `
+        <div class="text-xs text-slate-500">残高</div>
+        <div class="flex items-baseline gap-2 flex-wrap">
+          <span class="text-3xl font-bold text-slate-800 tabular-nums">${m.toLocaleString()}</span><span class="text-sm text-slate-600">枚</span>
+          <span class="text-sm text-amber-600 font-semibold tabular-nums">＝ ${(m * rate).toLocaleString()} コイン</span>
+        </div>
+        <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-500">
+          <div>これまでに貯まった：<b class="text-slate-700 tabular-nums">${(bankData.earned || 0).toLocaleString()}</b> 枚</div>
+          <div>これまでに引き出した：<b class="text-slate-700 tabular-nums">${(bankData.paid || 0).toLocaleString()}</b> 枚</div>
+        </div>
+        <p class="mt-2 text-xs text-slate-400 leading-relaxed">メダル1枚 ＝ ${rate} コイン（「カジノの設定」の「メダル1枚」のいまの値）でコインにして渡します。1人に1回で渡せるのは ${GRANT_MAX_COINS.toLocaleString()} コイン（${bankMaxPer().toLocaleString()} 枚）までです。</p>`;
+    }
+    // 渡す相手（ユーザーIDの一覧）
+    function bankTargets(form) {
+      const t = form.querySelector('input[name="target"]:checked')?.value || "self";
+      if (t === "self") return [state.me.id];
+      if (t === "all") return bankOthers().map((u) => u.id);
+      return [...form.querySelectorAll('input[name="users"]:checked')].map((el) => el.value);
+    }
+    function renderBankForm() {
+      const form = $("#form-admin-bank");
+      if (!form) return;
+      const t = form.querySelector('input[name="target"]:checked')?.value || "self";
+      $("#bank-users").hidden = t !== "some";
+      $("#bank-message-box").hidden = t === "self";
+      const btn = form.querySelector('button[type="submit"]');
+      if (!btn.disabled) btn.textContent = t === "self" ? "引き出す" : "分配する";
+      const n = bankTargets(form).length, raw = form.medals.value.trim(), per = Number(raw);
+      const rate = adminSettings.slotRate, bal = bankData?.medals || 0;
+      const pv = $("#bank-preview");
+      if (!raw || !Number.isInteger(per) || per < 1) {
+        pv.textContent = n ? `${n}人に渡します` : "渡す相手を選んでください";
+        pv.className = "mt-1.5 text-xs text-slate-500";
+        return;
+      }
+      const total = per * n;
+      const over = total > bal || per > bankMaxPer();
+      pv.className = `mt-1.5 text-xs ${over ? "text-rose-500" : "text-slate-500"}`;
+      pv.textContent = `1人 ${(per * rate).toLocaleString()} コイン × ${n}人 ＝ 銀行から ${total.toLocaleString()} 枚`
+        + (per > bankMaxPer() ? `（1人 ${bankMaxPer().toLocaleString()} 枚までです）` : total > bal ? `（残高 ${bal.toLocaleString()} 枚より多いです）` : `（残り ${(bal - total).toLocaleString()} 枚）`);
+    }
+    // 「全部」：残高を相手の人数で割った枚数（1人に渡せる上限まで）
+    function fillBankMax() {
+      const form = $("#form-admin-bank");
+      if (!form || !bankData) return;
+      const n = bankTargets(form).length;
+      form.medals.value = n ? Math.min(Math.floor((bankData.medals || 0) / n), bankMaxPer()) || "" : "";
+      renderBankForm();
+    }
+    async function bankPayout(fd) {
+      if (!isAdmin() || !adminKey) return;
+      const form = $("#form-admin-bank");
+      const target = fd.get("target");
+      const per = Number(String(fd.get("medals") ?? "").trim());
+      const rate = adminSettings.slotRate, maxPer = bankMaxPer();
+      if (!Number.isInteger(per) || per < 1 || per > maxPer) throw new Error(`メダルの数（1人あたり）は 1〜${maxPer.toLocaleString()} の整数で入力してください。`);
+      const ids = (form ? bankTargets(form) : []).filter((id) => id === state.me.id || (state.users.get(id) && !state.users.get(id).deleted));
+      if (!ids.length) throw new Error("渡す相手を選んでください。");
+      const coins = per * rate;
+      const msg = target === "self" ? `銀行からメダル ${per.toLocaleString()} 枚を引き出しました` : String(fd.get("message") ?? "").trim();
+      if (!msg || msg.length > GRANT_MAX_MESSAGE) throw new Error(`メッセージを 1〜${GRANT_MAX_MESSAGE} 文字で入力してください。`);
+      const total = per * ids.length;
+      if (total > (bankData?.medals || 0)) throw new Error(`銀行のメダルが足りません（必要 ${total.toLocaleString()} 枚・残高 ${(bankData?.medals || 0).toLocaleString()} 枚）。`);
+      const what = target === "self"
+        ? `銀行からメダル ${total.toLocaleString()} 枚を引き出して、あなたに ${coins.toLocaleString()} コインを入れます。`
+        : `銀行からメダル ${total.toLocaleString()} 枚を引き出して、${ids.length}人に ${coins.toLocaleString()} コインずつ配ります。`;
+      if (!window.confirm(`${what}取り消せません。よろしいですか？`)) return;
+      const gid = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      let people = 0;
+      try {
+        for (let i = 0; i < ids.length; i += GRANT_BATCH) {
+          const chunk = ids.slice(i, i + GRANT_BATCH);
+          await runTransaction(db, async (tx) => {
+            const bankSnap = await tx.get(bankRef());
+            const refs = chunk.map((id) => doc(db, "users", id, "wallet", "main"));
+            const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+            const b = bankSnap.exists() ? bankSnap.data() : { medals: 0, paid: 0 };
+            const need = per * chunk.length;
+            if ((b.medals || 0) < need) throw new Error(`銀行のメダルが足りなくなりました（${people}人に渡したあとです）。`);
+            // 管理者のパスワードの確認（proof）。同じ取引の中でルールが確かめる
+            tx.set(doc(db, "admin", "secret"), { hash: adminKey, proof: adminKey, at: serverTimestamp() });
+            snaps.forEach((snap, k) => {
+              const before = snap.exists() ? (snap.data().coins || 0) : 0;
+              tx.set(refs[k], {
+                coins: before + coins,
+                grant: { id: gid, coins, message: msg, at: serverTimestamp() },
+                updatedAt: serverTimestamp(),
+              }, { merge: true });
+            });
+            tx.update(bankRef(), { medals: b.medals - need, paid: (b.paid || 0) + need, updatedAt: serverTimestamp() });
+          });
+          people += chunk.length;
+        }
+      } catch (e) {
+        if (e.code === "permission-denied") throw new Error(`権限エラーで止まりました（${people}人に渡したあとです。ルールが最新か、管理者パスワードが正しいかを確かめてください）`);
+        throw e;
+      } finally {
+        await loadBank();
+      }
+      toast(target === "self"
+        ? `🏦 銀行から ${total.toLocaleString()} 枚を引き出して、${coins.toLocaleString()} コインを受け取りました`
+        : `🏦 ${people}人に ${coins.toLocaleString()} コインずつ配りました（銀行から ${total.toLocaleString()} 枚）`);
+      if (form?.isConnected) { form.medals.value = ""; renderBankForm(); }
     }
 
     function openAdminPlans() {
@@ -22959,7 +23299,7 @@ draw();
       "set-chat-bg": (el) => (el.getAttribute("aria-disabled") === "true" ? openFrameInfo() : setChatBg(el.dataset.bg)), // まだ獲得していない背景は、獲得条件を出す
       "toggle-crown": () => toggleCrown(),
       "open-achievements": () => openAchievements(),
-      "ach-game": (el) => { if (achView && (gameById(el.dataset.id) || el.dataset.id === ACH_SECRET)) { achView.gameId = el.dataset.id; renderAchievements(); } },
+      "ach-game": (el) => { if (achView && (gameById(el.dataset.id) || el.dataset.id === ACH_SECRET || el.dataset.id === ACH_CASINO)) { achView.gameId = el.dataset.id; renderAchievements(); } },
       "open-ranking": (el) => openRanking(el.dataset.id || undefined),
       "restart-game": () => restartGame(),
       "open-game-keys": () => openGameKeys(),
@@ -23071,6 +23411,8 @@ draw();
       "admin-restrict": () => openAdminRestrict(),
       "admin-plans": () => openAdminPlans(),
       "admin-grant": () => openAdminGrant(),
+      "admin-bank": () => openAdminBank(),
+      "admin-bank-max": () => fillBankMax(),
       "admin-plan-filter": (el) => { adminPlanFilter = el.dataset.plan; renderAdminPlanList(); },
       "admin-restrict-user": (el) => openRestrictUser(el.dataset.id),
       "admin-unrestrict": (el) => unrestrictUser(el),
@@ -23154,6 +23496,7 @@ draw();
       "form-admin-password": (fd) => changeAdminPassword(fd.get("current"), fd.get("password"), fd.get("password2")),
       "form-admin-restrict": (fd) => restrictUser(fd.get("user"), fd.get("hours"), fd.get("minutes"), fd.get("direct") === "1"),
       "form-admin-slot": (fd) => saveSlotSettings(fd),
+      "form-admin-bank": (fd) => bankPayout(fd),
       "form-admin-grant": (fd) => grantCoinsToAll(fd.get("message"), fd.get("coins"), fd.get("target") === "some" ? fd.getAll("users") : null),
     };
 
