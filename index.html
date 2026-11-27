@@ -12001,6 +12001,750 @@ draw();
 })();
 </script>
   </template>
+  <!-- 沼パチンコ：玉を打ち、3段のクルーン（8穴・12穴・16穴）を越えると「沼・完全攻略」。払いは銀行（admin/bank）の8割（専用コイン単位）。
+       専用コイン1枚 = Chatterコイン1000枚 = 100玉。アプリから slot-config（on・coins）・numa-config・numa-result を受け取り、
+       numa-sync / numa-buy / numa-cashout / numa-jackpot / numa-pot を送る -->
+  <template id="game-src-numa">
+<style>
+  :root { --text: #fef3c7; --muted: #a8a29e; --line: rgba(255, 255, 255, 0.09); --red: #b91c1c; --gold: #f59e0b; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+  html, body { width: 100%; height: 100%; }
+  html { overflow: hidden; }
+  body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", "Meiryo", sans-serif;
+    color: var(--text); overflow-x: hidden; overflow-y: auto;
+    background: radial-gradient(120% 70% at 50% -10%, rgba(185, 28, 28, 0.25) 0%, transparent 60%), linear-gradient(180deg, #0c0805 0%, #030201 100%);
+    display: flex; align-items: flex-start; justify-content: center;
+  }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; touch-action: manipulation; }
+  button:disabled { cursor: not-allowed; }
+  .num { font-variant-numeric: tabular-nums; }
+  .app { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 14px; margin: 0 auto; }
+
+  .hud { display: flex; align-items: center; gap: 8px; }
+  .wallet { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 14px 5px 7px; border-radius: 999px; background: rgba(20, 12, 4, 0.85); border: 1px solid var(--line); }
+  .wallet-ico { width: 28px; height: 28px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: 15px; background: radial-gradient(circle at 35% 30%, #fde68a, #f59e0b 70%, #b45309); }
+  .wallet-label { font-size: 10px; color: var(--muted); font-weight: 600; line-height: 1.2; white-space: nowrap; }
+  .wallet-val { font-size: 16px; font-weight: 800; color: #fcd34d; line-height: 1.1; }
+  .hud-spacer { flex: 1; }
+  .icon-btn { width: 38px; height: 38px; border-radius: 12px; flex: none; display: grid; place-items: center; font-size: 16px; font-weight: 800; background: rgba(20, 12, 4, 0.85); border: 1px solid var(--line); }
+  .icon-btn:hover { background: rgba(50, 30, 8, 0.95); }
+
+  .machine {
+    position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 8px; padding: 12px;
+    border-radius: 24px; background: radial-gradient(130% 90% at 50% 30%, #2a1707 0%, #140b03 55%, #060301 100%);
+    border: 2px solid rgba(245, 158, 11, 0.55); box-shadow: inset 0 0 0 5px rgba(0, 0, 0, 0.35), inset 0 0 40px rgba(127, 29, 29, 0.35), 0 24px 50px rgba(0, 0, 0, 0.6);
+  }
+  .machine.tense { border-color: rgba(239, 68, 68, 0.85); box-shadow: inset 0 0 0 5px rgba(0, 0, 0, 0.35), inset 0 0 60px rgba(220, 38, 38, 0.55), 0 0 30px rgba(220, 38, 38, 0.45); }
+  .title-row { position: relative; z-index: 1; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .title { font-size: 22px; font-weight: 900; letter-spacing: 0.25em; color: #fbbf24; text-shadow: 0 0 14px rgba(245, 158, 11, 0.6), 0 2px 0 #000; }
+  .title small { font-size: 11px; letter-spacing: 0.1em; color: #f87171; text-shadow: none; margin-left: 6px; }
+  .state { font-size: 11px; font-weight: 800; color: var(--muted); text-align: right; }
+  .state.open { color: #fca5a5; }
+  .zawa { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+  .zawa span { position: absolute; font-weight: 900; font-style: italic; color: rgba(251, 191, 36, 0.08); white-space: nowrap; animation: zawa 4.5s ease-in-out infinite; }
+  @keyframes zawa { 0%, 100% { transform: translate(0, 0) skewX(-8deg); opacity: 0.6; } 50% { transform: translate(4px, -3px) skewX(-14deg); opacity: 1; } }
+  .machine.tense .zawa span { color: rgba(248, 113, 113, 0.3); animation-duration: 0.8s; }
+
+  .pot { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 12px; border-radius: 14px; background: linear-gradient(90deg, rgba(127, 29, 29, 0.75), rgba(0, 0, 0, 0.6)); border: 1px solid rgba(245, 158, 11, 0.45); }
+  .pot label { font-size: 10px; font-weight: 800; color: #fca5a5; letter-spacing: 0.1em; }
+  .pot b { display: block; font-size: 20px; font-weight: 900; color: #fde68a; line-height: 1.1; text-shadow: 0 0 10px rgba(245, 158, 11, 0.6); }
+  .pot small { display: block; font-size: 10px; color: var(--muted); font-weight: 700; }
+  .pot .odds { text-align: right; }
+  .pot .odds b { font-size: 14px; color: #fecaca; text-shadow: none; }
+
+  .board-wrap { position: relative; z-index: 1; border-radius: 18px; overflow: hidden; border: 1px solid rgba(245, 158, 11, 0.35); background: #000; }
+  canvas.board { display: block; width: 100%; height: clamp(190px, 31vh, 270px); }
+  canvas.krun { display: block; width: 100%; height: clamp(120px, 18vh, 150px); }
+  .krun-wrap { position: relative; z-index: 1; border-radius: 18px; overflow: hidden; border: 1px solid rgba(220, 38, 38, 0.4); background: #000; }
+
+  .counters { position: relative; z-index: 1; display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 6px; }
+  .counter { background: rgba(0, 0, 0, 0.55); border: 1px solid var(--line); border-radius: 10px; padding: 4px 8px 5px; text-align: right; }
+  .counter label { display: block; text-align: left; font-size: 9px; font-weight: 700; letter-spacing: 0.08em; color: var(--muted); }
+  .counter b { display: block; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 17px; line-height: 1.15; }
+  .counter.balls b { color: #fcd34d; font-size: 19px; }
+  .counter.nc b { color: #fde68a; }
+  .counter.cc b { color: #e7e5e4; }
+  .stats { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+  .stat { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); border-radius: 9px; padding: 3px 4px; text-align: center; }
+  .stat label { display: block; font-size: 8.5px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+  .stat b { display: block; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; font-weight: 800; }
+  .stat.s3 b { color: #fca5a5; }
+
+  .power { position: relative; z-index: 1; display: grid; grid-template-columns: auto 1fr 1fr 1fr; gap: 5px; align-items: center; }
+  .power > span { font-size: 10px; font-weight: 800; color: var(--muted); padding-right: 2px; }
+  .pw { height: 30px; border-radius: 999px; font-size: 12px; font-weight: 900; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.18); color: #e7e5e4; }
+  .pw.active { background: linear-gradient(180deg, #f59e0b, #b45309); color: #1c0a00; border-color: #fde68a; }
+  .actions { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .act { position: relative; height: 52px; border-radius: 16px; font-size: 16px; font-weight: 900; line-height: 1.1; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: transform 0.08s, filter 0.15s; }
+  .act small { font-size: 10px; font-weight: 700; opacity: 0.85; }
+  .act .key { position: absolute; top: 4px; right: 7px; font-size: 9px; opacity: 0.6; }
+  .act.main { background: linear-gradient(180deg, #ef4444, #7f1d1d); color: #fff; box-shadow: 0 4px 0 #450a0a; }
+  .act.gold { background: linear-gradient(180deg, #fbbf24, #b45309); color: #1c0a00; box-shadow: 0 4px 0 #78350f; }
+  .act.sub { background: linear-gradient(180deg, #44403c, #1c1917); color: #fafaf9; box-shadow: 0 4px 0 #0c0a09; }
+  .act.sub.on { background: linear-gradient(180deg, #dc2626, #450a0a); box-shadow: 0 4px 0 #1f0505, 0 0 16px rgba(220, 38, 38, 0.6); }
+  .act:active:not(:disabled) { transform: translateY(3px); }
+  .act:disabled { filter: grayscale(0.8) brightness(0.55); }
+  .msg { position: relative; z-index: 1; text-align: center; font-size: 12px; font-weight: 700; color: #e7e5e4; min-height: 2.8em; line-height: 1.4; }
+  .msg.warn { color: #fca5a5; }
+  .msg.win { color: #fde68a; }
+
+  .medal-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .medal-btn { display: flex; align-items: center; gap: 8px; text-align: left; padding: 7px 12px; border-radius: 14px; background: rgba(20, 12, 4, 0.85); border: 1px solid var(--line); }
+  .medal-btn:hover:not(:disabled) { background: rgba(50, 30, 8, 0.95); }
+  .medal-btn:disabled { opacity: 0.4; }
+  .medal-btn .ico { font-size: 18px; }
+  .medal-btn b { display: block; font-size: 13px; font-weight: 800; line-height: 1.2; }
+  .medal-btn small { display: block; font-size: 10px; color: var(--muted); font-weight: 600; line-height: 1.3; }
+  .medal-btn.lend b { color: #fcd34d; }
+  .log { list-style: none; display: flex; flex-direction: column; gap: 2px; max-height: 118px; overflow-y: auto; padding: 6px 10px; border-radius: 12px; background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); font-size: 11px; font-weight: 700; color: #d6d3d1; }
+  .log:empty::before { content: "履歴はまだありません"; color: var(--muted); }
+  .log li { display: flex; gap: 8px; }
+  .log li time { color: var(--muted); flex: none; font-family: ui-monospace, Consolas, monospace; font-weight: 600; }
+  .log li.good { color: #fde68a; }
+  .log li.big { color: #fca5a5; }
+  .hint { text-align: center; font-size: 10px; color: #6b5f5f; font-weight: 600; }
+
+  .cutin { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; pointer-events: none; }
+  .cutin[hidden] { display: none; }
+  .cutin .band { width: 120%; padding: 18px 10%; background: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); border-top: 3px solid var(--red); border-bottom: 3px solid var(--red); transform: rotate(-6deg); text-align: center; animation: cutin 1.8s ease-out forwards; }
+  .cutin .big { font-size: clamp(30px, 8vw, 46px); font-weight: 900; font-style: italic; color: #f87171; letter-spacing: 0.08em; text-shadow: 0 0 18px rgba(220, 38, 38, 0.9), 3px 3px 0 #450a0a; }
+  .cutin .small { font-size: clamp(13px, 3.4vw, 16px); font-weight: 800; color: #fafaf9; margin-bottom: 4px; }
+  .cutin.gold .big { color: #fde68a; text-shadow: 0 0 18px rgba(251, 191, 36, 0.9), 3px 3px 0 #78350f; }
+  .cutin.gold .band { border-color: #f59e0b; }
+  @keyframes cutin { 0% { transform: translateX(-100%) rotate(-6deg); } 15% { transform: translateX(0) rotate(-6deg); } 80% { transform: translateX(0) rotate(-6deg); opacity: 1; } 100% { transform: translateX(100%) rotate(-6deg); opacity: 0; } }
+
+  canvas#fx { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 50; }
+  .modal { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(5, 2, 1, 0.72); backdrop-filter: blur(6px); }
+  .modal[hidden] { display: none; }
+  .sheet { width: 100%; max-width: 400px; max-height: 100%; overflow: auto; border-radius: 20px; padding: 18px; background: linear-gradient(180deg, #2a1707, #120803); border: 1px solid rgba(245, 158, 11, 0.4); }
+  .sheet h2 { font-size: 17px; font-weight: 900; margin-bottom: 10px; }
+  .notes { list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #e7e5e4; line-height: 1.55; margin-bottom: 14px; }
+  .notes li { padding-left: 1.1em; text-indent: -1.1em; }
+  .notes li::before { content: "・"; }
+  .close-btn { width: 100%; height: 42px; border-radius: 12px; font-weight: 800; background: linear-gradient(180deg, #ef4444, #7f1d1d); color: #fff; }
+  .lend-sheet h2 { margin-bottom: 4px; }
+  .lend-have { font-size: 12px; color: var(--muted); font-weight: 700; margin-bottom: 12px; }
+  .lend-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 12px; }
+  .lend-opt { position: relative; padding: 10px 12px; border-radius: 14px; text-align: left; background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); transition: background 0.15s, transform 0.08s; }
+  .lend-opt b { display: block; font-size: 17px; font-weight: 900; color: #fcd34d; line-height: 1.2; }
+  .lend-opt small { display: block; font-size: 11px; color: var(--muted); font-weight: 700; }
+  .lend-opt .key { position: absolute; top: 6px; right: 9px; font-size: 9px; font-weight: 800; opacity: 0.5; }
+  .lend-opt:hover:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+  .lend-opt:disabled { opacity: 0.35; }
+  .lend-cancel { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+  @media (max-height: 640px) { .hint { display: none; } }
+  @media (prefers-reduced-motion: reduce) { .zawa span { animation: none; } }
+
+  /* ---------- ライトモード（Chatter の <html> に dark が付いていないとき。盤面とクルーンは暗いまま） ---------- */
+  html:not(.dark) { --text: #1c1917; --muted: #78716c; --line: rgba(28, 25, 23, 0.12); color-scheme: light; }
+  html:not(.dark) body { background: radial-gradient(120% 70% at 50% -10%, rgba(185, 28, 28, 0.1) 0%, transparent 60%), linear-gradient(180deg, #fafaf9 0%, #f3efe8 100%); }
+  html:not(.dark) .wallet, html:not(.dark) .icon-btn, html:not(.dark) .medal-btn { background: rgba(255, 255, 255, 0.92); box-shadow: 0 1px 3px rgba(28, 25, 23, 0.08); }
+  html:not(.dark) .icon-btn:hover, html:not(.dark) .medal-btn:hover:not(:disabled) { background: #fff; border-color: rgba(28, 25, 23, 0.22); }
+  html:not(.dark) .wallet-val, html:not(.dark) .medal-btn.lend b { color: #b45309; }
+  html:not(.dark) .machine { background: radial-gradient(130% 90% at 50% 30%, #fffbeb 0%, #fef3c7 60%, #fde68a 100%); border-color: rgba(180, 83, 9, 0.5); box-shadow: inset 0 0 0 5px rgba(255, 255, 255, 0.55), 0 14px 34px rgba(28, 25, 23, 0.14); }
+  html:not(.dark) .machine.tense { border-color: #dc2626; box-shadow: inset 0 0 0 5px rgba(255, 255, 255, 0.55), 0 0 24px rgba(220, 38, 38, 0.35); }
+  html:not(.dark) .title { color: #92400e; text-shadow: none; }
+  html:not(.dark) .title small { color: #b91c1c; }
+  html:not(.dark) .state.open { color: #b91c1c; }
+  html:not(.dark) .zawa span { color: rgba(146, 64, 14, 0.09); }
+  html:not(.dark) .machine.tense .zawa span { color: rgba(185, 28, 28, 0.22); }
+  html:not(.dark) .pot { background: linear-gradient(90deg, #7f1d1d, #292524); }
+  html:not(.dark) .counter, html:not(.dark) .stat, html:not(.dark) .log, html:not(.dark) .pw:not(.active) { background: rgba(255, 255, 255, 0.9); }
+  html:not(.dark) .counter.balls b, html:not(.dark) .counter.nc b { color: #b45309; }
+  html:not(.dark) .counter.cc b { color: #44403c; }
+  html:not(.dark) .stat.s3 b { color: #dc2626; }
+  html:not(.dark) .pw:not(.active) { border-color: rgba(28, 25, 23, 0.2); color: #44403c; }
+  html:not(.dark) .msg { color: #44403c; }
+  html:not(.dark) .msg.warn { color: #dc2626; }
+  html:not(.dark) .msg.win, html:not(.dark) .log li.good { color: #b45309; }
+  html:not(.dark) .log { color: #44403c; }
+  html:not(.dark) .log li.big { color: #dc2626; }
+  html:not(.dark) .hint { color: #78716c; }
+  html:not(.dark) .act:disabled { filter: grayscale(0.9) brightness(1.04); opacity: 0.45; }
+  html:not(.dark) .modal { background: rgba(28, 25, 23, 0.35); }
+  html:not(.dark) .sheet { background: #fff; border-color: rgba(28, 25, 23, 0.12); box-shadow: 0 24px 60px rgba(28, 25, 23, 0.25); }
+  html:not(.dark) .notes { color: #44403c; }
+  html:not(.dark) .lend-opt { background: #fafaf9; }
+  html:not(.dark) .lend-opt:hover:not(:disabled) { background: #f5f5f4; }
+  html:not(.dark) .lend-opt b { color: #b45309; }
+  html:not(.dark) .lend-cancel { background: #e7e5e4; color: #44403c; }
+</style>
+<canvas id="fx"></canvas>
+<div class="app">
+  <header class="hud">
+    <div class="wallet"><div class="wallet-ico">🪙</div><div><div class="wallet-label">Chatterコイン</div><div class="wallet-val num" id="walletVal">0</div></div></div>
+    <div class="hud-spacer"></div>
+    <button class="icon-btn" id="soundBtn" type="button" title="効果音" aria-label="効果音">🔊</button>
+    <button class="icon-btn" id="helpBtn" type="button" title="遊び方" aria-label="遊び方">?</button>
+  </header>
+
+  <main class="machine" id="machine">
+    <div class="zawa" id="zawa" aria-hidden="true"></div>
+    <div class="title-row"><div class="title">沼<small>3段クルーン</small></div><div class="state" id="stateInfo">-</div></div>
+    <div class="pot">
+      <div><label>沼の払い（銀行の8割）</label><b class="num" id="potVal">-</b><small class="num" id="potNote">-</small></div>
+      <div class="odds"><label>大当たり確率</label><b class="num" id="oddsVal">-</b><small id="oddsNote">1玉あたり</small></div>
+    </div>
+    <div class="board-wrap"><canvas class="board" id="board"></canvas></div>
+    <div class="krun-wrap"><canvas class="krun" id="krun"></canvas></div>
+    <div class="counters">
+      <div class="counter balls"><label>所持玉</label><b class="num" id="ballsVal">0</b></div>
+      <div class="counter nc"><label>専用コイン換算</label><b class="num" id="ncVal">0</b></div>
+      <div class="counter cc"><label>Chatterコイン換算</label><b class="num" id="ccVal">0</b></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><label>総投資</label><b class="num" id="stIn">0</b></div>
+      <div class="stat"><label>総獲得</label><b class="num" id="stOut">0</b></div>
+      <div class="stat"><label>クルーン</label><b class="num" id="stK">0</b></div>
+      <div class="stat"><label>1段目</label><b class="num" id="st1">0</b></div>
+      <div class="stat"><label>2段目</label><b class="num" id="st2">0</b></div>
+      <div class="stat s3"><label>3段目</label><b class="num" id="st3">0</b></div>
+    </div>
+    <div class="power" id="power"><span>強さ</span>
+      <button class="pw" type="button" data-p="0">弱</button><button class="pw active" type="button" data-p="1">中</button><button class="pw" type="button" data-p="2">強</button>
+    </div>
+    <div class="actions">
+      <button class="act main" id="oneBtn" type="button">1発<small>1玉</small><span class="key">Space</span></button>
+      <button class="act gold" id="tenBtn" type="button">10発<small>10玉</small><span class="key">Enter</span></button>
+      <button class="act sub" id="autoBtn" type="button">オート<small id="autoNote">OFF</small><span class="key">A</span></button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </main>
+
+  <footer class="medal-row">
+    <button class="medal-btn lend" id="buyBtn" type="button"><span class="ico">🌀</span><span><b>専用コインを買う</b><small>1枚 = 1,000コイン = 100玉</small></span></button>
+    <button class="medal-btn" id="cashBtn" type="button"><span class="ico">💰</span><span><b>精算する</b><small id="cashNote">100玉 = 1,000コイン</small></span></button>
+  </footer>
+  <ol class="log" id="log" aria-label="履歴"></ol>
+  <p class="hint">Space：1発 ｜ Enter：10発 ｜ A：オート ｜ S：強さ</p>
+</div>
+
+<div class="cutin" id="cutin" hidden><div class="band"><div class="small" id="cutSmall"></div><div class="big" id="cutBig"></div></div></div>
+
+<div class="modal" id="helpModal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <h2 id="helpTitle">遊び方</h2>
+    <ul class="notes">
+      <li>専用コイン1枚＝Chatterコイン1,000枚＝100玉。1発で1玉（10コイン）を打ちます。</li>
+      <li>打った玉のおよそ4分の1がクルーンに入ります。強さが強いほどクルーンに入りやすく、そのぶん1段目の当たり穴は狭くなります（1段目を突破する割合は同じ）。</li>
+      <li>1段目（8穴）を突破すると +3玉、2段目（12穴）を突破すると +30玉。</li>
+      <li>3段目（16穴）の当たり穴に落ちれば「沼・完全攻略」。銀行に貯まったコインの8割を専用コインで受け取ります（1回 2,000枚まで）。</li>
+      <li>大当たりの確率は、払い額が大きいほど低くなります。払い戻し率はどの設定でも100%未満で、平均ではかならず負けます。ごくまれに大当たりを引いた人だけが勝ちます。</li>
+      <li>沼が開くのは、前の大当たりから3,000玉以上を負けて銀行に入れたあとで、1日1回までです。銀行の払いが10枚に満たないときは、当たっても払い出しはありません。</li>
+      <li>「精算する」で、100玉ごとに1,000コインに戻せます（100玉未満の端数は手元に残ります）。カジノのお休み中も精算はできます。</li>
+    </ul>
+    <button class="close-btn" id="helpClose" type="button">とじる</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  // ---------- 通貨 ----------
+  const PER = 100, COIN = 10, NC = 1000, MAX_BALLS = 2000000, BUY = [1, 10, 50, 100];
+  // ---------- 確率と期待値（1玉 = 10コイン。払い戻し率は「打った1玉に対して戻ってくる玉」の期待値） ----------
+  // 突入 E（強さ 弱 0.24 / 中 0.25 / 強 0.26）→ 1段目 8穴：当たり 1/8 × (0.25 ÷ E) → 2段目 12穴：当たり 1/12 → 3段目 16穴：当たり c
+  //   1段目の当たりを E で補正するので、1玉が1段目を突破する確率は強さに関係なく 1/32、2段目は 1/384（強さは見た目とクルーンに入る回数だけ変わる）
+  // 小当たり：1段目突破 +3玉、2段目突破 +30玉 → 小当たりの期待値 = 3 × 1/32 + 30 × 1/384 = 0.09375 + 0.078125 = 0.171875
+  // 大当たり：払い V 枚（専用コイン）= V × 100玉。1玉あたりの大当たり確率 q = (RTP − 0.171875) ÷ (V × 100)、3段目の当たり c = q × 384
+  //   q の上限は 1/3000（c ≤ 0.128）。上限にかからなければ、期待値 = 0.171875 + q × V × 100 = RTP（銀行の残高にかかわらず一定）
+  // 設定ごと（admin/settings の slotSetting。既定は 2）の RTP と、大当たりに割り当てる分（RTP − 0.171875）：
+  //   設定0 85.0% → 0.678 / 設定1 90.0% → 0.728 / 設定2 94.0% → 0.768 / 設定3 95.0% → 0.778
+  //   設定4 96.0% → 0.788 / 設定5 96.5% → 0.793 / 設定6 97.0% → 0.798（どの設定でも 100% 未満なので、平均ではプレイヤーが損をする）
+  //   例：設定2・銀行 100万コイン → V = 800枚：q = 0.768 ÷ 80,000 ≒ 1/104,000。1,000玉（1万コイン）で大当たりする確率 ≒ 0.96%
+  //   例：設定2・銀行 20万コイン → V = 160枚：q = 0.768 ÷ 16,000 ≒ 1/20,800。1,000玉で ≒ 4.7%
+  //   例：設定2・銀行 500万コイン → V = 2,000枚（上限）：q = 0.768 ÷ 200,000 ≒ 1/260,000。1,000玉で ≒ 0.38%
+  //   q が上限 1/3000 にかかるのは V × 100 < 0.768 × 3000 ≒ 2,304玉（V が 23枚未満）のとき。そのときの期待値は 0.171875 + V × 100 ÷ 3000 で、RTP より低い
+  // 大当たりが出ないとき（銀行の払いが10枚未満・今日はもう大当たりした・前の大当たりから銀行に入れた玉が3000玉未満・カジノがお休み）の期待値は 17.2%。
+  //   （銀行の払いが10枚未満のときだけ、払い出しなしの大当たりが 1/20,000 で出る。期待値には入らない）
+  const RTP = [0.85, 0.90, 0.94, 0.95, 0.96, 0.965, 0.97];
+  const ENTER = [0.24, 0.25, 0.26], HOLES = [8, 12, 16], WIN1 = 3, WIN2 = 30;
+  const SMALL = WIN1 / 32 + WIN2 / 384, Q_MAX = 1 / 3000, Q_EMPTY = 1 / 20000;
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => Math.floor(n).toLocaleString('ja-JP');
+  const embedded = window.parent !== window;
+  if (!embedded && matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
+
+  const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
+  const achSent = new Set();
+  const achieve = (id) => { if (!embedded || achSent.has(id)) return; achSent.add(id); send('achieve', { id }); };
+
+  let coins = embedded ? 0 : 100000, balls = embedded ? 0 : 1000, known = balls;
+  let ready = !embedded, casinoOn = true, busy = false, paused = false, setting = 2;
+  // 銀行の払い（専用コイン）・沼が開くまでの玉・今日はもう大当たりしたか（アプリの numa-config。単体で開いたときは見本の値）
+  let pot = embedded ? 0 : 800, bankKnown = !embedded, need = 0, jpToday = false;
+  let power = 1, auto = false, queue = 0;
+  const st = { fired: 0, won: 0, krun: 0, s1: 0, s2: 0, s3: 0 };
+
+  // 玉の増減をアプリに知らせる（まとめて。購入・精算・大当たりの返事を待つ間は知らせない）
+  let reportTimer = 0;
+  function report() { clearTimeout(reportTimer); reportTimer = 0; if (busy) return; const d = balls - known; if (!d) return; known = balls; if (embedded) send('numa-sync', { delta: d }); }
+  const reportSoon = () => { if (!reportTimer) reportTimer = setTimeout(report, 700); };
+  function adopt(m) { if (!Number.isInteger(m)) return; balls = Math.max(0, Math.min(MAX_BALLS, balls + m - known)); known = m; }
+  function addBalls(n) { balls = Math.max(0, Math.min(MAX_BALLS, balls + n)); reportSoon(); }
+
+  // ---------- 確率 ----------
+  const rtp = () => RTP[setting] ?? RTP[2];
+  function jpQ() {
+    if (!casinoOn || !bankKnown || need > 0 || jpToday) return 0;
+    if (!pot) return Q_EMPTY;
+    return Math.min(Q_MAX, (rtp() - SMALL) / (pot * PER));
+  }
+  function stateText() {
+    if (!casinoOn) return ['カジノはお休み中', false];
+    if (!bankKnown) return ['銀行を確認中…', false];
+    if (jpToday) return ['今日の沼は攻略済み（また明日）', false];
+    if (need > 0) return [`沼が開くまで あと${fmt(need)}玉`, false];
+    if (!pot) return ['銀行が空（払い出しなし）', true];
+    return ['沼は開いている…', true];
+  }
+
+  // ---------- 画面 ----------
+  function setMsg(t, cls) { $('msg').textContent = t; $('msg').className = 'msg' + (cls ? ' ' + cls : ''); }
+  const logEl = $('log');
+  function log(t, cls) {
+    const li = document.createElement('li');
+    if (cls) li.className = cls;
+    const d = new Date();
+    li.innerHTML = `<time>${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}</time><span></span>`;
+    li.lastChild.textContent = t;
+    logEl.prepend(li);
+    while (logEl.children.length > 40) logEl.lastChild.remove();
+  }
+  const canFire = () => ready && !busy && casinoOn && balls > 0;
+  function update() {
+    $('walletVal').textContent = fmt(coins);
+    $('ballsVal').textContent = fmt(balls);
+    $('ncVal').textContent = (balls / PER).toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    $('ccVal').textContent = fmt(balls * COIN);
+    $('stIn').textContent = fmt(st.fired); $('stOut').textContent = fmt(st.won); $('stK').textContent = fmt(st.krun);
+    $('st1').textContent = fmt(st.s1); $('st2').textContent = fmt(st.s2); $('st3').textContent = fmt(st.s3);
+    $('potVal').textContent = !bankKnown ? '-' : pot ? `${fmt(pot)}枚` : '0枚';
+    $('potNote').textContent = !bankKnown ? '銀行を確認中' : pot ? `${fmt(pot * NC)}コイン分` : '銀行が空のため払い出しなし';
+    const q = jpQ();
+    $('oddsVal').textContent = q ? `1/${fmt(Math.round(1 / q))}` : '-';
+    $('oddsNote').textContent = q ? (pot ? '1玉あたり' : '払い出しなし') : '沼は閉じている';
+    const [t, open] = stateText();
+    $('stateInfo').textContent = t; $('stateInfo').className = 'state' + (open ? ' open' : '');
+    const can = canFire();
+    $('oneBtn').disabled = !can; $('tenBtn').disabled = !can;
+    $('autoBtn').disabled = !auto && !can;
+    $('autoBtn').classList.toggle('on', auto); $('autoNote').textContent = auto ? 'ON' : 'OFF';
+    $('buyBtn').disabled = !ready || busy || !casinoOn || coins < NC;
+    $('cashBtn').disabled = !ready || busy || balls < PER;
+    $('cashNote').textContent = balls >= PER ? `${fmt(Math.floor(balls / PER))}枚 → ${fmt(Math.floor(balls / PER) * NC)}コイン` : '100玉 = 1,000コイン';
+    document.querySelectorAll('.pw').forEach((b) => b.classList.toggle('active', Number(b.dataset.p) === power));
+  }
+
+  // ---------- 盤面（釘・入り口）：玉は決めた結果に向かって釘の間を落ちる ----------
+  const bc = $('board'), bx = bc.getContext('2d'), kc = $('krun'), kx = kc.getContext('2d');
+  let BW = 0, BH = 0, KW = 0, KH = 0;
+  function resizeCanvas(c, x) { const r = c.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1); c.width = Math.max(1, r.width * dpr); c.height = Math.max(1, r.height * dpr); x.setTransform(dpr, 0, 0, dpr, 0, 0); return [r.width, r.height]; }
+  function resizeAll() { [BW, BH] = resizeCanvas(bc, bx); [KW, KH] = resizeCanvas(kc, kx); resizeFx(); }
+  const PIN_ROWS = 9;
+  function pinPos(row, k) { const gap = BW * 0.84 / 9, x0 = BW * 0.08 + (row % 2 ? gap / 2 : 0); return [x0 + k * gap, BH * (0.2 + row * 0.068)]; }
+  const pinCount = (row) => (row % 2 ? 9 : 10);
+  const entrance = () => [BW * 0.5, BH * 0.86];
+  let boardBalls = [];
+  function launch() {
+    const e = ENTER[power], into = Math.random() < e;
+    const exitX = BW * [0.34, 0.5, 0.66][power] + (Math.random() - 0.5) * BW * 0.16;
+    const endX = into ? BW * 0.5 : (Math.random() < 0.5 ? BW * (0.1 + Math.random() * 0.3) : BW * (0.6 + Math.random() * 0.3));
+    const pts = [];
+    // レール（左下から上を回って、強さの位置で盤面に出る）
+    const steps = 14;
+    const cx0 = BW * 0.5, cy0 = BH * 0.5, rx = BW * 0.46, ry = BH * 0.44;
+    const endA = -Math.PI / 2 + (exitX - cx0) / rx * 0.9;
+    for (let i = 0; i <= steps; i++) { const a = Math.PI * 0.75 + (endA + Math.PI * 2 - Math.PI * 0.75) * (i / steps); pts.push([cx0 + Math.cos(a) * rx, cy0 + Math.sin(a) * ry]); }
+    // 釘の間を落ちる
+    let x = pts[pts.length - 1][0];
+    for (let r = 0; r < PIN_ROWS; r++) {
+      const y = BH * (0.2 + r * 0.068) + BH * 0.034;
+      const t = (r + 1) / PIN_ROWS;
+      x = x + (endX - x) * (0.25 + t * 0.3) + (Math.random() - 0.5) * BW * 0.07 * (1 - t);
+      x = Math.max(BW * 0.07, Math.min(BW * 0.93, x));
+      pts.push([x, y]);
+    }
+    pts.push([into ? entrance()[0] : x, into ? entrance()[1] : BH + 10]);
+    const segT = pts.map((p, i) => (i === 0 ? 0 : i <= steps ? 22 : 75));
+    boardBalls.push({ pts, segT, i: 0, t: 0, into, e });
+    sfx.shot(power);
+  }
+  function stepBoard(dt) {
+    for (let k = boardBalls.length - 1; k >= 0; k--) {
+      const b = boardBalls[k];
+      b.t += dt * 1000;
+      while (b.i < b.pts.length - 1 && b.t >= b.segT[b.i + 1]) { b.t -= b.segT[b.i + 1]; b.i++; if (b.i > 15 && b.i < b.pts.length - 1 && Math.random() < 0.3) sfx.pin(); }
+      if (b.i >= b.pts.length - 1) { boardBalls.splice(k, 1); if (b.into) enterKrun(b.e); continue; }
+      const p = b.pts[b.i], q = b.pts[b.i + 1], f = b.t / b.segT[b.i + 1];
+      b.x = p[0] + (q[0] - p[0]) * f; b.y = p[1] + (q[1] - p[1]) * f;
+    }
+  }
+  function drawBall(x, y, r, ctx) {
+    const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.35, r * 0.1, x, y, r);
+    g.addColorStop(0, '#ffffff'); g.addColorStop(0.45, '#d6d3d1'); g.addColorStop(1, '#57534e');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  function drawBoard(now) {
+    const ctx = bx;
+    ctx.clearRect(0, 0, BW, BH);
+    const bg = ctx.createRadialGradient(BW / 2, BH * 0.55, 10, BW / 2, BH * 0.55, BW * 0.7);
+    bg.addColorStop(0, '#2b1206'); bg.addColorStop(1, '#070302');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, BW, BH);
+    // レール
+    ctx.strokeStyle = 'rgba(245, 158, 11, 0.55)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(BW / 2, BH / 2, BW * 0.475, BH * 0.46, 0, Math.PI * 0.72, Math.PI * 2.28); ctx.stroke();
+    // 釘
+    ctx.fillStyle = '#fbbf24';
+    for (let r = 0; r < PIN_ROWS; r++) for (let k = 0; k < pinCount(r); k++) { const [x, y] = pinPos(r, k); ctx.beginPath(); ctx.arc(x, y, 1.8, 0, Math.PI * 2); ctx.fill(); }
+    // 入り口（沼）
+    const [ex, ey] = entrance(), glow = 0.55 + Math.sin(now / 300) * 0.25;
+    ctx.fillStyle = `rgba(220, 38, 38, ${glow})`;
+    ctx.beginPath(); ctx.ellipse(ex, ey, BW * 0.07, BH * 0.045, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fbbf24'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#fde68a'; ctx.font = `900 ${Math.round(BH * 0.06)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('沼', ex, ey + 1);
+    ctx.fillStyle = 'rgba(168, 162, 158, 0.7)'; ctx.font = `700 ${Math.round(BH * 0.045)}px sans-serif`;
+    ctx.fillText('OUT', BW * 0.15, BH * 0.95); ctx.fillText('OUT', BW * 0.85, BH * 0.95);
+    for (const b of boardBalls) if (b.x !== undefined) drawBall(b.x, b.y, 4, ctx);
+  }
+
+  // ---------- 3段クルーン ----------
+  // 皿 i（0〜2）の玉：{ stage, hit（結果）, hole（落ちる穴）, tease（当たり穴で止まってから弾かれる）, t, dur, a0, turns }
+  let dishBalls = [], wait3 = [];
+  const dishGeo = (i) => { const r = Math.min(KW / 6.6, KH * 0.42); return [KW * (0.17 + i * 0.33), KH * 0.5, r]; };
+  const holeAngle = (i, k) => Math.PI / 2 + (k * Math.PI * 2) / HOLES[i]; // 当たり穴（k = 0）はいちばん下
+  function enterKrun(e) {
+    st.krun++; achieve('nu-krun');
+    // 1段目の当たりは突入率で補正する（1玉が1段目を突破する確率は強さに関係なく 1/32）
+    toDish(0, Math.random() < (1 / HOLES[0]) * (0.25 / e));
+    update();
+  }
+  function toDish(i, hit) {
+    if (i === 2 && dishBalls.some((b) => b.stage === 2)) { wait3.push(1); return; }
+    const n = HOLES[i];
+    let hole = hit ? 0 : 1 + Math.floor(Math.random() * (n - 1));
+    // 外れの一部は、当たり穴で止まりかけてから隣の穴へ（焦らし）。3段目は多めに
+    const tease = !hit && Math.random() < [0.12, 0.2, 0.4][i];
+    if (tease) hole = Math.random() < 0.5 ? 1 : n - 1;
+    const dur = [1300, 1900, 3600][i] + Math.random() * 300;
+    dishBalls.push({ stage: i, hit, hole, tease, t: 0, dur, a0: Math.random() * Math.PI * 2, turns: 2 + Math.floor(Math.random() * 2) + i, said: false });
+    if (i === 2) {
+      $('machine').classList.add('tense'); cutin('ザワ…ザワ…', '最終関門', false); sfx.zawa();
+    }
+  }
+  function stepDishes(dt) {
+    for (let k = dishBalls.length - 1; k >= 0; k--) {
+      const b = dishBalls[k];
+      b.t += dt * 1000;
+      const total = b.dur + (b.tease ? 1200 : 0);
+      if (b.stage === 2 && !b.said && b.t > b.dur * 0.72 && (b.hit || b.tease)) { b.said = true; cutin('', '落ちるっ…！', false); sfx.tension(); }
+      if (b.t >= total) { dishBalls.splice(k, 1); finishDish(b); }
+    }
+  }
+  function dishPos(b) {
+    const [cx, cy, R] = dishGeo(b.stage), n = HOLES[b.stage];
+    const hr = R * 0.62;
+    const tgtHit = holeAngle(b.stage, 0), tgt = holeAngle(b.stage, b.hole);
+    const first = b.tease ? tgtHit : tgt;
+    if (b.t < b.dur) {
+      const f = b.t / b.dur, e = 1 - Math.pow(1 - f, 2.2);
+      const end = first + Math.PI * 2 * b.turns;
+      let start = b.a0; while (start > end) start -= Math.PI * 2;
+      const a = start + (end - start) * e, r = R * 0.9 - (R * 0.9 - hr) * Math.pow(f, 1.6);
+      return [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
+    }
+    const u = b.t - b.dur;
+    if (u < 700) { const w = Math.sin(u / 40) * 0.05 * (1 - u / 700); return [cx + Math.cos(tgtHit + w) * hr, cy + Math.sin(tgtHit + w) * hr]; }
+    const f = Math.min(1, (u - 700) / 500), dir = b.hole === 1 ? 1 : -1;
+    const a = tgtHit + dir * (Math.PI * 2 / n) * f, r = hr + Math.sin(f * Math.PI) * R * 0.12;
+    return [cx + Math.cos(a) * r, cy + Math.sin(a) * r];
+  }
+  function finishDish(b) {
+    const i = b.stage;
+    if (b.tease) { achieve('nu-tease'); if (i === 2) log('3段目：当たり穴から弾かれた…', 'big'); }
+    if (i === 2) $('machine').classList.remove('tense');
+    if (!b.hit) {
+      sfx.miss();
+      if (i === 2 && wait3.length) { wait3.pop(); toDish(2, Math.random() < jpQ() * 384); }
+      update();
+      return;
+    }
+    if (i === 0) {
+      st.s1++; st.won += WIN1; addBalls(WIN1); achieve('nu-s1'); if (st.s1 >= 10) achieve('nu-s1x10'); sfx.hit(0);
+      // 2段目は 1/12
+      toDish(1, Math.random() < 1 / HOLES[1]);
+    } else if (i === 1) {
+      st.s2++; st.won += WIN2; addBalls(WIN2); achieve('nu-s2'); achieve('nu-s3'); sfx.hit(1);
+      log(`2段目突破 +${WIN2}玉 → 3段目へ`, 'good');
+      // 3段目の当たり c = q × 384（q は銀行の払いと設定から。上のコメントを参照）
+      toDish(2, Math.random() < jpQ() * 384);
+    } else {
+      st.s3++; achieve('nu-jp'); jackpot();
+      if (wait3.length) { wait3.pop(); toDish(2, Math.random() < jpQ() * 384); }
+    }
+    update();
+  }
+  function drawKrun(now) {
+    const ctx = kx;
+    ctx.clearRect(0, 0, KW, KH);
+    ctx.fillStyle = '#0a0402'; ctx.fillRect(0, 0, KW, KH);
+    for (let i = 0; i < 3; i++) {
+      const [cx, cy, R] = dishGeo(i), n = HOLES[i];
+      const live = dishBalls.some((b) => b.stage === i);
+      const g = ctx.createRadialGradient(cx, cy - R * 0.2, R * 0.1, cx, cy, R);
+      g.addColorStop(0, i === 2 ? '#3f0b0b' : '#2b1a0a'); g.addColorStop(1, '#0c0603');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = live ? (i === 2 ? '#ef4444' : '#fbbf24') : 'rgba(245, 158, 11, 0.45)'; ctx.lineWidth = live ? 3 : 2;
+      ctx.stroke();
+      for (let k = 0; k < n; k++) {
+        const a = holeAngle(i, k), x = cx + Math.cos(a) * R * 0.62, y = cy + Math.sin(a) * R * 0.62;
+        ctx.beginPath(); ctx.arc(x, y, Math.max(2.2, R * (i === 2 ? 0.075 : 0.09)), 0, Math.PI * 2);
+        ctx.fillStyle = k === 0 ? `rgba(251, 191, 36, ${0.7 + Math.sin(now / 180) * 0.3})` : '#000';
+        ctx.fill();
+        if (k === 0) { ctx.strokeStyle = '#fde68a'; ctx.lineWidth = 1; ctx.stroke(); }
+      }
+      ctx.fillStyle = i === 2 ? '#fca5a5' : '#fde68a'; ctx.font = `800 ${Math.round(KH * 0.085)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillText(`${i + 1}段目 ${n}穴`, cx, 3);
+      if (i === 2 && wait3.length) { ctx.textBaseline = 'bottom'; ctx.fillText(`保留 ${wait3.length}`, cx, KH - 2); }
+    }
+    for (const b of dishBalls) { const [x, y] = dishPos(b); drawBall(x, y, Math.max(3, dishGeo(b.stage)[2] * 0.07), ctx); }
+  }
+
+  // ---------- 大当たり ----------
+  function jackpot() {
+    if (busy || jpToday) { log('3段目の当たり穴に落ちた…が、今日の沼は攻略済み', 'big'); return; }
+    cutin('沼・完全攻略', '攻略っ…！', true); sfx.fanfare();
+    burst(innerWidth / 2, innerHeight * 0.4, 80);
+    setTimeout(() => burst(innerWidth / 2, innerHeight * 0.5, 60), 500);
+    if (!pot) { log('沼・完全攻略！ 銀行が空のため払い出しなし', 'big'); setMsg('沼・完全攻略！ …しかし銀行が空のため払い出しなし', 'warn'); return; }
+    if (!embedded) { addBalls(pot * PER); st.won += pot * PER; log(`沼・完全攻略！ +${fmt(pot)}枚（${fmt(pot * PER)}玉）`, 'good'); setMsg(`沼・完全攻略！ 専用コイン ${fmt(pot)}枚 を獲得`, 'win'); jpToday = true; return; }
+    auto = false; queue = 0; report(); busy = true;
+    setMsg('大当たりを記録しています…', 'win'); update();
+    send('numa-jackpot');
+  }
+
+  // ---------- 発射 ----------
+  function fireOne() {
+    if (!canFire()) return false;
+    balls--; st.fired++; reportSoon();
+    achieve('nu-first'); if (st.fired >= 1000) achieve('nu-shot1000');
+    launch();
+    return true;
+  }
+  let fireClock = 0, autoClock = 0;
+  function stepFire(dt) {
+    fireClock -= dt * 1000; autoClock -= dt * 1000;
+    if (queue > 0 && fireClock <= 0) {
+      if (fireOne()) { queue--; fireClock = 140; } else queue = 0;
+      update();
+    }
+    if (auto && queue === 0 && autoClock <= 0) {
+      if (!canFire()) { auto = false; if (ready && balls <= 0) setMsg('玉がなくなりました。専用コインを買ってください', 'warn'); update(); }
+      else { queue = 1; autoClock = 260; }
+    }
+  }
+  function shoot(n) { if (!canFire()) return; queue = Math.min(30, queue + n); if (fireClock > 140) fireClock = 0; }
+  function toggleAuto() { if (!auto && !canFire()) return; auto = !auto; if (!auto) queue = 0; update(); }
+
+  // ---------- 購入・精算 ----------
+  function buy(n) {
+    if (!ready || busy || !casinoOn || coins < n * NC || balls > MAX_BALLS - n * PER) return;
+    if (embedded) { auto = false; queue = 0; report(); busy = true; setMsg('専用コインを買っています…'); update(); send('numa-buy', { coins: n }); return; }
+    coins -= n * NC; addBalls(n * PER); known = balls; sfx.chip(); log(`購入 ${fmt(n)}枚（+${fmt(n * PER)}玉）`); setMsg(`専用コイン ${fmt(n)}枚 を買いました（-${fmt(n * NC)}コイン）`); update();
+  }
+  function cashOut() {
+    if (!ready || busy || balls < PER) return;
+    if (embedded) { auto = false; queue = 0; report(); busy = true; setMsg('精算しています…'); update(); send('numa-cashout'); return; }
+    const n = Math.floor(balls / PER);
+    balls -= n * PER; known = balls; coins += n * NC; sfx.chip(); log(`精算 ${fmt(n)}枚 → ${fmt(n * NC)}コイン`); setMsg(`精算：${fmt(n)}枚 → ${fmt(n * NC)}コイン`); update();
+  }
+
+  // ---------- 演出・効果音 ----------
+  const cv = $('fx'), cx = cv.getContext('2d');
+  let parts = [];
+  function resizeFx() { const dpr = Math.min(2, devicePixelRatio || 1); cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; cx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+  function burst(x, y, n) {
+    for (let k = 0; k < n; k++) {
+      const a = Math.random() * Math.PI * 2, sp = 140 + Math.random() * 360;
+      parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 240, rot: Math.random() * 6, vr: (Math.random() - 0.5) * 14, size: 6 + Math.random() * 5, life: 1, decay: 0.5 + Math.random() * 0.4, red: Math.random() < 0.35 });
+    }
+    if (parts.length > 400) parts.splice(0, parts.length - 400);
+  }
+  function drawFx(dt) {
+    cx.clearRect(0, 0, innerWidth, innerHeight);
+    for (let k = parts.length - 1; k >= 0; k--) {
+      const p = parts[k];
+      p.vy += 900 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt; p.life -= p.decay * dt;
+      if (p.life <= 0 || p.y > innerHeight + 40) { parts.splice(k, 1); continue; }
+      cx.globalAlpha = Math.min(1, p.life * 1.6);
+      cx.save(); cx.translate(p.x, p.y); cx.scale(Math.max(0.15, Math.abs(Math.cos(p.rot))), 1);
+      cx.beginPath(); cx.arc(0, 0, p.size, 0, Math.PI * 2); cx.fillStyle = p.red ? '#b91c1c' : '#f59e0b'; cx.fill();
+      cx.beginPath(); cx.arc(0, 0, p.size * 0.72, 0, Math.PI * 2); cx.fillStyle = p.red ? '#f87171' : '#fcd34d'; cx.fill();
+      cx.restore();
+    }
+    cx.globalAlpha = 1;
+  }
+  let cutTimer = 0;
+  function cutin(small, big, gold) {
+    const el = $('cutin');
+    el.hidden = true; void el.offsetWidth;
+    $('cutSmall').textContent = small; $('cutBig').textContent = big;
+    el.className = 'cutin' + (gold ? ' gold' : '');
+    el.hidden = false;
+    clearTimeout(cutTimer); cutTimer = setTimeout(() => { el.hidden = true; }, 1800);
+  }
+  let audio = null, soundOn = true;
+  function tone(f, d, type = 'square', v = 0.05, when = 0, f2 = 0) {
+    if (!soundOn) return;
+    if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; } }
+    if (audio.state === 'suspended') audio.resume();
+    const t = audio.currentTime + when, o = audio.createOscillator(), g = audio.createGain();
+    o.type = type; o.frequency.setValueAtTime(f, t); if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + d);
+    g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g).connect(audio.destination); o.start(t); o.stop(t + d + 0.03);
+  }
+  const sfx = {
+    shot: (p) => tone(260 + p * 60, 0.05, 'triangle', 0.025, 0, 520 + p * 90),
+    pin: () => tone(2400 + Math.random() * 600, 0.02, 'triangle', 0.012),
+    hit: (i) => [784, 988, 1319].slice(0, 2 + i).forEach((f, k) => tone(f, 0.09, 'square', 0.035, k * 0.07)),
+    miss: () => tone(196, 0.12, 'triangle', 0.025),
+    zawa: () => { for (let k = 0; k < 6; k++) tone(90 + Math.random() * 40, 0.25, 'sawtooth', 0.02, k * 0.18); },
+    tension: () => tone(440, 0.9, 'sawtooth', 0.03, 0, 880),
+    chip: () => [880, 1175].forEach((f, k) => tone(f, 0.06, 'square', 0.03, k * 0.05)),
+    fanfare: () => [523, 659, 784, 1047, 1319, 1568].forEach((f, k) => tone(f, 0.16, 'square', 0.045, k * 0.1)),
+  };
+  $('soundBtn').addEventListener('click', () => { soundOn = !soundOn; $('soundBtn').textContent = soundOn ? '🔊' : '🔇'; });
+
+  // ---------- ループ ----------
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = Math.max(last, now);
+    if (!paused) { stepFire(dt); stepBoard(dt); stepDishes(dt); drawBoard(now); drawKrun(now); drawFx(dt); }
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- ざわめき（飾り） ----------
+  (() => {
+    const z = $('zawa');
+    for (let k = 0; k < 7; k++) {
+      const s = document.createElement('span');
+      s.textContent = k % 2 ? 'ザワ…' : 'ザワ… ザワ…';
+      s.style.left = `${(k * 37) % 90}%`; s.style.top = `${8 + ((k * 23) % 84)}%`;
+      s.style.fontSize = `${18 + (k % 3) * 8}px`; s.style.animationDelay = `${-k * 0.6}s`;
+      z.appendChild(s);
+    }
+  })();
+
+  // ---------- 入力 ----------
+  $('oneBtn').addEventListener('click', () => shoot(1));
+  $('tenBtn').addEventListener('click', () => shoot(10));
+  $('autoBtn').addEventListener('click', toggleAuto);
+  document.querySelectorAll('.pw').forEach((b) => b.addEventListener('click', () => { power = Number(b.dataset.p); update(); }));
+  $('cashBtn').addEventListener('click', cashOut);
+  $('buyBtn').addEventListener('click', openBuy);
+  const buyModal = document.createElement('div');
+  buyModal.className = 'modal'; buyModal.hidden = true;
+  buyModal.innerHTML = '<div class="sheet lend-sheet" role="dialog" aria-label="専用コインを買う"><h2>専用コインを買う</h2><p class="lend-have"></p><div class="lend-grid"></div><button class="close-btn lend-cancel" type="button">やめる</button></div>';
+  document.body.appendChild(buyModal);
+  const closeBuy = () => { buyModal.hidden = true; };
+  function openBuy() {
+    if ($('buyBtn').disabled) return;
+    buyModal.querySelector('.lend-have').textContent = `Chatterコイン ${fmt(coins)}枚 ・ 専用コイン1枚 = ${fmt(NC)}コイン = ${PER}玉`;
+    const grid = buyModal.querySelector('.lend-grid');
+    grid.innerHTML = '';
+    BUY.forEach((n, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'lend-opt'; b.disabled = coins < n * NC || balls > MAX_BALLS - n * PER;
+      b.innerHTML = `<b>${fmt(n)}枚</b><small>${fmt(n * NC)}コイン ・ ${fmt(n * PER)}玉</small><span class="key">${i + 1}</span>`;
+      b.addEventListener('click', () => { closeBuy(); buy(n); });
+      grid.appendChild(b);
+    });
+    buyModal.hidden = false;
+  }
+  buyModal.querySelector('.lend-cancel').addEventListener('click', closeBuy);
+  buyModal.addEventListener('click', (e) => { if (e.target === buyModal) closeBuy(); });
+  window.addEventListener('keydown', (e) => {
+    if (buyModal.hidden) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (e.key === 'Escape') { closeBuy(); return; }
+    const b = buyModal.querySelectorAll('.lend-opt')[Number(e.key) - 1];
+    if (b && !b.disabled) b.click();
+  }, true);
+  window.addEventListener('keyup', (e) => { if (!buyModal.hidden) e.stopImmediatePropagation(); }, true);
+  const modal = $('helpModal');
+  $('helpBtn').addEventListener('click', () => { modal.hidden = false; });
+  $('helpClose').addEventListener('click', () => { modal.hidden = true; });
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { if (!modal.hidden) { modal.hidden = true; return; } if (embedded) send('escape'); return; }
+    if (!modal.hidden || e.repeat) return;
+    if (e.code === 'Space') { e.preventDefault(); shoot(1); }
+    else if (e.code === 'Enter' || e.code === 'NumpadEnter') { e.preventDefault(); shoot(10); }
+    else if (e.code === 'KeyA') { e.preventDefault(); toggleAuto(); }
+    else if (e.code === 'KeyS') { e.preventDefault(); power = (power + 1) % 3; update(); }
+  });
+
+  // ---------- アプリとのやりとり ----------
+  function applyConfig(m) {
+    if (Number.isInteger(m.coins)) coins = m.coins;
+    if (typeof m.on === 'boolean') {
+      const wasOn = casinoOn; casinoOn = m.on;
+      if (!casinoOn && wasOn) { auto = false; queue = 0; setMsg('カジノはお休み中です（精算はいつでもできます）', 'warn'); }
+      else if (casinoOn && !wasOn && ready) setMsg('カジノが再開しました');
+    }
+  }
+  window.addEventListener('message', (e) => {
+    const m = e.data;
+    if (!m || m.source !== 'chatter') return;
+    if (m.type === 'theme') { document.documentElement.classList.toggle('dark', !!m.dark); return; }
+    if (m.type === 'slot-config') {
+      applyConfig(m);
+      if (Number.isInteger(m.setting)) setting = m.setting;
+      update();
+    } else if (m.type === 'numa-config') {
+      applyConfig(m);
+      if (Number.isInteger(m.balls)) {
+        if (!ready) { balls = known = m.balls; ready = true; setMsg(balls > 0 ? `${fmt(balls)}玉 から再開。沼へようこそ…` : '専用コインを買ってスタート！'); }
+        else if (m.resync && !busy) adopt(m.balls);
+      }
+      if (Number.isInteger(m.pot)) pot = m.pot;
+      bankKnown = Number.isInteger(m.bank);
+      if (Number.isInteger(m.need)) need = m.need;
+      jpToday = !!m.jpToday;
+      update();
+    } else if (m.type === 'numa-result') {
+      busy = false;
+      if (Number.isInteger(m.coins)) coins = m.coins;
+      if (Number.isInteger(m.balls)) adopt(m.balls);
+      if (!m.ok) { setMsg(m.message || 'うまくいきませんでした', 'warn'); if (m.op === 'jackpot') log(`大当たりを受け取れませんでした（${m.message || 'エラー'}）`, 'big'); }
+      else if (m.op === 'buy') { sfx.chip(); log(`購入 ${fmt(m.added)}枚（+${fmt(m.added * PER)}玉）`); setMsg(`専用コイン ${fmt(m.added)}枚 を買いました（-${fmt(m.added * NC)}コイン）`); }
+      else if (m.op === 'cashout') { sfx.chip(); log(`精算 ${fmt(m.cashed)}枚 → ${fmt(m.cashed * NC)}コイン`); setMsg(`精算：${fmt(m.cashed)}枚 → ${fmt(m.cashed * NC)}コイン`); }
+      else if (m.op === 'jackpot') {
+        if (m.pay > 0) {
+          st.won += m.pay * PER; jpToday = true;
+          if (m.pay >= 1000) achieve('nu-jp1000');
+          log(`沼・完全攻略！ +${fmt(m.pay)}枚（${fmt(m.pay * NC)}コイン分）`, 'good');
+          setMsg(`沼・完全攻略！ 専用コイン ${fmt(m.pay)}枚（${fmt(m.pay * NC)}コイン分）を獲得`, 'win');
+        } else { log('沼・完全攻略！ 銀行が空のため払い出しなし', 'big'); setMsg('沼・完全攻略！ …しかし銀行が空のため払い出しなし', 'warn'); }
+      }
+      report(); update();
+    } else if (m.type === 'pause') paused = true;
+    else if (m.type === 'resume') paused = false;
+  });
+  // 銀行の払い額は、遊んでいる間 20秒ごとに聞き直す
+  setInterval(() => { if (embedded && ready && !paused && !document.hidden) send('numa-pot'); }, 20000);
+  document.addEventListener('visibilitychange', () => { paused = document.hidden; if (document.hidden) report(); });
+  window.addEventListener('resize', resizeAll);
+
+  resizeAll();
+  if (embedded) setMsg('読み込み中…'); else setMsg('見本の台です（Chatter の中で開くと専用コインで遊べます）');
+  update();
+  requestAnimationFrame(loop);
+})();
+</script>
+  </template>
   <!-- マインズ：💣を避けて💎を開ける。Chatterコインで遊ぶゲーム（メダルはフィーバースロットと共通。slot-config・slot-result を受け取り、slot-sync / slot-lend / slot-cashout を送る） -->
   <template id="game-src-mines">
 <style>
@@ -15865,6 +16609,7 @@ draw();
       { id: "mines", name: "マインズ", emoji: "💎", desc: "💣を避けて💎を開けるほど高倍率", bg: "from-violet-500 to-purple-700" },
       { id: "poker", name: "ポーカー", emoji: "♠️", desc: "役をそろえるビデオポーカー", bg: "from-red-500 to-rose-700" },
       { id: "chinchiro", name: "チンチロ", emoji: "🎲", desc: "どんぶりに3つのサイコロ。専用コインで親と勝負", bg: "from-neutral-800 to-red-700" },
+      { id: "numa", name: "沼パチンコ", emoji: "🌀", desc: "3段クルーンを越えて、銀行の8割を持っていけ", bg: "from-neutral-900 to-amber-600" },
     ];
     const casinoById = (id) => CASINO_GAMES.find((g) => g.id === id) || null;
     const isCasino = (id) => !!casinoById(id);
@@ -16237,7 +16982,7 @@ draw();
       { id: "casino-medals1000", game: "casino", sub: "all", name: "メダル持ち", desc: "メダルを1,000枚以上持った" },
       { id: "casino-medals10000", game: "casino", sub: "all", name: "メダル長者", desc: "メダルを10,000枚以上持った" },
       { id: "casino-medals50000", game: "casino", sub: "all", name: "メダル王", desc: "メダルを50,000枚以上持った" },
-      { id: "casino-all", game: "casino", sub: "all", name: "全台制覇", desc: "カジノの8つのゲームをすべて遊んだ" },
+      { id: "casino-all", game: "casino", sub: "all", name: "全台制覇", desc: "カジノの9つのゲームをすべて遊んだ" },
       { id: "casino-cap", game: "casino", sub: "all", name: "今日はここまで", desc: "1日の精算の上限に達した" },
       { id: "slot-reg", game: "casino", sub: "slot", name: "REG BONUS", desc: "REG BONUS を引いた" },
       { id: "slot-big", game: "casino", sub: "slot", name: "BIG BONUS", desc: "BIG BONUS を引いた" },
@@ -16282,6 +17027,16 @@ draw();
       { id: "ch-take100", game: "casino", sub: "chinchiro", name: "大勝負", desc: "1回の勝負で専用コインを100枚以上勝った" },
       { id: "ch-allin", game: "casino", sub: "chinchiro", name: "オールイン", desc: "ALL IN で親に勝った" },
       { id: "ch-full", game: "casino", sub: "chinchiro", name: "完走", desc: "親が2周するまで打ち切った" },
+      { id: "nu-first", game: "casino", sub: "numa", name: "沼の入り口", desc: "沼パチンコで初めて玉を打った" },
+      { id: "nu-krun", game: "casino", sub: "numa", name: "クルーン到達", desc: "玉がクルーンに入った" },
+      { id: "nu-s1", game: "casino", sub: "numa", name: "1段目突破", desc: "1段目のクルーンを突破した" },
+      { id: "nu-s2", game: "casino", sub: "numa", name: "2段目突破", desc: "2段目のクルーンを突破した" },
+      { id: "nu-s3", game: "casino", sub: "numa", name: "最終関門", desc: "3段目のクルーンに玉を送り込んだ" },
+      { id: "nu-tease", game: "casino", sub: "numa", name: "悪魔の焦らし", desc: "当たり穴に入りかけた玉が弾かれた" },
+      { id: "nu-jp", game: "casino", sub: "numa", name: "沼・完全攻略", desc: "3段目の当たり穴に玉を落とした" },
+      { id: "nu-jp1000", game: "casino", sub: "numa", name: "沼の主", desc: "大当たりで専用コインを1,000枚以上受け取った" },
+      { id: "nu-shot1000", game: "casino", sub: "numa", name: "千発の沼", desc: "開いている間に玉を1,000発打った" },
+      { id: "nu-s1x10", game: "casino", sub: "numa", name: "1段目の常連", desc: "開いている間に1段目を10回突破した" },
       { id: "mines-boom1", game: "casino", sub: "mines", name: "いきなり💣", desc: "最初のマスで💣を開けた" },
       { id: "mines-gem5", game: "casino", sub: "mines", name: "宝探し", desc: "1回で💎を5個開けて回収した" },
       { id: "mines-gem10", game: "casino", sub: "mines", name: "宝の山", desc: "1回で💎を10個開けて回収した" },
@@ -16303,7 +17058,7 @@ draw();
       { id: "shop-master", game: "shop", name: "買い物の達人", desc: "ショップの商品をすべて購入した", hidden: true },
     ];
     const ACH_SECRET = "secret"; // 実績の一覧の「隠し」のタブ
-    const ACH_CASINO = "casino"; // 実績の一覧の「カジノ」のタブ（カジノの8つのゲームをまとめる）
+    const ACH_CASINO = "casino"; // 実績の一覧の「カジノ」のタブ（カジノの9つのゲームをまとめる）
     const ACH_BY_ID = Object.fromEntries(ACHIEVEMENTS.map((a) => [a.id, a]));
     function subscribeAchievements() {
       state.unsub.achievements = onSnapshot(
@@ -16451,7 +17206,7 @@ draw();
     function sendSlotConfig(id = null) {
       if (!state.walletLoaded) return;
       const msg = { type: "slot-config", setting: adminSettings.slotSetting, rate: slotRate(), coins: walletCoins(), on: adminSettings.slotOn, capLeft: slotCapLeft() };
-      if (id) { if (gameFrames.get(id)?.loaded) postToGame(id, { ...msg, medals: slotMedals(), chin: chinCoins() }); return; }
+      if (id) { if (gameFrames.get(id)?.loaded) postToGame(id, { ...msg, medals: slotMedals(), chin: chinCoins() }); if (id === "numa") sendNumaConfig(id); return; }
       for (const [gid, e] of gameFrames) if (isCasino(gid) && e.loaded) postToGame(gid, msg);
     }
     const walletRef = () => doc(db, "users", state.me.id, "wallet", "main");
@@ -16706,6 +17461,171 @@ draw();
       }
     }
     window.addEventListener("pagehide", () => flushChin());
+
+    // ============================================================
+    // 沼パチンコの専用コイン（wallet/main.numa = { balls, day, spent, got, last, gain, dep, owe, jpDep, jpDay, jpPay }。firestore.rules の numaOk と合わせる）。
+    // 専用コイン1枚 = Chatterコイン1000枚 = 100玉（1玉 = 10コイン）。wallet には玉の数で持つ（精算は100玉単位。端数の玉は手元に残る）。
+    // ゲームは numa-sync（玉の増減）/ numa-buy（購入）/ numa-cashout（精算）/ numa-jackpot（大当たり）/ numa-pot（銀行の払い額を聞く）を送り、
+    // numa-config（玉・払い額・大当たりの条件）/ numa-result を受け取る
+    // ============================================================
+    const NUMA_RATE = 1000, NUMA_BALL = 10, NUMA_PER = 100, NUMA_MAX = 2000000, NUMA_BUY_CHOICES = [1, 10, 50, 100];
+    const NUMA_STEP_MAX = 300, NUMA_GAIN_MAX = 10000, NUMA_JP_MIN = 10, NUMA_JP_MAX = 2000, NUMA_JP_NEED = 3000;
+    const NUMA_EMPTY = { balls: 0, day: 0, spent: 0, got: 0, last: 0, gain: 0, dep: 0, owe: 0, jpDep: 0, jpDay: 0, jpPay: 0 };
+    const walletNuma = () => state.wallet?.numa || null;
+    let numaLocal = null, numaTimer = 0, numaChain = Promise.resolve();
+    // いま持っている玉（遊んでいる間はこのブラウザの数。まだ記録していない分も含む）
+    const numaBalls = () => numaLocal ?? (walletNuma()?.balls || 0);
+    // 大当たりの払い額（専用コイン）：銀行のコイン換算（medals × slotRate）の8割を1000で割って切り捨て。上限 2000枚、10枚未満なら 0（大当たりなし）。
+    // firestore.rules の numaJackpotOk と合わせる
+    function numaPotFor(medals, rate = adminSettings.slotRate) {
+      const p = Math.min(NUMA_JP_MAX, Math.floor(((medals || 0) * rate * 4) / 5000));
+      return p >= NUMA_JP_MIN ? p : 0;
+    }
+    // ゲームで増減した玉。記録はまとめて（最初の増減から SLOT_SYNC_MS 後に）行う
+    function numaDelta(d) {
+      if (!Number.isInteger(d) || !d || Math.abs(d) > NUMA_MAX) return;
+      numaLocal = Math.min(NUMA_MAX, Math.max(0, numaBalls() + d));
+      if (!numaTimer) numaTimer = setTimeout(flushNuma, SLOT_SYNC_MS);
+      if (state.tab === "games") renderSidebar();
+    }
+    // 記録は1つずつ順番に行う（購入・精算・大当たりの前にも呼ぶ）
+    const flushNuma = () => (numaChain = numaChain.then(flushNumaNow, flushNumaNow));
+    async function flushNumaNow() {
+      clearTimeout(numaTimer); numaTimer = 0;
+      if (numaLocal === null || !state.me) return;
+      const n = walletNuma();
+      if (!n || n.balls === numaLocal) return;
+      const today = slotDay(), same = n.day === today, gain0 = same ? (n.gain || 0) : 0;
+      let target = numaLocal, again = false, capped = false;
+      if (target > n.balls) {
+        // 増やせるのは1日の合計 NUMA_GAIN_MAX 玉まで（超えた分は無かったことにする）、1回 NUMA_STEP_MAX 玉まで（残りは次の記録で）
+        const room = Math.max(0, NUMA_GAIN_MAX - gain0);
+        if (target - n.balls > room) { numaLocal = target = n.balls + room; capped = true; }
+        if (target - n.balls > NUMA_STEP_MAX) { target = n.balls + NUMA_STEP_MAX; again = true; }
+      }
+      if (target !== n.balls) {
+        const inc = target - n.balls, lost = Math.max(0, -inc);
+        // 負けた玉は銀行へ。slotRate が 20・50 のときはメダルに割り切れる分（2・5玉単位）だけ入れて、端数は owe に残す
+        const rate = adminSettings.slotRate, unit = rate > 10 ? rate / 10 : 1;
+        const pool = (n.owe || 0) + lost, k = lost > 0 ? Math.floor(pool / unit) * unit : 0;
+        const base = { ...NUMA_EMPTY, ...n, balls: target, day: today, spent: same ? n.spent : 0, got: same ? n.got : 0, gain: gain0 + Math.max(0, inc) };
+        const withBank = { ...base, dep: (n.dep || 0) + k, owe: pool - k };
+        try {
+          const b = writeBatch(db);
+          b.update(walletRef(), { numa: withBank, updatedAt: serverTimestamp() });
+          if (k > 0) {
+            const medals = (k * NUMA_BALL) / rate;
+            b.set(bankRef(), { medals: increment(medals), earned: increment(medals), updatedAt: serverTimestamp() }, { merge: true });
+          }
+          await b.commit();
+        } catch (e) {
+          console.warn(e);
+          // 銀行に入れられなかったときも、玉の数だけは記録する
+          if (k > 0) { try { await updateDoc(walletRef(), { numa: base, updatedAt: serverTimestamp() }); } catch (e2) { console.warn(e2); } }
+        }
+      }
+      if (capped) sendNumaConfig("numa", true);
+      if (again && !numaTimer) numaTimer = setTimeout(flushNuma, 600);
+    }
+    // ゲームに、玉・銀行の払い額・大当たりの条件を送る（銀行は読んだ時点の値）
+    // resync：ゲームの玉の数を、アプリの数に合わせ直させる（1日の上限で記録できなかった分を消したとき）
+    async function sendNumaConfig(id, resync = false) {
+      if (!state.me || !gameFrames.get(id)?.loaded) return;
+      let medals = null;
+      try { const s = await getDoc(bankRef()); medals = s.exists() ? s.data().medals || 0 : 0; } catch (e) { console.warn(e); }
+      const n = { ...NUMA_EMPTY, ...(walletNuma() || {}) };
+      postToGame(id, {
+        type: "numa-config", balls: numaBalls(), resync, coins: walletCoins(), on: adminSettings.slotOn,
+        pot: medals === null ? 0 : numaPotFor(medals), bank: medals, need: Math.max(0, NUMA_JP_NEED - (n.dep - n.jpDep)), jpToday: n.jpDay === slotDay(),
+      });
+    }
+    const numaResult = (id, msg) => { postToGame(id, { type: "numa-result", coins: walletCoins(), ...msg }); if (state.tab === "games") renderSidebar(); };
+    async function numaBuy(id, want) {
+      try {
+        if (!NUMA_BUY_CHOICES.includes(want)) throw new Error("買えない枚数です");
+        if (!state.me || isRestricted(state.me)) throw new Error("今は遊べません");
+        if (!adminSettings.slotOn) throw new Error("カジノはお休み中です");
+        await flushNuma();
+        const add = want * NUMA_PER, cost = want * NUMA_RATE, today = slotDay();
+        const r = await runTransaction(db, async (tx) => {
+          const snap = await tx.get(walletRef());
+          if (!snap.exists()) throw new Error("Chatterコインが足りません");
+          const w = snap.data();
+          if ((w.coins || 0) < cost) throw new Error("Chatterコインが足りません");
+          const b = { ...NUMA_EMPTY, ...(w.numa || {}) };
+          if (b.balls > NUMA_MAX - add) throw new Error(`玉は ${NUMA_MAX.toLocaleString()} 玉までしか持てません`);
+          const same = b.day === today;
+          const next = { ...b, balls: b.balls + add, day: today, spent: (same ? b.spent : 0) + cost, got: same ? b.got : 0, gain: same ? b.gain : 0 };
+          tx.update(walletRef(), { coins: w.coins - cost, numa: next, updatedAt: serverTimestamp() });
+          return { coins: w.coins - cost, balls: next.balls };
+        });
+        numaLocal = r.balls;
+        numaResult(id, { op: "buy", ok: true, added: want, balls: r.balls, coins: r.coins });
+      } catch (e) {
+        console.warn(e);
+        numaResult(id, { op: "buy", ok: false, balls: numaBalls(), message: e.code ? "買えませんでした" : e.message });
+      }
+    }
+    async function numaCashout(id) {
+      try {
+        if (!state.me) throw new Error("精算できませんでした");
+        await flushNuma();
+        const today = slotDay();
+        const r = await runTransaction(db, async (tx) => {
+          const snap = await tx.get(walletRef());
+          const w = snap.exists() ? snap.data() : null;
+          if (!w?.numa) throw new Error("精算する玉がありません");
+          const b = { ...NUMA_EMPTY, ...w.numa };
+          const n = Math.floor(b.balls / NUMA_PER);
+          if (n <= 0) throw new Error(`精算は ${NUMA_PER} 玉（専用コイン1枚）からです`);
+          const same = b.day === today, add = n * NUMA_RATE;
+          const next = { ...b, balls: b.balls - n * NUMA_PER, day: today, spent: same ? b.spent : 0, got: (same ? b.got : 0) + add, gain: same ? b.gain : 0, last: n };
+          tx.update(walletRef(), { coins: (w.coins || 0) + add, numa: next, updatedAt: serverTimestamp() });
+          return { n, add, coins: (w.coins || 0) + add, balls: next.balls };
+        });
+        numaLocal = r.balls;
+        numaResult(id, { op: "cashout", ok: true, cashed: r.n, balls: r.balls, coins: r.coins });
+        toast(`🌀 専用コイン ${r.n.toLocaleString()} 枚を精算して Chatterコインを ${r.add.toLocaleString()} 枚受け取りました`);
+      } catch (e) {
+        console.warn(e);
+        numaResult(id, { op: "cashout", ok: false, balls: numaBalls(), message: e.code ? "精算できませんでした" : e.message });
+      }
+    }
+    // 大当たり：銀行の8割（専用コイン単位）を玉で受け取り、同じ取引で銀行から引き落とす（firestore.rules の numaJackpotOk・numaWithdrawOk と合わせる）
+    async function numaJackpot(id) {
+      try {
+        if (!state.me || isRestricted(state.me)) throw new Error("今は遊べません");
+        if (!adminSettings.slotOn) throw new Error("カジノはお休み中です");
+        await flushNuma();
+        const today = slotDay(), rate = adminSettings.slotRate;
+        const r = await runTransaction(db, async (tx) => {
+          const [snap, bankSnap] = await Promise.all([tx.get(walletRef()), tx.get(bankRef())]);
+          const w = snap.exists() ? snap.data() : null;
+          if (!w?.numa) throw new Error("玉がありません");
+          const b = { ...NUMA_EMPTY, ...w.numa };
+          if (b.jpDay === today) throw new Error("大当たりは1日1回までです");
+          if (b.dep - b.jpDep < NUMA_JP_NEED) throw new Error("まだ沼は開いていません");
+          const bank = bankSnap.exists() ? bankSnap.data() : { medals: 0, paid: 0 };
+          const pay = numaPotFor(bank.medals || 0, rate);
+          if (!pay) return { pay: 0, balls: b.balls, coins: w.coins || 0 };
+          if (b.balls + pay * NUMA_PER > NUMA_MAX) throw new Error("玉が多すぎます。精算してからもう一度どうぞ");
+          const withdraw = (pay * NUMA_RATE) / rate;
+          const same = b.day === today;
+          const next = { ...b, balls: b.balls + pay * NUMA_PER, day: today, spent: same ? b.spent : 0, got: same ? b.got : 0, gain: same ? b.gain : 0, jpDay: today, jpDep: b.dep, jpPay: pay };
+          tx.update(walletRef(), { numa: next, updatedAt: serverTimestamp() });
+          tx.update(bankRef(), { medals: bank.medals - withdraw, paid: (bank.paid || 0) + withdraw, updatedAt: serverTimestamp() });
+          return { pay, balls: next.balls, coins: w.coins || 0 };
+        });
+        numaLocal = r.balls;
+        numaResult(id, { op: "jackpot", ok: true, pay: r.pay, balls: r.balls, coins: r.coins });
+        if (r.pay) toast(`🌀 沼・完全攻略！ 専用コイン ${r.pay.toLocaleString()} 枚（${(r.pay * NUMA_RATE).toLocaleString()}コイン分）を獲得しました`);
+      } catch (e) {
+        console.warn(e);
+        numaResult(id, { op: "jackpot", ok: false, balls: numaBalls(), message: e.code ? "大当たりを記録できませんでした" : e.message });
+      }
+      sendNumaConfig(id);
+    }
+    window.addEventListener("pagehide", () => flushNuma());
 
     function subscribeWallet() {
       state.unsub.wallet = onSnapshot(
@@ -17509,7 +18429,7 @@ draw();
           ${gameThumb(g, "w-12 h-12 text-2xl")}
           <div class="min-w-0 flex-1">
             <div class="font-semibold truncate text-slate-800">${esc(g.name)}</div>
-            <div class="text-xs text-slate-500 truncate">${g.id === "chinchiro" ? `専用コイン（1枚 = ${CHIN_RATE}コイン）${chinCoins() > 0 ? ` ・ ${chinCoins().toLocaleString()}枚 持っています` : "で遊びます"}` : esc(g.desc)}</div>
+            <div class="text-xs text-slate-500 truncate">${g.id === "chinchiro" ? `専用コイン（1枚 = ${CHIN_RATE}コイン）${chinCoins() > 0 ? ` ・ ${chinCoins().toLocaleString()}枚 持っています` : "で遊びます"}` : g.id === "numa" ? `専用コイン（1枚 = ${NUMA_RATE.toLocaleString()}コイン = ${NUMA_PER}玉）${numaBalls() > 0 ? ` ・ ${numaBalls().toLocaleString()}玉 持っています` : "で遊びます"}` : esc(g.desc)}</div>
           </div>
           <span class="w-9 h-9 shrink-0 rounded-full grid place-items-center text-slate-300 group-hover:text-indigo-500 group-hover:bg-indigo-50 transition">${icon("chevron", "w-5 h-5")}</span>
         </button>`).join("");
@@ -17942,6 +18862,12 @@ draw();
       chinchiro: [
         { id: "roll", label: "振る・次へ", keys: ["Space"] },
         { id: "take", label: "回収（精算）", keys: ["KeyS"] },
+      ],
+      numa: [
+        { id: "one", label: "1発打つ", keys: ["Space"] },
+        { id: "ten", label: "10発打つ", keys: ["Enter"] },
+        { id: "auto", label: "オート（連射）の切り替え", keys: ["KeyA"] },
+        { id: "power", label: "打ち出しの強さを切り替える", keys: ["KeyS"] },
       ],
       mines: [
         { id: "start", label: "START・回収", keys: ["Space"] },
@@ -18389,6 +19315,11 @@ draw();
       else if (id === "chinchiro" && d.type === "chin-sync") { chinDelta(d.delta); casinoPlayed(id); }
       else if (id === "chinchiro" && d.type === "chin-buy") chinBuy(id, d.coins);
       else if (id === "chinchiro" && d.type === "chin-cashout") chinCashout(id);
+      else if (id === "numa" && d.type === "numa-sync") { numaDelta(d.delta); casinoPlayed(id); }
+      else if (id === "numa" && d.type === "numa-buy") numaBuy(id, d.coins);
+      else if (id === "numa" && d.type === "numa-cashout") numaCashout(id);
+      else if (id === "numa" && d.type === "numa-jackpot") numaJackpot(id);
+      else if (id === "numa" && d.type === "numa-pot") sendNumaConfig(id);
       else if (d.type === "escape" && id === state.activeGameId && $("#modal-root").hidden) exitGame(); // ゲームの中で Esc を押したとき（モーダル表示中は閉じない）
     });
 
