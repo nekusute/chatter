@@ -2674,6 +2674,2181 @@ requestAnimationFrame((t) => { lastTime = t; loop(t); });
 </script>
   </template>
 
+  <!-- 風くだり：銀行の借金を返すための専用ゲーム（熱気球の逆。パラシュートで風に流されながら下へ降りていく）。
+       拾った🪙・降りた距離が「返済コイン」になる。終わったとき（gameover の score）にアプリが借金の返済に入れる（index.html の loanGameRepay） -->
+  <template id="game-src-kaze">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    background-color: #f7f7f7;
+    color: #535353;
+    font-family: "Courier New", Courier, monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    touch-action: none;
+  }
+  /* 縦横比を保ったまま画面に収める（中の座標は 210×375 のまま） */
+  #game-wrapper {
+    position: relative;
+    width: min(420px, 100vw, calc(100vh * 210 / 375));
+    aspect-ratio: 210 / 375;
+    background-color: #ffffff;
+    border: 2px solid #535353;
+    overflow: hidden;
+  }
+  canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; }
+  #ui-overlay { position: absolute; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 12px 14px; }
+  #score-bar { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; font-weight: bold; letter-spacing: 1px; color: #535353; }
+  #earned { color: #b45309; }
+  #message-box {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    text-align: center; background: rgba(255, 255, 255, 0.92); border: 2px solid #535353;
+    padding: 18px 18px; width: 86%; pointer-events: auto;
+  }
+  #message-box h1 { font-size: 20px; margin-bottom: 10px; letter-spacing: 1px; }
+  #message-box p { font-size: 12.5px; line-height: 1.55; margin-bottom: 16px; }
+  #message-box .warn { color: #dc2626; font-weight: bold; }
+  button { background: #535353; color: #ffffff; border: none; padding: 10px 22px; font-family: "Courier New", Courier, monospace; font-size: 16px; font-weight: bold; cursor: pointer; letter-spacing: 1px; }
+  button:active { background: #222222; }
+  .hidden { display: none !important; }
+  #game-wrapper.playing canvas { cursor: none; }
+  html.dark { color-scheme: dark; }
+  html.dark body { background-color: #121212; color: #c8c8c8; }
+  html.dark #game-wrapper { background-color: #202124; border-color: #c8c8c8; }
+  html.dark #score-bar { color: #c8c8c8; }
+  html.dark #earned { color: #facc15; }
+  html.dark #message-box { background: rgba(32, 33, 36, 0.94); border-color: #c8c8c8; }
+  html.dark #message-box .warn { color: #f87171; }
+  html.dark button { background: #c8c8c8; color: #202124; }
+  html.dark button:active { background: #ffffff; }
+</style>
+<div id="game-wrapper">
+  <canvas id="gameCanvas"></canvas>
+  <div id="ui-overlay">
+    <div id="score-bar">
+      <span id="debt">DEBT -----</span>
+      <span id="earned">+0</span>
+    </div>
+    <div id="message-box">
+      <h1 id="msg-title">WIND DIVE</h1>
+      <p id="msg-desc"></p>
+      <button id="start-btn">START</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const msgBox = document.getElementById('message-box');
+  const gameWrapper = document.getElementById('game-wrapper');
+  const msgTitle = document.getElementById('msg-title');
+  const msgDesc = document.getElementById('msg-desc');
+  const startBtn = document.getElementById('start-btn');
+  const debtEl = document.getElementById('debt');
+  const earnedEl = document.getElementById('earned');
+
+  const WIDTH = 210;
+  const HEIGHT = 375;
+  canvas.width = WIDTH;
+  canvas.height = HEIGHT;
+
+  let COLOR_BG, COLOR_DARK, COLOR_MID, COLOR_DOT, COLOR_GOLD, COLOR_WIND;
+  function applyPalette() {
+    const dark = document.documentElement.classList.contains('dark');
+    COLOR_BG = dark ? '#202124' : '#ffffff';
+    COLOR_DARK = dark ? '#c8c8c8' : '#535353';
+    COLOR_MID = dark ? '#8a8a8a' : '#888888';
+    COLOR_DOT = dark ? '#33353a' : '#eeeeee';
+    COLOR_GOLD = dark ? '#facc15' : '#eab308'; // お金だけは金色
+    COLOR_WIND = dark ? '#5b6068' : '#c4c4c4';
+  }
+  applyPalette();
+
+  // ドット絵（1 = 濃い色, 2 = 中間, 3 = 背景色, 4 = 金色, 0 = 透明）
+  const SPRITE_CHUTE = [
+    "0000111111110000",
+    "0011333333331100",
+    "0133133113313310",
+    "1331331331331331",
+    "1111111111111111",
+    "0100010000100010",
+    "0010010000100100",
+    "0001001001001000",
+    "0000101001010000",
+    "0000011111100000",
+    "0000001221000000",
+    "0000011111100000",
+    "0000101111010000",
+    "0000001111000000",
+    "0000001001000000",
+    "0000011001100000"
+  ];
+  const SPRITE_SPIKE = [
+    "00000011000000",
+    "00000011000000",
+    "00100111100100",
+    "00110111101100",
+    "00011111111000",
+    "00111133111100",
+    "11111333311111",
+    "11111333311111",
+    "00111133111100",
+    "00011111111000",
+    "00110111101100",
+    "00100111100100",
+    "00000011000000",
+    "00000011000000"
+  ];
+  // カラス（2コマで羽ばたく）
+  const SPRITE_BIRD_A = [
+    "1100000000000011",
+    "0111000000001110",
+    "0011110000111100",
+    "0001111111111000",
+    "0000111111110110",
+    "0000011111111111",
+    "0000000111100000"
+  ];
+  const SPRITE_BIRD_B = [
+    "0000000000000000",
+    "0000000000000000",
+    "0000011111100000",
+    "0001111111111000",
+    "0011111111110110",
+    "0110011111111111",
+    "1100000111100000"
+  ];
+  const SPRITE_COIN = [
+    "00444400",
+    "04433440",
+    "44344344",
+    "44344344",
+    "44344344",
+    "44344344",
+    "04433440",
+    "00444400"
+  ];
+  // お金の袋（🪙10枚分）
+  const SPRITE_BAG = [
+    "0001111000",
+    "0000110000",
+    "0004444000",
+    "0044444400",
+    "0443343440",
+    "4443444344",
+    "4443343444",
+    "4444433444",
+    "4443343444",
+    "0444444440",
+    "0044444400"
+  ];
+  // 傘（1回だけぶつかっても平気）
+  const SPRITE_UMBRELLA = [
+    "000011110000",
+    "001133331100",
+    "013333333310",
+    "133333333331",
+    "111111111111",
+    "000001100000",
+    "000001100000",
+    "000001100000",
+    "000001101100",
+    "000000111000"
+  ];
+  // 風車（取ると、しばらく風がやむ）
+  const SPRITE_MILL = [
+    "000110000000",
+    "000111000000",
+    "000111100110",
+    "000011111110",
+    "011111111100",
+    "011111111110",
+    "001111111110",
+    "011111111100",
+    "011001111000",
+    "000000111000",
+    "000000011000",
+    "000000011000"
+  ];
+  const SPRITE_CLOUD = [
+    "000000222220000000",
+    "000022333332200000",
+    "002233333333322000",
+    "023333333333333220",
+    "233333333333333332",
+    "222222222222222222"
+  ];
+
+  function drawSprite(sprite, x, y, flip = false) {
+    const rx = Math.round(x), ry = Math.round(y);
+    for (let row = 0; row < sprite.length; row++) {
+      const line = sprite[row];
+      for (let col = 0; col < line.length; col++) {
+        const ch = flip ? line[line.length - 1 - col] : line[col];
+        if (ch === '0') continue;
+        ctx.fillStyle = ch === '1' ? COLOR_DARK : ch === '2' ? COLOR_MID : ch === '3' ? COLOR_BG : COLOR_GOLD;
+        ctx.fillRect(rx + col, ry + row, 1, 1);
+      }
+    }
+  }
+
+  // ---- アプリとのやりとり ----
+  function sendToApp(msg) {
+    try { parent.postMessage(Object.assign({ source: 'chatter-game' }, msg), '*'); } catch (e) {}
+  }
+  // アプリから届く借金の状態（left：残りのコイン / overdue：期限切れ / has：借金があるか）
+  let loan = { has: false, left: 0, overdue: false, known: false };
+
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== parent || !d || d.source !== 'chatter') return;
+    if (d.type === 'loan') {
+      loan = { has: !!d.has, left: Math.max(0, Number(d.left) || 0), overdue: !!d.overdue, known: true };
+      updateHud();
+      if (state === 'START') showStart();
+    }
+    else if (d.type === 'pause') pauseGame();
+    else if (d.type === 'theme') { document.documentElement.classList.toggle('dark', !!d.dark); applyPalette(); draw(); }
+  });
+
+  // ---- ゲームの状態 ----
+  let state = 'START'; // START, PLAYING, PAUSED, GAMEOVER
+  let frame = 0;
+  let depth = 0;     // 降りた距離（m）
+  let earned = 0;    // この回で稼いだ返済コイン
+  let speed = 1.5;   // 落ちる速さ（画面の中のものが上へ流れる速さ）
+  let wind = 0, windTarget = 0, gustTimer = 200, gustWarn = 0, calmTimer = 0;
+  let bonusAt = 100; // 次に距離のボーナスをもらう深さ
+  const player = { x: WIDTH / 2 - 8, y: 72, w: 16, h: 16, targetX: WIDTH / 2 - 8, shieldTimer: 0, sway: 0 };
+  let entities = [], particles = [], popups = [], streaks = [], clouds = [];
+  for (let i = 0; i < 5; i++) clouds.push({ x: Math.random() * (WIDTH - 20), y: Math.random() * HEIGHT, speed: 0.4 + Math.random() * 0.3 });
+  for (let i = 0; i < 14; i++) streaks.push({ x: Math.random() * WIDTH, y: Math.random() * HEIGHT, len: 6 + Math.random() * 10 });
+
+  const level = () => Math.min(5, 1 + Math.floor(depth / 300)); // 300m ごとに🪙の値打ちが上がる（最大5段）
+  const coinValue = () => 10 * level();
+  const fmt = (n) => Math.floor(n).toLocaleString();
+
+  function updateHud() {
+    if (!loan.known) debtEl.textContent = 'DEBT -----';
+    else if (!loan.has) debtEl.textContent = 'DEBT 0';
+    else debtEl.textContent = 'DEBT ' + fmt(Math.max(0, loan.left - (state === 'PLAYING' || state === 'PAUSED' ? earned : 0)));
+    earnedEl.textContent = '+' + fmt(earned);
+  }
+
+  function showStart() {
+    msgTitle.textContent = 'WIND DIVE';
+    const lines = [
+      'マウス / タップ・ドラッグ / 左右キーで操作',
+      '風に流されながら下へ下へ。トゲ・カラス・岩をよけて🪙を拾おう',
+      '拾った🪙と降りた距離が、そのまま借金の返済になる',
+    ];
+    if (loan.known && !loan.has) lines.push('（いまは借金がありません。遊んでも返済には入りません）');
+    else if (loan.overdue) lines.push('<span class="warn">返済期限を過ぎています。返し終えるまで、ほかのゲームは遊べません</span>');
+    msgDesc.innerHTML = lines.join('<br>');
+    startBtn.textContent = 'START';
+  }
+  showStart();
+  updateHud();
+
+  function spawnParticles(x, y, count = 8, color = null) {
+    for (let i = 0; i < count; i++) {
+      const a = (Math.PI * 2 * i) / count, s = 0.8 + Math.random() * 1.4;
+      particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 16 + Math.floor(Math.random() * 10), color });
+    }
+  }
+  function popup(x, y, text) { popups.push({ x, y, text, life: 40 }); }
+
+  function resetGame() {
+    frame = 0; depth = 0; earned = 0; speed = 1.5; bonusAt = 100;
+    wind = 0; windTarget = 0; gustTimer = 180; gustWarn = 0; calmTimer = 0;
+    player.x = WIDTH / 2 - 8; player.targetX = player.x; player.shieldTimer = 0;
+    entities = []; particles = []; popups = [];
+    state = 'PLAYING';
+    gameWrapper.classList.add('playing');
+    msgBox.classList.add('hidden');
+    updateHud();
+    sendToApp({ type: 'start' });
+  }
+  function pauseGame() {
+    isPointerDown = false;
+    keys.left = keys.right = false;
+    if (state !== 'PLAYING') return;
+    state = 'PAUSED';
+    gameWrapper.classList.remove('playing');
+    msgTitle.textContent = 'PAUSE';
+    msgDesc.innerHTML = fmt(depth) + 'm ・ 返済 +' + fmt(earned) + '<br>準備ができたら再開しよう';
+    startBtn.textContent = 'RESUME';
+    msgBox.classList.remove('hidden');
+  }
+  function resumeGame() {
+    state = 'PLAYING';
+    gameWrapper.classList.add('playing');
+    msgBox.classList.add('hidden');
+  }
+  // 終わり（clear：この回で借金を返し終えた）
+  function endGame(clear) {
+    state = 'GAMEOVER';
+    gameWrapper.classList.remove('playing');
+    keys.left = keys.right = false;
+    if (!clear) spawnParticles(player.x + 8, player.y + 8, 16);
+    const final = Math.floor(earned);
+    const rest = Math.max(0, loan.left - final);
+    msgTitle.textContent = clear ? '完済！' : 'GAME OVER';
+    msgDesc.innerHTML = fmt(depth) + 'm 降りた<br>返済 <b>+' + fmt(final) + '</b> コイン'
+      + (loan.has ? '<br>' + (rest > 0 ? '残り ' + fmt(rest) + ' コイン' : '🎉 借金を返し終えました！') : '');
+    startBtn.textContent = clear ? 'もう一度' : 'RETRY';
+    msgBox.classList.remove('hidden');
+    updateHud();
+    sendToApp({ type: 'gameover', score: final });
+  }
+  function earn(n, x, y) {
+    earned += n;
+    if (x !== undefined) popup(x, y, '+' + n);
+    if (loan.has && loan.left > 0 && earned >= loan.left) { updateHud(); endGame(true); return true; }
+    return false;
+  }
+
+  // ---- 入力 ----
+  let isPointerDown = false;
+  const keys = { left: false, right: false };
+  function setTargetFromClientX(clientX) {
+    const rect = canvas.getBoundingClientRect();
+    const canvasX = ((clientX - rect.left) / rect.width) * WIDTH;
+    player.targetX = Math.max(2, Math.min(WIDTH - player.w - 2, canvasX - player.w / 2));
+  }
+  canvas.addEventListener('pointerdown', (e) => { if (state !== 'PLAYING') return; isPointerDown = true; setTargetFromClientX(e.clientX); });
+  window.addEventListener('pointermove', (e) => {
+    if (state !== 'PLAYING') return;
+    if (!isPointerDown && e.pointerType !== 'mouse') return;
+    setTargetFromClientX(e.clientX);
+  });
+  window.addEventListener('pointerup', () => { isPointerDown = false; });
+  window.addEventListener('pointercancel', () => { isPointerDown = false; });
+  const keyDir = (e) => (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') ? 'left' : (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') ? 'right' : null;
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
+    const k = keyDir(e);
+    if (k) { keys[k] = true; e.preventDefault(); }
+    if ((e.key === ' ' || e.key === 'Enter') && state !== 'PLAYING') {
+      e.preventDefault();
+      if (state === 'PAUSED') resumeGame(); else resetGame();
+    }
+  });
+  window.addEventListener('keyup', (e) => { const k = keyDir(e); if (k) keys[k] = false; });
+  startBtn.addEventListener('click', () => { if (state === 'PAUSED') resumeGame(); else resetGame(); });
+
+  // ---- 出てくるもの（画面の下から上へ流れてくる）----
+  function spawnEntity() {
+    const r = Math.random();
+    const lv = level();
+    let type, w, h;
+    if (r < 0.34) { type = 'spike'; w = 14; h = 14; }
+    else if (r < 0.34 + 0.06 + lv * 0.02) { type = 'bird'; w = 16; h = 7; }
+    else if (r < 0.88) { type = 'coin'; w = 8; h = 8; }
+    else if (r < 0.92) { type = 'bag'; w = 10; h = 11; }
+    else if (r < 0.96) { type = 'umbrella'; w = 12; h = 10; }
+    else { type = 'mill'; w = 12; h = 12; }
+    const x = 6 + Math.random() * (WIDTH - w - 12);
+    const ent = { type, x, y: HEIGHT + 16, w, h, vx: 0 };
+    if (type === 'bird') {
+      const fromLeft = Math.random() < 0.5;
+      ent.x = fromLeft ? -16 : WIDTH;
+      ent.vx = (fromLeft ? 1 : -1) * (0.7 + Math.random() * 0.5 + lv * 0.1);
+    }
+    if (type === 'spike' && Math.random() < 0.3) ent.vx = Math.random() < 0.5 ? -0.5 : 0.5;
+    entities.push(ent);
+  }
+  // 岩棚（左右の崖から張り出した岩。すき間を通り抜ける）
+  function spawnLedge() {
+    const gap = Math.max(46, 74 - level() * 5);
+    const r = Math.random();
+    if (r < 0.4) {
+      // 両側から。真ん中あたりにすき間
+      const gx = 14 + Math.random() * (WIDTH - gap - 28);
+      entities.push({ type: 'ledge', x: 0, y: HEIGHT + 10, w: gx, h: 8, vx: 0 });
+      entities.push({ type: 'ledge', x: gx + gap, y: HEIGHT + 10, w: WIDTH - gx - gap, h: 8, vx: 0 });
+      // すき間には🪙
+      entities.push({ type: 'coin', x: gx + gap / 2 - 4, y: HEIGHT + 10 - 16, w: 8, h: 8, vx: 0 });
+    } else {
+      const len = 60 + Math.random() * 60;
+      const left = r < 0.7;
+      entities.push({ type: 'ledge', x: left ? 0 : WIDTH - len, y: HEIGHT + 10, w: len, h: 8, vx: 0 });
+    }
+  }
+
+  function hit(a, b) {
+    const pad = 2;
+    return a.x + pad < b.x + b.w - pad && a.x + a.w - pad > b.x + pad && a.y + pad < b.y + b.h - pad && a.y + a.h - pad > b.y + pad;
+  }
+  // パラシュートの当たり判定（傘の部分と体の部分）
+  const playerBox = () => ({ x: player.x + 1, y: player.y + 1, w: player.w - 2, h: player.h - 1 });
+
+  // 突風：数秒ごとに向きと強さが変わる。変わる1秒前に予告を出す
+  function updateWind() {
+    if (calmTimer > 0) { calmTimer--; windTarget = 0; }
+    else if (--gustTimer <= 0) {
+      const maxW = Math.min(2.2, 0.9 + level() * 0.25);
+      windTarget = Math.random() < 0.15 ? 0 : (Math.random() < 0.5 ? -1 : 1) * (0.4 + Math.random() * (maxW - 0.4));
+      gustTimer = 150 + Math.floor(Math.random() * 170);
+      gustWarn = 0;
+    } else if (gustTimer === 60) {
+      gustWarn = 60;
+    }
+    if (gustWarn > 0) gustWarn--;
+    wind += (windTarget - wind) * 0.03;
+  }
+
+  function update() {
+    for (const c of clouds) {
+      if (state === 'PAUSED') break;
+      c.y -= c.speed * (state === 'PLAYING' ? speed * 0.6 : 0.5);
+      c.x += (state === 'PLAYING' ? wind * 0.3 : 0);
+      if (c.y < -10) { c.y = HEIGHT + 10; c.x = Math.random() * (WIDTH - 20); }
+      if (c.x < -20) c.x = WIDTH; else if (c.x > WIDTH) c.x = -18;
+    }
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx; p.y += p.vy;
+      if (--p.life <= 0) particles.splice(i, 1);
+    }
+    for (let i = popups.length - 1; i >= 0; i--) { popups[i].y -= 0.5; if (--popups[i].life <= 0) popups.splice(i, 1); }
+    if (state !== 'PLAYING') return;
+
+    frame++;
+    updateWind();
+    for (const s of streaks) {
+      s.x += wind * 3.2;
+      s.y -= speed * 1.4;
+      if (s.y < -2) { s.y = HEIGHT + 2; s.x = Math.random() * WIDTH; }
+      if (s.x < -20) s.x = WIDTH + 10; else if (s.x > WIDTH + 20) s.x = -10;
+    }
+    speed = Math.min(4.0, 1.5 + depth * 0.0011);
+    depth += speed * 0.1;
+    if (depth >= bonusAt) {
+      // 100m ごとのボーナス
+      bonusAt += 100;
+      if (earn(5 * level() * 5, player.x + 8, player.y + 20)) return;
+    }
+
+    if (player.shieldTimer > 0) player.shieldTimer--;
+    const keySpeed = 3.0;
+    if (keys.left) player.targetX = Math.max(2, player.targetX - keySpeed);
+    if (keys.right) player.targetX = Math.min(WIDTH - player.w - 2, player.targetX + keySpeed);
+    // 風に流される：狙った位置に寄っていく力と、風の力を足す（風上に少しずれたところを狙うと真下に降りられる）
+    const prevX = player.x;
+    player.x += (player.targetX - player.x) * 0.1 + wind;
+    player.x = Math.max(0, Math.min(WIDTH - player.w, player.x));
+    player.sway += ((player.x - prevX) * 0.6 - player.sway) * 0.2;
+
+    // 出てくる間隔：速くなるほど短く
+    const interval = Math.max(10, Math.floor(34 - speed * 5));
+    if (frame % interval === 0) spawnEntity();
+    const ledgeEvery = Math.max(70, Math.floor(200 - depth * 0.08));
+    if (frame > 120 && frame % ledgeEvery === 0) spawnLedge();
+
+    const pb = playerBox();
+    for (let i = entities.length - 1; i >= 0; i--) {
+      const ent = entities[i];
+      ent.y -= speed;
+      ent.x += ent.vx;
+      if (ent.type === 'coin' || ent.type === 'bag') ent.x += wind * 0.35; // 軽いお金は風で少し流される
+      if (ent.type === 'spike' && (ent.x <= 2 || ent.x + ent.w >= WIDTH - 2)) ent.vx *= -1;
+
+      if (hit(pb, ent)) {
+        if (ent.type === 'coin' || ent.type === 'bag') {
+          const v = coinValue() * (ent.type === 'bag' ? 10 : 1);
+          spawnParticles(ent.x + ent.w / 2, ent.y + ent.h / 2, ent.type === 'bag' ? 12 : 6, COLOR_GOLD);
+          entities.splice(i, 1);
+          if (earn(v, ent.x, ent.y)) return;
+          continue;
+        } else if (ent.type === 'umbrella') {
+          player.shieldTimer = 480;
+          spawnParticles(ent.x + 6, ent.y + 5, 8);
+          entities.splice(i, 1);
+          continue;
+        } else if (ent.type === 'mill') {
+          calmTimer = 8 * 60;
+          spawnParticles(ent.x + 6, ent.y + 6, 8);
+          popup(ent.x, ent.y, 'CALM');
+          entities.splice(i, 1);
+          continue;
+        } else if (player.shieldTimer > 0) {
+          player.shieldTimer = 0;
+          spawnParticles(ent.x + ent.w / 2, ent.y + ent.h / 2, 12);
+          // 岩棚は壊せないので、傘で1回だけすり抜ける（左右につながった岩棚はまとめて消す）
+          if (ent.type === 'ledge') { const y = ent.y; entities = entities.filter((e2) => !(e2.type === 'ledge' && Math.abs(e2.y - y) < 1)); i = Math.min(i, entities.length); }
+          else entities.splice(i, 1);
+          continue;
+        } else {
+          endGame(false);
+          return;
+        }
+      }
+      if (ent.y < -24 || ent.x < -24 || ent.x > WIDTH + 24) entities.splice(i, 1);
+    }
+    updateHud();
+  }
+
+  function drawLedge(e) {
+    const x = Math.round(e.x), y = Math.round(e.y), w = Math.round(e.w);
+    ctx.fillStyle = COLOR_DARK;
+    ctx.fillRect(x, y, w, e.h);
+    ctx.fillStyle = COLOR_MID;
+    for (let i = x + 2; i < x + w - 2; i += 5) ctx.fillRect(i, y + 2 + ((i >> 2) % 3), 2, 2);
+    // 下側のとがった岩
+    ctx.fillStyle = COLOR_DARK;
+    for (let i = x + 3; i < x + w - 3; i += 9) { ctx.fillRect(i, y + e.h, 3, 2); ctx.fillRect(i + 1, y + e.h + 2, 1, 2); }
+  }
+
+  function draw() {
+    ctx.fillStyle = COLOR_BG;
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    // 背景の点（上へ流れる）
+    ctx.fillStyle = COLOR_DOT;
+    const off = Math.floor(depth * 10) % 24;
+    for (let y = 24 - off; y < HEIGHT; y += 24) for (let x = 12; x < WIDTH; x += 24) ctx.fillRect(x, y, 1, 1);
+    for (const c of clouds) drawSprite(SPRITE_CLOUD, c.x, c.y);
+    // 風のすじ（強いほど長く、濃く）
+    if (state === 'PLAYING' || state === 'PAUSED') {
+      const strength = Math.min(1, Math.abs(wind) / 1.6);
+      if (strength > 0.08) {
+        ctx.fillStyle = COLOR_WIND;
+        for (const s of streaks) ctx.fillRect(Math.round(s.x), Math.round(s.y), Math.max(2, Math.round(s.len * strength)), 1);
+      }
+    }
+    for (const e of entities) {
+      if (e.type === 'spike') drawSprite(SPRITE_SPIKE, e.x, e.y);
+      else if (e.type === 'bird') drawSprite(Math.floor(frame / 8) % 2 ? SPRITE_BIRD_A : SPRITE_BIRD_B, e.x, e.y, e.vx < 0);
+      else if (e.type === 'coin') drawSprite(SPRITE_COIN, e.x, e.y);
+      else if (e.type === 'bag') drawSprite(SPRITE_BAG, e.x, e.y);
+      else if (e.type === 'umbrella') drawSprite(SPRITE_UMBRELLA, e.x, e.y);
+      else if (e.type === 'mill') drawSprite(SPRITE_MILL, e.x, e.y);
+      else if (e.type === 'ledge') drawLedge(e);
+    }
+    if (state !== 'GAMEOVER') {
+      const bob = Math.sin(frame * 0.1) * 1.0;
+      drawSprite(SPRITE_CHUTE, player.x - player.sway * 0.5, player.y + bob, false);
+      if (player.shieldTimer > 0 && (player.shieldTimer > 90 || Math.floor(frame / 4) % 2 === 0)) {
+        ctx.fillStyle = COLOR_DARK;
+        const cx = Math.round(player.x + 8), cy = Math.round(player.y + 8 + bob);
+        for (let a = 0; a < 16; a++) {
+          const ang = (Math.PI * 2 * a) / 16 + frame * 0.05;
+          ctx.fillRect(Math.round(cx + Math.cos(ang) * 13), Math.round(cy + Math.sin(ang) * 13), 1, 1);
+        }
+      }
+    }
+    // 深さと風（左下）
+    ctx.fillStyle = COLOR_DARK;
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(fmt(depth) + 'm  x' + level(), 6, HEIGHT - 8);
+    ctx.textAlign = 'right';
+    const arrows = Math.round(Math.abs(wind) / 0.55);
+    const windText = calmTimer > 0 ? 'CALM ' + Math.ceil(calmTimer / 60) : arrows === 0 ? 'WIND -' : 'WIND ' + (wind < 0 ? '<'.repeat(arrows) : '>'.repeat(arrows));
+    ctx.fillText(windText, WIDTH - 6, HEIGHT - 8);
+    // 突風の予告
+    if (gustWarn > 0 && Math.floor(gustWarn / 8) % 2 === 0 && state === 'PLAYING') {
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 13px monospace';
+      ctx.fillText('GUST ' + (windTarget < -0.05 ? '<<<' : windTarget > 0.05 ? '>>>' : '---'), WIDTH / 2, 54);
+    }
+    for (const p of particles) { ctx.fillStyle = p.color || COLOR_DARK; ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2); }
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 9px monospace';
+    for (const p of popups) { ctx.fillStyle = COLOR_GOLD; ctx.fillText(p.text, Math.round(p.x + 4), Math.round(p.y)); }
+    ctx.textAlign = 'left';
+  }
+
+  let lastTime = performance.now();
+  let acc = 0;
+  function loop(t) {
+    acc += Math.min(100, t - lastTime);
+    lastTime = t;
+    while (acc >= 1000 / 60) { update(); acc -= 1000 / 60; }
+    draw();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame((t) => { lastTime = t; loop(t); });
+})();
+</script>
+  </template>
+
+  <!-- 地下鉱山（借金の返済用のゲーム）
+       仕様：
+       - 横14マス（1マス15px）の地面を、上から掘り進む。1マス = 1m。左右・下に掘れる（上には掘れない）。空いたマスへは左右に動け、足元が空くと落ちる
+       - ブロック：土（1回）・石（2回）・かたい岩（4回）。深くなるほど石・かたい岩が増える。掘る間隔は約0.13秒（押しっぱなしで続けて掘る）
+       - 鉱石：銅10・銀25・金60・ダイヤ200コイン（石と同じく数回たたく）。掘った深さの倍率（30mごとに +25%）をかけた値がカバンに入る。
+         銀は12mから、金は35mから、ダイヤは70mから出る
+       - ランタンの油：はじめ45秒（最大60秒）。油の缶で +10秒。25m ごとに「深さボーナス」（+5秒と、25 × 段階 コイン）。油が切れたら終わり（カバンの中身を全部もらえる）
+       - 落盤：ひびの入った岩（8mから出る。深いほど多い）は、下が空くと0.7秒ゆれてから落ちてくる。下敷きになると終わり（カバンの中身の半分だけもらえる）
+       - 深いほど暗くなり、ランタンの明かりの届く範囲だけ見える（油が減ると明かりも小さくなる）
+       - 操作：左右キー・下キー（または A/D/S）／画面の、坑夫の左・右・下あたりを押す（押しっぱなしで続けて掘る）
+       - 終わったときの「返済」= もらえる額（gameover の score）。index.html の DEBT_GAMES・loanGameRepay と合わせる -->
+  <template id="game-src-kouzan">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body { background: #f5f0e8; color: #3f2a14; font-family: "Courier New", Courier, monospace; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
+  #game-wrapper { position: relative; width: min(420px, 100vw, calc(100vh * 210 / 375)); aspect-ratio: 210 / 375; border: 2px solid #3f2a14; overflow: hidden; background: #1c130a; }
+  canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; }
+  #ui-overlay { position: absolute; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 10px 12px; }
+  #score-bar { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; font-weight: bold; letter-spacing: 1px; color: #fff; text-shadow: 0 1px 0 #000, 0 0 4px #000; }
+  #earned { color: #fde047; }
+  #message-box { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; background: rgba(255, 251, 240, 0.95); color: #3f2a14; border: 2px solid #3f2a14; padding: 16px 16px; width: 88%; pointer-events: auto; }
+  #message-box h1 { font-size: 20px; margin-bottom: 10px; letter-spacing: 1px; }
+  #message-box p { font-size: 12.5px; line-height: 1.55; margin-bottom: 14px; }
+  #message-box .warn { color: #dc2626; font-weight: bold; }
+  button { background: #3f2a14; color: #fff; border: none; padding: 10px 22px; font-family: inherit; font-size: 16px; font-weight: bold; cursor: pointer; letter-spacing: 1px; }
+  button:active { background: #1c130a; }
+  .hidden { display: none !important; }
+  html.dark body { background: #121212; color: #e7d8c0; }
+  html.dark #game-wrapper { border-color: #a8916f; }
+  html.dark #message-box { background: rgba(28, 22, 14, 0.95); color: #e7d8c0; border-color: #a8916f; }
+  html.dark #message-box .warn { color: #f87171; }
+  html.dark button { background: #e7d8c0; color: #1c130a; }
+</style>
+<div id="game-wrapper">
+  <canvas id="gameCanvas"></canvas>
+  <div id="ui-overlay">
+    <div id="score-bar"><span id="debt">DEBT -----</span><span id="earned">+0</span></div>
+  </div>
+  <div id="message-box">
+    <h1 id="msg-title">DEEP MINE</h1>
+    <p id="msg-desc"></p>
+    <button id="start-btn">START</button>
+  </div>
+</div>
+<script>
+(function() {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const msgBox = document.getElementById('message-box');
+  const msgTitle = document.getElementById('msg-title');
+  const msgDesc = document.getElementById('msg-desc');
+  const startBtn = document.getElementById('start-btn');
+  const debtEl = document.getElementById('debt');
+  const earnedEl = document.getElementById('earned');
+
+  const W = 210, H = 375, CELL = 15, COLS = 14;
+  canvas.width = W; canvas.height = H;
+  const SURFACE = 2;          // 地面の行（ここから下が土）
+  const DIG_CD = 8;           // 掘る間隔（フレーム）
+  const MOVE_FRAMES = 6;      // 1マス動くのにかかるフレーム
+  const FALL_FRAMES = 3;      // 1マス落ちるのにかかるフレーム
+  const OIL_START = 45 * 60, OIL_MAX = 60 * 60, OIL_CAN = 10 * 60;
+  const SHAKE_FRAMES = 42;
+
+  // ブロックの種類と、たたく回数
+  const HP = { dirt: 1, stone: 2, hard: 4, crack: 1, cu: 2, ag: 2, au: 3, di: 4, oil: 1 };
+  const ORE = { cu: { name: '銅', v: 10 }, ag: { name: '銀', v: 25 }, au: { name: '金', v: 60 }, di: { name: 'ダイヤ', v: 200 } };
+
+  let dark = false;
+  let P = {};
+  function applyPalette() {
+    dark = document.documentElement.classList.contains('dark');
+    P = dark ? {
+      sky: '#0f172a', skyDot: '#1e293b', grass: '#166534', tunnel: '#140d06', dirt: '#6b4718', dirtDot: '#4d3210', stone: '#57534e', stoneDot: '#3f3b37',
+      hard: '#292524', hardDot: '#44403c', crack: '#1c1917', text: '#e7d8c0',
+    } : {
+      sky: '#bae6fd', skyDot: '#e0f2fe', grass: '#22c55e', tunnel: '#3f2a14', dirt: '#a16207', dirtDot: '#854d0e', stone: '#78716c', stoneDot: '#57534e',
+      hard: '#44403c', hardDot: '#292524', crack: '#1c1917', text: '#fff',
+    };
+  }
+  applyPalette();
+
+  function sendToApp(msg) { try { parent.postMessage(Object.assign({ source: 'chatter-game' }, msg), '*'); } catch (e) {} }
+  let loan = { has: false, left: 0, overdue: false, known: false };
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== parent || !d || d.source !== 'chatter') return;
+    if (d.type === 'loan') { loan = { has: !!d.has, left: Math.max(0, Number(d.left) || 0), overdue: !!d.overdue, known: true }; updateHud(); if (state === 'START') showStart(); }
+    else if (d.type === 'pause') pauseGame();
+    else if (d.type === 'theme') { document.documentElement.classList.toggle('dark', !!d.dark); applyPalette(); }
+  });
+
+  // ---- 状態 ----
+  let state = 'START';
+  let frame = 0, bag = 0, bonus = 0, oil = OIL_START, maxRow = SURFACE, nextBonusRow = SURFACE + 25, bonusStep = 0;
+  let rows = [];             // rows[r][c] = null（空き）か { t, hp, shake, falling }
+  const player = { c: 6, r: SURFACE - 1, x: 6 * CELL, y: (SURFACE - 1) * CELL, moving: 0, fromX: 0, fromY: 0, falling: false, face: 1, cd: 0 };
+  let camY = 0, particles = [], popups = [], rocks = [];
+  const fmt = (n) => Math.floor(n).toLocaleString();
+  const total = () => bag + bonus;
+  const depth = () => Math.max(0, player.r - SURFACE + 1);
+  const mult = (r) => 1 + Math.floor(Math.max(0, r - SURFACE) / 30) * 0.25;
+
+  function rand() { return Math.random(); }
+  function makeRow(r) {
+    const row = [];
+    for (let c = 0; c < COLS; c++) {
+      if (r < SURFACE) { row.push(null); continue; }
+      const d = r - SURFACE;
+      let t;
+      if (r === SURFACE) t = 'dirt';
+      else {
+        const x = rand();
+        let acc = 0;
+        const pick = (p) => { acc += p; return x < acc; };
+        if (pick(d > 8 ? Math.min(0.08, 0.02 + d / 1000) : 0)) t = 'crack';
+        else if (pick(0.02)) t = 'oil';
+        else if (pick(d > 70 ? 0.008 + Math.min(0.012, (d - 70) / 5000) : 0)) t = 'di';
+        else if (pick(d > 35 ? 0.025 : 0)) t = 'au';
+        else if (pick(d > 12 ? 0.04 : 0)) t = 'ag';
+        else if (pick(0.06)) t = 'cu';
+        else {
+          const y = rand();
+          const hardP = d > 25 ? Math.min(0.25, (d - 25) / 250) : 0;
+          const stoneP = Math.min(0.55, d / 120);
+          t = y < hardP ? 'hard' : y < hardP + stoneP ? 'stone' : 'dirt';
+        }
+      }
+      row.push({ t, hp: HP[t], shake: 0 });
+    }
+    return row;
+  }
+  function cell(r, c) {
+    if (c < 0 || c >= COLS) return 'wall';
+    while (rows.length <= r) rows.push(makeRow(rows.length));
+    return rows[r][c];
+  }
+  function setCell(r, c, v) { cell(r, c); rows[r][c] = v; }
+
+  function updateHud() {
+    if (!loan.known) debtEl.textContent = 'DEBT -----';
+    else if (!loan.has) debtEl.textContent = 'DEBT 0';
+    else debtEl.textContent = 'DEBT ' + fmt(Math.max(0, loan.left - (state === 'PLAYING' || state === 'PAUSED' ? total() : 0)));
+    earnedEl.textContent = '+' + fmt(total());
+  }
+  function showStart() {
+    msgTitle.textContent = 'DEEP MINE';
+    const lines = [
+      '左右・下キー / 坑夫のまわりを押して掘る',
+      '掘り進んで鉱石を集めよう。深いほど高く売れる',
+      '銅 10 ・ 銀 25 ・ 金 60 ・ ダイヤ 200（30mごとに +25%）',
+      'ランタンの油が切れたら終わり。🛢で油を足せる',
+      '<b>ひびの入った岩は落ちてくる！</b> 下敷きになると、鉱石の半分をなくす',
+    ];
+    if (loan.known && !loan.has) lines.push('（いまは借金がありません。遊んでも返済には入りません）');
+    else if (loan.overdue) lines.push('<span class="warn">返済期限を過ぎています。返し終えるまで、返済用のゲームしか遊べません</span>');
+    msgDesc.innerHTML = lines.join('<br>');
+    startBtn.textContent = 'START';
+  }
+  showStart(); updateHud();
+
+  function resetGame() {
+    frame = 0; bag = 0; bonus = 0; oil = OIL_START; maxRow = SURFACE; nextBonusRow = SURFACE + 25; bonusStep = 0; queued = null;
+    rows = []; particles = []; popups = []; rocks = [];
+    Object.assign(player, { c: 6, r: SURFACE - 1, moving: 0, falling: false, face: 1, cd: 0 });
+    player.x = player.c * CELL; player.y = player.r * CELL;
+    camY = 0;
+    state = 'PLAYING';
+    msgBox.classList.add('hidden');
+    updateHud();
+    sendToApp({ type: 'start' });
+  }
+  function pauseGame() {
+    held.left = held.right = held.down = false; pointerDir = null;
+    if (state !== 'PLAYING') return;
+    state = 'PAUSED';
+    msgTitle.textContent = 'PAUSE';
+    msgDesc.innerHTML = depth() + 'm ・ カバン +' + fmt(total()) + '<br>準備ができたら再開しよう';
+    startBtn.textContent = 'RESUME';
+    msgBox.classList.remove('hidden');
+  }
+  function resumeGame() { state = 'PLAYING'; msgBox.classList.add('hidden'); }
+  // 終わり：reason = 'oil'（油切れ：全部もらえる）| 'crush'（落盤：半分）| 'clear'（返し終えた）
+  function endGame(reason) {
+    state = 'GAMEOVER';
+    held.left = held.right = held.down = false; pointerDir = null;
+    const before = Math.floor(total());
+    const final = reason === 'crush' ? Math.floor(before / 2) : before;
+    if (reason === 'crush') burst(player.x + 7, player.y + 7 - camY, 18, '#a8a29e');
+    msgTitle.textContent = reason === 'clear' ? '完済！' : reason === 'crush' ? '落盤！' : '油切れ';
+    msgDesc.innerHTML = depth() + 'm まで掘った<br>'
+      + (reason === 'crush' ? '下敷きになって、鉱石の半分をなくした（' + fmt(before) + ' → ' + fmt(final) + '）<br>' : '')
+      + '返済 <b>+' + fmt(final) + '</b> コイン'
+      + (loan.has ? '<br>' + (loan.left - final > 0 ? '残り ' + fmt(loan.left - final) + ' コイン' : '🎉 借金を返し終えました！') : '');
+    startBtn.textContent = reason === 'clear' ? 'もう一度' : 'RETRY';
+    msgBox.classList.remove('hidden');
+    earnedEl.textContent = '+' + fmt(final);
+    debtEl.textContent = loan.has ? 'DEBT ' + fmt(Math.max(0, loan.left - final)) : debtEl.textContent;
+    sendToApp({ type: 'gameover', score: final });
+  }
+  function checkClear() {
+    if (loan.has && loan.left > 0 && total() >= loan.left) { endGame('clear'); return true; }
+    return false;
+  }
+
+  function burst(x, y, n, color) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, s = 0.6 + Math.random() * 1.6;
+      particles.push({ x, y: y + camY, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 0.5, life: 14 + Math.floor(Math.random() * 10), color });
+    }
+  }
+  function popup(x, y, text, color) { popups.push({ x, y, text, color, life: 50 }); }
+
+  // ---- 入力 ----
+  const held = { left: false, right: false, down: false };
+  let pointerDir = null;
+  let queued = null; // 押してすぐ離しても1回は掘れるように、押した向きを覚えておく
+  const dirOfKey = (e) => {
+    const k = e.code || e.key;
+    if (k === 'ArrowLeft' || k === 'KeyA' || e.key === 'a' || e.key === 'A') return 'left';
+    if (k === 'ArrowRight' || k === 'KeyD' || e.key === 'd' || e.key === 'D') return 'right';
+    if (k === 'ArrowDown' || k === 'KeyS' || e.key === 's' || e.key === 'S') return 'down';
+    return null;
+  };
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
+    const d = dirOfKey(e);
+    if (d) { held[d] = true; if (!e.repeat) queued = d; e.preventDefault(); }
+    if ((e.key === ' ' || e.key === 'Enter') && state !== 'PLAYING') { e.preventDefault(); if (state === 'PAUSED') resumeGame(); else resetGame(); }
+  });
+  window.addEventListener('keyup', (e) => { const d = dirOfKey(e); if (d) held[d] = false; });
+  function dirFromPointer(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width * W, y = (e.clientY - rect.top) / rect.height * H + camY;
+    const dx = x - (player.x + CELL / 2), dy = y - (player.y + CELL / 2);
+    if (dy > CELL * 0.6 && dy > Math.abs(dx) * 0.8) return 'down';
+    return dx < 0 ? 'left' : 'right';
+  }
+  canvas.addEventListener('pointerdown', (e) => { if (state !== 'PLAYING') return; pointerDir = queued = dirFromPointer(e); canvas.setPointerCapture?.(e.pointerId); });
+  canvas.addEventListener('pointermove', (e) => { if (pointerDir && state === 'PLAYING') pointerDir = dirFromPointer(e); });
+  window.addEventListener('pointerup', () => { pointerDir = null; });
+  window.addEventListener('pointercancel', () => { pointerDir = null; });
+  startBtn.addEventListener('click', () => { if (state === 'PAUSED') resumeGame(); else resetGame(); });
+
+  // ---- 掘る・動く ----
+  function act(dir) {
+    if (player.moving || player.falling || player.cd > 0) return;
+    const dc = dir === 'left' ? -1 : dir === 'right' ? 1 : 0, dr = dir === 'down' ? 1 : 0;
+    if (dc) player.face = dc;
+    const r = player.r + dr, c = player.c + dc;
+    const t = cell(r, c);
+    if (t === 'wall') return;
+    if (t === null) {
+      if (dr === 0) { // 左右に動く
+        player.fromX = player.x; player.fromY = player.y; player.c = c; player.moving = MOVE_FRAMES;
+      }
+      return;
+    }
+    // たたく
+    player.cd = DIG_CD;
+    t.hp--;
+    const cx = c * CELL + 7, cy = r * CELL + 7 - camY;
+    burst(cx, cy, 3, t.t === 'dirt' ? P.dirtDot : P.stoneDot);
+    if (t.hp > 0) return;
+    setCell(r, c, null);
+    burst(cx, cy, 8, ORE[t.t] ? oreColor(t.t) : t.t === 'dirt' ? P.dirt : P.stone);
+    if (ORE[t.t]) {
+      const v = Math.round(ORE[t.t].v * mult(r));
+      bag += v;
+      popup(c * CELL + 7, r * CELL, ORE[t.t].name + ' +' + v, oreColor(t.t));
+      if (checkClear()) return;
+    } else if (t.t === 'oil') {
+      oil = Math.min(OIL_MAX, oil + OIL_CAN);
+      popup(c * CELL + 7, r * CELL, '油 +10秒', '#f87171');
+    }
+    updateHud();
+  }
+  function oreColor(t) { return t === 'cu' ? '#ea580c' : t === 'ag' ? '#e2e8f0' : t === 'au' ? '#facc15' : '#22d3ee'; }
+
+  // 落石：ひびの入った岩は、下が空いたらゆれてから落ちる（rocks に移して1マスずつ落とす）
+  function updateRocks() {
+    const top = Math.max(SURFACE, Math.floor(camY / CELL) - 2), bottom = Math.floor((camY + H) / CELL) + 2;
+    for (let r = bottom; r >= top; r--) {
+      if (r >= rows.length) continue;
+      for (let c = 0; c < COLS; c++) {
+        const b = rows[r][c];
+        if (!b || b.t !== 'crack') continue;
+        const below = cell(r + 1, c);
+        const playerBelow = player.c === c && player.r === r + 1;
+        if (below === null || playerBelow) {
+          if (!b.shake) b.shake = SHAKE_FRAMES;
+          else if (--b.shake === 0) { setCell(r, c, null); rocks.push({ r, c, t: 0 }); }
+        } else b.shake = 0;
+      }
+    }
+    for (let i = rocks.length - 1; i >= 0; i--) {
+      const k = rocks[i];
+      if (++k.t < FALL_FRAMES) continue;
+      k.t = 0;
+      if (player.c === k.c && (player.r === k.r + 1 || player.r === k.r)) { endGame('crush'); return true; }
+      const below = cell(k.r + 1, k.c);
+      if (below === null) { k.r++; continue; }
+      // 着地：岩として残る
+      setCell(k.r, k.c, { t: 'stone', hp: HP.stone, shake: 0 });
+      burst(k.c * CELL + 7, k.r * CELL + 14 - camY, 6, P.stone);
+      rocks.splice(i, 1);
+    }
+    return false;
+  }
+
+  function update() {
+    for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.08; if (--p.life <= 0) particles.splice(i, 1); }
+    for (let i = popups.length - 1; i >= 0; i--) { popups[i].y -= 0.4; if (--popups[i].life <= 0) popups.splice(i, 1); }
+    if (state !== 'PLAYING') return;
+    frame++;
+    if (--oil <= 0) { oil = 0; endGame('oil'); return; }
+    if (player.cd > 0) player.cd--;
+
+    // 動き・落下
+    if (player.moving) {
+      player.moving--;
+      const k = 1 - player.moving / MOVE_FRAMES;
+      player.x = player.fromX + (player.c * CELL - player.fromX) * k;
+      player.y = player.r * CELL;
+    } else if (player.falling) {
+      player.falling--;
+      player.y = (player.r - player.falling / FALL_FRAMES) * CELL;
+      if (!player.falling) player.y = player.r * CELL;
+    }
+    if (!player.moving && !player.falling) {
+      player.x = player.c * CELL; player.y = player.r * CELL;
+      if (cell(player.r + 1, player.c) === null && !rocks.some((k) => k.c === player.c && k.r === player.r + 1)) {
+        player.r++; player.falling = FALL_FRAMES;
+      } else {
+        const dir = queued || pointerDir || (held.down ? 'down' : held.left ? 'left' : held.right ? 'right' : null);
+        if (dir && player.cd === 0) { queued = null; act(dir); }
+        if (state !== 'PLAYING') return;
+      }
+    }
+    // 深さ・ボーナス
+    if (player.r > maxRow) maxRow = player.r;
+    if (maxRow >= nextBonusRow) {
+      bonusStep++;
+      nextBonusRow += 25;
+      const b = 25 * bonusStep;
+      bonus += b;
+      oil = Math.min(OIL_MAX, oil + 5 * 60);
+      popup(player.x + 7, player.y - 6, (bonusStep * 25) + 'm ボーナス +' + b, '#fde047');
+      if (checkClear()) return;
+    }
+    if (updateRocks()) return;
+    const target = Math.max(0, player.y - 130);
+    camY += (target - camY) * 0.15;
+    updateHud();
+  }
+
+  // ---- 描く ----
+  function dots(x, y, color, seed) {
+    ctx.fillStyle = color;
+    const s = (seed * 9301 + 49297) % 233280;
+    ctx.fillRect(x + 2 + (s % 9), y + 3 + ((s >> 3) % 8), 2, 2);
+    ctx.fillRect(x + 8 + ((s >> 5) % 5), y + 9 + ((s >> 7) % 4), 2, 1);
+  }
+  function drawBlock(b, x, y, r, c) {
+    const sx = b.shake ? (Math.floor(frame / 2) % 2 ? 1 : -1) : 0;
+    x += sx;
+    const base = b.t === 'dirt' || b.t === 'oil' ? P.dirt : b.t === 'hard' ? P.hard : P.stone;
+    ctx.fillStyle = base;
+    ctx.fillRect(x, y, CELL, CELL);
+    dots(x, y, b.t === 'dirt' || b.t === 'oil' ? P.dirtDot : b.t === 'hard' ? P.hardDot : P.stoneDot, r * 31 + c * 7);
+    if (b.t === 'crack') {
+      ctx.fillStyle = P.crack;
+      ctx.fillRect(x + 3, y + 2, 1, 4); ctx.fillRect(x + 4, y + 6, 1, 3); ctx.fillRect(x + 5, y + 9, 3, 1); ctx.fillRect(x + 8, y + 10, 1, 3);
+      ctx.fillRect(x + 10, y + 3, 1, 3); ctx.fillRect(x + 11, y + 6, 2, 1);
+    } else if (ORE[b.t]) {
+      ctx.fillStyle = oreColor(b.t);
+      const g = [[4, 4], [9, 6], [5, 10], [10, 11]];
+      for (const [gx, gy] of g) { ctx.fillRect(x + gx, y + gy, 2, 2); }
+      if (b.t === 'di' || b.t === 'au') { ctx.fillStyle = '#fff'; ctx.fillRect(x + 4, y + 4, 1, 1); ctx.fillRect(x + 9, y + 6, 1, 1); }
+    } else if (b.t === 'oil') {
+      ctx.fillStyle = '#dc2626'; ctx.fillRect(x + 4, y + 4, 7, 8);
+      ctx.fillStyle = '#fca5a5'; ctx.fillRect(x + 5, y + 5, 2, 2);
+      ctx.fillStyle = '#7f1d1d'; ctx.fillRect(x + 6, y + 3, 3, 1);
+    }
+    // たたいた跡
+    if (b.hp < HP[b.t]) {
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      const k = 1 - b.hp / HP[b.t];
+      ctx.fillRect(x + 7 - k * 5, y + 7, k * 10, 1); ctx.fillRect(x + 7, y + 7 - k * 5, 1, k * 10);
+    }
+  }
+  function drawMiner(x, y) {
+    x = Math.round(x); y = Math.round(y);
+    const f = player.face;
+    const swing = player.cd > DIG_CD - 3;
+    // ヘルメットとランプ
+    ctx.fillStyle = '#facc15'; ctx.fillRect(x + 3, y + 1, 9, 3);
+    ctx.fillStyle = '#fef08a'; ctx.fillRect(f > 0 ? x + 11 : x + 2, y + 2, 2, 2);
+    // 顔・体・足
+    ctx.fillStyle = '#fcd9b6'; ctx.fillRect(x + 4, y + 4, 7, 3);
+    ctx.fillStyle = '#1e293b'; ctx.fillRect(f > 0 ? x + 8 : x + 5, y + 5, 1, 1);
+    ctx.fillStyle = '#2563eb'; ctx.fillRect(x + 4, y + 7, 7, 5);
+    ctx.fillStyle = '#1e3a8a'; ctx.fillRect(x + 4, y + 12, 3, 3); ctx.fillRect(x + 8, y + 12, 3, 3);
+    // ツルハシ
+    ctx.fillStyle = '#a8a29e';
+    if (swing) { ctx.fillRect(f > 0 ? x + 12 : x - 2, y + 8, 5, 1); ctx.fillRect(f > 0 ? x + 16 : x - 2, y + 6, 1, 5); }
+    else { ctx.fillRect(f > 0 ? x + 11 : x + 1, y + 4, 1, 7); ctx.fillRect(f > 0 ? x + 9 : x - 1, y + 3, 5, 1); }
+  }
+  function draw() {
+    const cy = Math.round(camY);
+    // 空・坑道の色
+    ctx.fillStyle = P.tunnel; ctx.fillRect(0, 0, W, H);
+    const skyH = SURFACE * CELL - cy;
+    if (skyH > 0) { ctx.fillStyle = P.sky; ctx.fillRect(0, 0, W, skyH); }
+    const r0 = Math.max(0, Math.floor(cy / CELL)), r1 = Math.floor((cy + H) / CELL) + 1;
+    for (let r = r0; r <= r1; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const b = cell(r, c);
+        if (b && b !== 'wall') drawBlock(b, c * CELL, r * CELL - cy, r, c);
+      }
+    }
+    if (skyH > -4) { ctx.fillStyle = P.grass; ctx.fillRect(0, skyH, W, 2); }
+    for (const k of rocks) {
+      const off = k.t / FALL_FRAMES;
+      drawBlock({ t: 'crack', hp: 1, shake: 0 }, k.c * CELL, (k.r + off) * CELL - cy, k.r, k.c);
+    }
+    drawMiner(player.x, player.y - cy);
+    // 暗さ（深いほど暗く、ランタンの明かりは油が減ると小さくなる）
+    const d = depth();
+    if (d > 4) {
+      const a = Math.min(0.9, (d - 4) / 60);
+      const px = player.x + 7, py = player.y - cy + 6;
+      const rad = 38 + 52 * (oil / OIL_MAX);
+      const g = ctx.createRadialGradient(px, py, rad * 0.35, px, py, rad);
+      g.addColorStop(0, 'rgba(0,0,0,0)');
+      g.addColorStop(1, 'rgba(0,0,0,' + a + ')');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    }
+    for (const p of particles) { ctx.fillStyle = p.color; ctx.fillRect(Math.round(p.x), Math.round(p.y - cy), 2, 2); }
+    ctx.textAlign = 'center'; ctx.font = 'bold 9px monospace';
+    for (const p of popups) {
+      ctx.fillStyle = '#000'; ctx.fillText(p.text, Math.round(p.x) + 1, Math.round(p.y - cy) + 1);
+      ctx.fillStyle = p.color; ctx.fillText(p.text, Math.round(p.x), Math.round(p.y - cy));
+    }
+    // 下の表示：深さ・倍率・油
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, H - 22, W, 22);
+    ctx.textAlign = 'left'; ctx.font = 'bold 10px monospace'; ctx.fillStyle = '#fff';
+    ctx.fillText(d + 'm  x' + mult(player.r).toFixed(2), 6, H - 8);
+    ctx.textAlign = 'right'; ctx.fillText('OIL', W - 76, H - 8);
+    ctx.fillStyle = '#44403c'; ctx.fillRect(W - 72, H - 15, 66, 7);
+    const ratio = oil / OIL_MAX;
+    ctx.fillStyle = ratio < 0.15 && Math.floor(frame / 10) % 2 ? '#ef4444' : '#fbbf24';
+    ctx.fillRect(W - 72, H - 15, Math.round(66 * ratio), 7);
+    ctx.textAlign = 'left';
+  }
+
+  let last = performance.now(), acc = 0;
+  function loop(t) {
+    acc += Math.min(100, t - last); last = t;
+    while (acc >= 1000 / 60) { update(); acc -= 1000 / 60; }
+    draw();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame((t) => { last = t; loop(t); });
+})();
+</script>
+  </template>
+
+  <!-- 内職ライン（借金の返済用のゲーム）
+       仕様：
+       - ベルトコンベアで部品（ネジ・ボタン・バネ）が左から右へ流れてくる。いちばん先頭（右端に近い）の部品を、4つの箱のどれかに入れる
+       - 箱：← ネジ ／ ↓ ボタン ／ → バネ ／ ↑ 不良品。10秒を過ぎると、ひびと赤い×の付いた不良品（12%→最大22%）が混ざる。不良品は種類に関係なく「不良品」の箱へ
+       - 賃金：正しい箱 = 10 + 連続正解10回ごとに +2（最大30）。不良品を正しく捨てる = 15。
+         間違えた箱 = −20（連続が切れる）。ベルトの端から落とした = −10（連続が切れる）。稼ぎは0より下にならない
+       - 1シフト60秒。ベルトは少しずつ速く、部品の間隔は短くなる。シフトの間に一度も間違えず落とさなければ「皆勤手当」+100
+       - 操作：←↓→↑ キー（または A S D W）／画面下の4つの箱を押す
+       - 終わったときの「返済」= そのシフトの賃金（gameover の score）。index.html の DEBT_GAMES・loanGameRepay と合わせる -->
+  <template id="game-src-naishoku">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body { background: #fff7ed; color: #431407; font-family: "Courier New", Courier, monospace; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
+  #game-wrapper { position: relative; width: min(420px, 100vw, calc(100vh * 210 / 375)); aspect-ratio: 210 / 375; border: 2px solid #431407; overflow: hidden; background: #ffedd5; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #ui-overlay { position: absolute; inset: 0; pointer-events: none; padding: 10px 12px; }
+  #score-bar { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; font-weight: bold; letter-spacing: 1px; }
+  #earned { color: #b45309; }
+  #message-box { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; background: rgba(255, 251, 245, 0.96); border: 2px solid #431407; padding: 16px; width: 88%; pointer-events: auto; }
+  #message-box h1 { font-size: 20px; margin-bottom: 10px; letter-spacing: 1px; }
+  #message-box p { font-size: 12.5px; line-height: 1.55; margin-bottom: 14px; }
+  #message-box .warn { color: #dc2626; font-weight: bold; }
+  button { background: #431407; color: #fff; border: none; padding: 10px 22px; font-family: inherit; font-size: 16px; font-weight: bold; cursor: pointer; letter-spacing: 1px; }
+  .hidden { display: none !important; }
+  html.dark body { background: #121212; color: #fed7aa; }
+  html.dark #game-wrapper { background: #1c1410; border-color: #fdba74; }
+  html.dark #earned { color: #fde047; }
+  html.dark #message-box { background: rgba(28, 20, 16, 0.96); border-color: #fdba74; color: #fed7aa; }
+  html.dark #message-box .warn { color: #f87171; }
+  html.dark button { background: #fed7aa; color: #1c1410; }
+</style>
+<div id="game-wrapper">
+  <canvas id="gameCanvas"></canvas>
+  <div id="ui-overlay"><div id="score-bar"><span id="debt">DEBT -----</span><span id="earned">+0</span></div></div>
+  <div id="message-box">
+    <h1 id="msg-title">PIECEWORK</h1>
+    <p id="msg-desc"></p>
+    <button id="start-btn">START</button>
+  </div>
+</div>
+<script>
+(function() {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const msgBox = document.getElementById('message-box');
+  const msgTitle = document.getElementById('msg-title');
+  const msgDesc = document.getElementById('msg-desc');
+  const startBtn = document.getElementById('start-btn');
+  const debtEl = document.getElementById('debt');
+  const earnedEl = document.getElementById('earned');
+
+  // 高解像度で描く（文字をくっきり）。座標は 210×375
+  const W = 210, H = 375, SCALE = 2;
+  canvas.width = W * SCALE; canvas.height = H * SCALE;
+  ctx.scale(SCALE, SCALE);
+
+  const SHIFT = 60 * 60;          // 1シフト（フレーム）
+  const BELT_Y = 150, BELT_END = W - 6;
+  const BINS = [
+    { key: 'left', kind: 'screw', label: 'ネジ', arrow: '←' },
+    { key: 'down', kind: 'button', label: 'ボタン', arrow: '↓' },
+    { key: 'right', kind: 'spring', label: 'バネ', arrow: '→' },
+    { key: 'up', kind: 'bad', label: '不良品', arrow: '↑' },
+  ];
+  const BIN_Y = 280, BIN_H = 70, BIN_W = (W - 10) / 4;
+  const binX = (i) => 5 + i * BIN_W;
+
+  let dark = false, C = {};
+  function applyPalette() {
+    dark = document.documentElement.classList.contains('dark');
+    C = dark
+      ? { bg: '#1c1410', wall: '#2a1f18', belt: '#3f3f46', beltLine: '#52525b', roller: '#71717a', text: '#fed7aa', sub: '#a8a29e', bin: '#292018', binEdge: '#fdba74', good: '#4ade80', bad: '#f87171', metal: '#d4d4d8', metalDark: '#71717a', btn: '#f472b6', spring: '#60a5fa' }
+      : { bg: '#ffedd5', wall: '#fed7aa', belt: '#52525b', beltLine: '#71717a', roller: '#3f3f46', text: '#431407', sub: '#78716c', bin: '#fff7ed', binEdge: '#9a3412', good: '#16a34a', bad: '#dc2626', metal: '#a1a1aa', metalDark: '#52525b', btn: '#db2777', spring: '#2563eb' };
+  }
+  applyPalette();
+
+  function sendToApp(msg) { try { parent.postMessage(Object.assign({ source: 'chatter-game' }, msg), '*'); } catch (e) {} }
+  let loan = { has: false, left: 0, overdue: false, known: false };
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== parent || !d || d.source !== 'chatter') return;
+    if (d.type === 'loan') { loan = { has: !!d.has, left: Math.max(0, Number(d.left) || 0), overdue: !!d.overdue, known: true }; updateHud(); if (state === 'START') showStart(); }
+    else if (d.type === 'pause') pauseGame();
+    else if (d.type === 'theme') { document.documentElement.classList.toggle('dark', !!d.dark); applyPalette(); }
+  });
+
+  let state = 'START';
+  let frame = 0, earned = 0, combo = 0, bestCombo = 0, right = 0, wrong = 0, dropped = 0, spawnT = 0, beltOff = 0;
+  let parts = [], flying = [], popups = [], binFlash = [0, 0, 0, 0], binFlashGood = [true, true, true, true];
+  const fmt = (n) => Math.floor(n).toLocaleString();
+  const t01 = () => Math.min(1, frame / SHIFT);
+  const beltSpeed = () => 0.6 + 1.0 * t01();
+  const spawnGap = () => Math.round(70 - 40 * t01());
+  const badRate = () => frame < 600 ? 0 : 0.12 + 0.1 * t01();
+  const payFor = () => Math.min(30, 10 + Math.floor(combo / 10) * 2);
+
+  function updateHud() {
+    if (!loan.known) debtEl.textContent = 'DEBT -----';
+    else if (!loan.has) debtEl.textContent = 'DEBT 0';
+    else debtEl.textContent = 'DEBT ' + fmt(Math.max(0, loan.left - (state === 'PLAYING' || state === 'PAUSED' ? earned : 0)));
+    earnedEl.textContent = '+' + fmt(earned);
+  }
+  function showStart() {
+    msgTitle.textContent = 'PIECEWORK';
+    const lines = [
+      '先頭の部品を、正しい箱へ',
+      '← ネジ ・ ↓ ボタン ・ → バネ ・ ↑ 不良品（×印）',
+      '（キー / 画面下の箱を押す）',
+      '正解 +10〜30（連続でアップ）・ 間違い −20 ・ 落とす −10',
+      '1シフト60秒。ノーミスなら皆勤手当 +100',
+    ];
+    if (loan.known && !loan.has) lines.push('（いまは借金がありません。遊んでも返済には入りません）');
+    else if (loan.overdue) lines.push('<span class="warn">返済期限を過ぎています。返し終えるまで、返済用のゲームしか遊べません</span>');
+    msgDesc.innerHTML = lines.join('<br>');
+    startBtn.textContent = 'START';
+  }
+  showStart(); updateHud();
+
+  function resetGame() {
+    frame = 0; earned = 0; combo = 0; bestCombo = 0; right = 0; wrong = 0; dropped = 0; spawnT = 20; beltOff = 0;
+    parts = []; flying = []; popups = [];
+    state = 'PLAYING';
+    msgBox.classList.add('hidden');
+    updateHud();
+    sendToApp({ type: 'start' });
+  }
+  function pauseGame() {
+    if (state !== 'PLAYING') return;
+    state = 'PAUSED';
+    msgTitle.textContent = 'PAUSE';
+    msgDesc.innerHTML = '賃金 +' + fmt(earned) + '<br>準備ができたら再開しよう';
+    startBtn.textContent = 'RESUME';
+    msgBox.classList.remove('hidden');
+  }
+  function resumeGame() { state = 'PLAYING'; msgBox.classList.add('hidden'); }
+  function endGame(clear) {
+    state = 'GAMEOVER';
+    let allowance = 0;
+    if (!clear && wrong === 0 && dropped === 0 && right > 0) { allowance = 100; earned += 100; }
+    const final = Math.floor(earned);
+    msgTitle.textContent = clear ? '完済！' : '終業！';
+    msgDesc.innerHTML = '正解 ' + right + ' ・ 間違い ' + wrong + ' ・ 落とした ' + dropped + '<br>最高連続 ' + bestCombo
+      + (allowance ? '<br>🎉 皆勤手当 +' + allowance : '')
+      + '<br>返済 <b>+' + fmt(final) + '</b> コイン'
+      + (loan.has ? '<br>' + (loan.left - final > 0 ? '残り ' + fmt(loan.left - final) + ' コイン' : '🎉 借金を返し終えました！') : '');
+    startBtn.textContent = clear ? 'もう一度' : '次のシフト';
+    msgBox.classList.remove('hidden');
+    earnedEl.textContent = '+' + fmt(final);
+    if (loan.has) debtEl.textContent = 'DEBT ' + fmt(Math.max(0, loan.left - final));
+    sendToApp({ type: 'gameover', score: final });
+  }
+
+  function popup(x, y, text, color) { popups.push({ x, y, text, color, life: 45 }); }
+  function spawnPart() {
+    const kinds = ['screw', 'button', 'spring'];
+    const kind = kinds[Math.floor(Math.random() * 3)];
+    parts.push({ kind, bad: Math.random() < badRate(), x: -14, rot: Math.random() * 6 });
+  }
+
+  // 先頭の部品を i 番の箱へ
+  function sort(i) {
+    if (state !== 'PLAYING' || !parts.length) return;
+    let k = 0;
+    for (let j = 1; j < parts.length; j++) if (parts[j].x > parts[k].x) k = j;
+    const p = parts.splice(k, 1)[0];
+    const bin = BINS[i];
+    const ok = p.bad ? bin.kind === 'bad' : bin.kind === p.kind;
+    flying.push({ p, sx: p.x, sy: BELT_Y - 8, tx: binX(i) + BIN_W / 2, ty: BIN_Y + 30, t: 0 });
+    binFlash[i] = 14; binFlashGood[i] = ok;
+    if (ok) {
+      const v = p.bad ? 15 : payFor();
+      combo++; bestCombo = Math.max(bestCombo, combo); right++;
+      earned += v;
+      popup(binX(i) + BIN_W / 2, BIN_Y - 6, '+' + v, C.good);
+      if (combo % 10 === 0) popup(W / 2, BELT_Y - 40, combo + '連続！ナイス！', C.good);
+      if (loan.has && loan.left > 0 && earned >= loan.left) { updateHud(); endGame(true); return; }
+    } else {
+      combo = 0; wrong++;
+      earned = Math.max(0, earned - 20);
+      popup(binX(i) + BIN_W / 2, BIN_Y - 6, '−20 ' + (p.bad ? '不良品！' : '違う箱'), C.bad);
+    }
+    updateHud();
+  }
+
+  // ---- 入力 ----
+  const keyBin = (e) => {
+    const k = e.code || e.key;
+    if (k === 'ArrowLeft' || k === 'KeyA' || k === 'Digit1') return 0;
+    if (k === 'ArrowDown' || k === 'KeyS' || k === 'Digit2') return 1;
+    if (k === 'ArrowRight' || k === 'KeyD' || k === 'Digit3') return 2;
+    if (k === 'ArrowUp' || k === 'KeyW' || k === 'Digit4') return 3;
+    const m = { a: 0, s: 1, d: 2, w: 3 }[String(e.key).toLowerCase()];
+    return m === undefined ? -1 : m;
+  };
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
+    if ((e.key === ' ' || e.key === 'Enter') && state !== 'PLAYING') { e.preventDefault(); if (state === 'PAUSED') resumeGame(); else resetGame(); return; }
+    const i = keyBin(e);
+    if (i >= 0) { e.preventDefault(); if (!e.repeat) sort(i); }
+  });
+  canvas.addEventListener('pointerdown', (e) => {
+    if (state !== 'PLAYING') return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width * W, y = (e.clientY - rect.top) / rect.height * H;
+    if (y < BIN_Y - 20) return;
+    const i = Math.max(0, Math.min(3, Math.floor((x - 5) / BIN_W)));
+    sort(i);
+  });
+  startBtn.addEventListener('click', () => { if (state === 'PAUSED') resumeGame(); else resetGame(); });
+
+  function update() {
+    for (let i = popups.length - 1; i >= 0; i--) { popups[i].y -= 0.5; if (--popups[i].life <= 0) popups.splice(i, 1); }
+    for (let i = flying.length - 1; i >= 0; i--) { if ((flying[i].t += 0.08) >= 1) flying.splice(i, 1); }
+    for (let i = 0; i < 4; i++) if (binFlash[i] > 0) binFlash[i]--;
+    if (state !== 'PLAYING') return;
+    frame++;
+    const sp = beltSpeed();
+    beltOff = (beltOff + sp) % 12;
+    if (--spawnT <= 0) { spawnPart(); spawnT = spawnGap(); }
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.x += sp;
+      if (p.x > BELT_END) {
+        parts.splice(i, 1);
+        combo = 0; dropped++;
+        earned = Math.max(0, earned - 10);
+        popup(BELT_END - 20, BELT_Y + 26, '落とした −10', C.bad);
+        updateHud();
+      }
+    }
+    if (frame >= SHIFT) endGame(false);
+  }
+
+  // ---- 部品の絵 ----
+  function drawPart(p, x, y, s = 1) {
+    ctx.save();
+    ctx.translate(x, y); ctx.scale(s, s);
+    if (p.kind === 'screw') {
+      ctx.fillStyle = C.metal; ctx.fillRect(-7, -6, 14, 4);
+      ctx.fillStyle = C.metalDark; ctx.fillRect(-1, -6, 2, 4);
+      ctx.fillStyle = C.metal; ctx.fillRect(-2, -2, 4, 11);
+      ctx.fillStyle = C.metalDark; for (let k = 0; k < 4; k++) ctx.fillRect(-3, 0 + k * 2.5, 6, 1);
+    } else if (p.kind === 'button') {
+      ctx.fillStyle = C.btn; ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = dark ? '#1c1410' : '#fff';
+      for (const [dx, dy] of [[-2.5, -2.5], [2.5, -2.5], [-2.5, 2.5], [2.5, 2.5]]) { ctx.beginPath(); ctx.arc(dx, dy, 1.3, 0, Math.PI * 2); ctx.fill(); }
+    } else {
+      ctx.strokeStyle = C.spring; ctx.lineWidth = 2; ctx.beginPath();
+      for (let k = 0; k <= 6; k++) { const yy = -8 + k * 2.7; ctx.lineTo(k % 2 ? 6 : -6, yy); }
+      ctx.stroke();
+    }
+    if (p.bad) {
+      ctx.strokeStyle = C.bad; ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.moveTo(-6, -6); ctx.lineTo(6, 6); ctx.moveTo(6, -6); ctx.lineTo(-6, 6); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function drawBinIcon(kind, x, y) {
+    if (kind === 'bad') {
+      ctx.strokeStyle = C.bad; ctx.lineWidth = 2;
+      ctx.strokeRect(x - 6, y - 5, 12, 12); ctx.beginPath(); ctx.moveTo(x - 8, y - 6); ctx.lineTo(x + 8, y - 6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - 3, y - 2); ctx.lineTo(x + 3, y + 4); ctx.moveTo(x + 3, y - 2); ctx.lineTo(x - 3, y + 4); ctx.stroke();
+    } else drawPart({ kind, bad: false }, x, y, 0.9);
+  }
+
+  function draw() {
+    ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+    // 壁・時計
+    ctx.fillStyle = C.wall; ctx.fillRect(0, 34, W, 70);
+    const left = Math.max(0, SHIFT - frame) / 60;
+    ctx.fillStyle = C.text; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left';
+    ctx.fillText('SHIFT ' + Math.ceil(state === 'START' ? 60 : left) + 's', 8, 54);
+    ctx.fillStyle = C.sub; ctx.fillRect(8, 60, W - 16, 5);
+    ctx.fillStyle = left < 10 ? C.bad : C.text; ctx.fillRect(8, 60, (W - 16) * (state === 'START' ? 1 : left / 60), 5);
+    ctx.font = 'bold 11px monospace'; ctx.fillStyle = C.text;
+    ctx.fillText('連続 ' + combo, 8, 84);
+    ctx.textAlign = 'right';
+    ctx.fillText('1個 +' + payFor(), W - 8, 84);
+    ctx.fillStyle = C.sub; ctx.font = '9px monospace';
+    ctx.fillText(frame >= 600 ? '不良品（×）に注意' : '10秒後から不良品が混ざる', W - 8, 98);
+    // ベルト
+    ctx.fillStyle = C.belt; ctx.fillRect(0, BELT_Y, W, 16);
+    ctx.fillStyle = C.beltLine;
+    for (let x = -12 + beltOff; x < W; x += 12) ctx.fillRect(Math.round(x), BELT_Y + 2, 2, 12);
+    ctx.fillStyle = C.roller;
+    for (let x = 6; x < W; x += 24) { ctx.beginPath(); ctx.arc(x, BELT_Y + 20, 4, 0, Math.PI * 2); ctx.fill(); }
+    // ベルトの端（落ちる所）
+    ctx.fillStyle = C.bad; ctx.fillRect(BELT_END, BELT_Y - 2, 2, 20);
+    // 部品（先頭に印）
+    let head = -1;
+    for (let j = 0; j < parts.length; j++) if (head < 0 || parts[j].x > parts[head].x) head = j;
+    parts.forEach((p, j) => {
+      if (j === head && state === 'PLAYING') {
+        ctx.strokeStyle = C.good; ctx.lineWidth = 1.5;
+        ctx.strokeRect(p.x - 11, BELT_Y - 21, 22, 22);
+        ctx.fillStyle = C.good; ctx.beginPath(); ctx.moveTo(p.x - 4, BELT_Y - 30); ctx.lineTo(p.x + 4, BELT_Y - 30); ctx.lineTo(p.x, BELT_Y - 24); ctx.fill();
+      }
+      drawPart(p, p.x, BELT_Y - 10, 1.1);
+    });
+    // 飛んでいく部品
+    for (const f of flying) {
+      const t = f.t, x = f.sx + (f.tx - f.sx) * t, y = f.sy + (f.ty - f.sy) * t - Math.sin(t * Math.PI) * 30;
+      drawPart(f.p, x, y, 1.1 - t * 0.3);
+    }
+    // 箱
+    BINS.forEach((b, i) => {
+      const x = binX(i);
+      ctx.fillStyle = binFlash[i] ? (binFlashGood[i] ? C.good : C.bad) : C.bin;
+      ctx.globalAlpha = binFlash[i] ? 0.35 + binFlash[i] / 40 : 1;
+      ctx.fillRect(x + 2, BIN_Y, BIN_W - 4, BIN_H);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = C.binEdge; ctx.lineWidth = 2; ctx.strokeRect(x + 2, BIN_Y, BIN_W - 4, BIN_H);
+      drawBinIcon(b.kind, x + BIN_W / 2, BIN_Y + 22);
+      ctx.fillStyle = C.text; ctx.textAlign = 'center'; ctx.font = 'bold 10px monospace';
+      ctx.fillText(b.label, x + BIN_W / 2, BIN_Y + 48);
+      ctx.font = 'bold 12px monospace'; ctx.fillText(b.arrow, x + BIN_W / 2, BIN_Y + 63);
+    });
+    ctx.textAlign = 'center'; ctx.font = 'bold 11px monospace';
+    for (const p of popups) { ctx.fillStyle = p.color; ctx.globalAlpha = Math.min(1, p.life / 20); ctx.fillText(p.text, p.x, p.y); ctx.globalAlpha = 1; }
+    ctx.textAlign = 'left';
+  }
+
+  let last = performance.now(), acc = 0;
+  function loop(t) {
+    acc += Math.min(100, t - last); last = t;
+    while (acc >= 1000 / 60) { update(); acc -= 1000 / 60; }
+    draw();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame((t) => { last = t; loop(t); });
+})();
+</script>
+  </template>
+
+  <!-- 借金取りから逃げろ（借金の返済用のゲーム）
+       仕様：
+       - 横スクロールで自動で右へ走る。後ろから借金取りが追いかけてくる（画面上の「距離」ゲージ。0 で捕まる）
+       - 距離：はじめ70（最大100）。ぶつからずに走ると少しずつ広がる（1秒に約2.4）。障害物にぶつかると −30 で、よろけて0.5秒遅くなる（そのあと1秒はぶつからない）
+       - 障害物：段ボール（ジャンプ）・バリケード（高い。早めにジャンプか2段ジャンプ）・看板（頭の高さ。スライディングでくぐる）
+       - 小銭：地面と空中に並ぶ。1枚 3 コイン（400mごとに +1、最大8）。100mごとに +10。🥤エナジードリンク：3秒間ダッシュ（無敵・距離が広がる）
+       - だんだん速くなる。捕まったら終わり。拾ったお金の30%を取り上げられ、残りの70%が返済になる
+       - 操作：↑ / W / スペース / 画面の上のほうを押す = ジャンプ（空中でもう1回）、↓ / S / 画面の下のほうを押す（押している間）= スライディング
+       - 終わったときの「返済」= 取り上げられたあとの額（gameover の score）。index.html の DEBT_GAMES・loanGameRepay と合わせる -->
+  <template id="game-src-nigero">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body { background: #f7f7f7; color: #535353; font-family: "Courier New", Courier, monospace; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
+  #game-wrapper { position: relative; width: min(720px, 100vw, calc(100vh * 320 / 200)); aspect-ratio: 320 / 200; background: #fff; border: 2px solid #535353; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; touch-action: none; }
+  #ui-overlay { position: absolute; inset: 0; pointer-events: none; padding: 6px 10px; }
+  #score-bar { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; font-weight: bold; letter-spacing: 1px; }
+  #earned { color: #b45309; }
+  #message-box { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; background: rgba(255,255,255,0.95); border: 2px solid #535353; padding: 12px 14px; width: 80%; max-height: 92%; overflow: auto; pointer-events: auto; }
+  #message-box h1 { font-size: 18px; margin-bottom: 6px; letter-spacing: 1px; }
+  #message-box p { font-size: 12px; line-height: 1.5; margin-bottom: 10px; }
+  #message-box .warn { color: #dc2626; font-weight: bold; }
+  button { background: #535353; color: #fff; border: none; padding: 8px 20px; font-family: inherit; font-size: 15px; font-weight: bold; cursor: pointer; letter-spacing: 1px; }
+  .hidden { display: none !important; }
+  html.dark body { background: #121212; color: #c8c8c8; }
+  html.dark #game-wrapper { background: #202124; border-color: #c8c8c8; }
+  html.dark #earned { color: #facc15; }
+  html.dark #message-box { background: rgba(32,33,36,0.95); border-color: #c8c8c8; }
+  html.dark #message-box .warn { color: #f87171; }
+  html.dark button { background: #c8c8c8; color: #202124; }
+</style>
+<div id="game-wrapper">
+  <canvas id="gameCanvas"></canvas>
+  <div id="ui-overlay"><div id="score-bar"><span id="debt">DEBT -----</span><span id="earned">+0</span></div></div>
+  <div id="message-box">
+    <h1 id="msg-title">RUN FROM DEBT</h1>
+    <p id="msg-desc"></p>
+    <button id="start-btn">START</button>
+  </div>
+</div>
+<script>
+(function() {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const msgBox = document.getElementById('message-box');
+  const msgTitle = document.getElementById('msg-title');
+  const msgDesc = document.getElementById('msg-desc');
+  const startBtn = document.getElementById('start-btn');
+  const debtEl = document.getElementById('debt');
+  const earnedEl = document.getElementById('earned');
+
+  const W = 320, H = 200, GROUND = 172;
+  canvas.width = W; canvas.height = H;
+  const GRAV = 0.32, JUMP = -5.6, JUMP2 = -4.8;
+  const TAKE = 0.3; // 捕まったときに取り上げられる割合
+
+  let C = {};
+  function applyPalette() {
+    const dark = document.documentElement.classList.contains('dark');
+    C = dark
+      ? { bg: '#202124', ink: '#c8c8c8', mid: '#8a8a8a', faint: '#33353a', gold: '#facc15', red: '#f87171', suit: '#0b0b0c', can: '#22d3ee' }
+      : { bg: '#ffffff', ink: '#535353', mid: '#999999', faint: '#eeeeee', gold: '#eab308', red: '#dc2626', suit: '#111111', can: '#0891b2' };
+  }
+  applyPalette();
+
+  function sendToApp(msg) { try { parent.postMessage(Object.assign({ source: 'chatter-game' }, msg), '*'); } catch (e) {} }
+  let loan = { has: false, left: 0, overdue: false, known: false };
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== parent || !d || d.source !== 'chatter') return;
+    if (d.type === 'loan') { loan = { has: !!d.has, left: Math.max(0, Number(d.left) || 0), overdue: !!d.overdue, known: true }; updateHud(); if (state === 'START') showStart(); }
+    else if (d.type === 'pause') pauseGame();
+    else if (d.type === 'theme') { document.documentElement.classList.toggle('dark', !!d.dark); applyPalette(); }
+  });
+
+  let state = 'START';
+  let frame = 0, dist = 0, earned = 0, gap = 70, speed = 2.6, nextBonus = 100, spawnX = 0, coinsGot = 0;
+  let obs = [], coins = [], items = [], popups = [], dust = [];
+  const pl = { x: 92, y: GROUND, vy: 0, onGround: true, jumps: 0, slide: false, slideHeld: false, stumble: 0, inv: 0, dash: 0 };
+  const fmt = (n) => Math.floor(n).toLocaleString();
+  const coinValue = () => Math.min(8, 3 + Math.floor(dist / 400));
+
+  function updateHud() {
+    if (!loan.known) debtEl.textContent = 'DEBT -----';
+    else if (!loan.has) debtEl.textContent = 'DEBT 0';
+    else debtEl.textContent = 'DEBT ' + fmt(Math.max(0, loan.left - (state === 'PLAYING' || state === 'PAUSED' ? Math.floor(earned * (1 - TAKE)) : 0)));
+    earnedEl.textContent = '+' + fmt(earned);
+  }
+  function showStart() {
+    msgTitle.textContent = 'RUN FROM DEBT';
+    const lines = [
+      '↑・スペース・上を押す = ジャンプ（空中でもう1回）',
+      '↓・下を押す = スライディング（看板をくぐる）',
+      '小銭を拾いながら、借金取りから逃げろ！',
+      '捕まると、拾ったお金の30%を取り上げられる',
+    ];
+    if (loan.known && !loan.has) lines.push('（いまは借金がありません。遊んでも返済には入りません）');
+    else if (loan.overdue) lines.push('<span class="warn">返済期限を過ぎています。返し終えるまで、返済用のゲームしか遊べません</span>');
+    msgDesc.innerHTML = lines.join('<br>');
+    startBtn.textContent = 'START';
+  }
+  showStart(); updateHud();
+
+  function resetGame() {
+    frame = 0; dist = 0; earned = 0; gap = 70; speed = 2.6; nextBonus = 100; spawnX = W + 60; coinsGot = 0;
+    obs = []; coins = []; items = []; popups = []; dust = [];
+    Object.assign(pl, { y: GROUND, vy: 0, onGround: true, jumps: 0, slide: false, slideHeld: false, stumble: 0, inv: 0, dash: 0 });
+    state = 'PLAYING';
+    msgBox.classList.add('hidden');
+    updateHud();
+    sendToApp({ type: 'start' });
+  }
+  function pauseGame() {
+    pl.slideHeld = false;
+    if (state !== 'PLAYING') return;
+    state = 'PAUSED';
+    msgTitle.textContent = 'PAUSE';
+    msgDesc.innerHTML = fmt(dist) + 'm ・ 拾った +' + fmt(earned) + '<br>準備ができたら再開しよう';
+    startBtn.textContent = 'RESUME';
+    msgBox.classList.remove('hidden');
+  }
+  function resumeGame() { state = 'PLAYING'; msgBox.classList.add('hidden'); }
+  // caught：捕まった（30%を取り上げられる）/ そうでなければ返し終えた
+  function endGame(caught) {
+    state = 'GAMEOVER';
+    pl.slideHeld = false;
+    const got = Math.floor(earned), taken = caught ? Math.floor(got * TAKE) : 0, final = got - taken;
+    msgTitle.textContent = caught ? '捕まった！' : '完済！';
+    msgDesc.innerHTML = fmt(dist) + 'm 逃げた ・ 拾った ' + fmt(got) + ' コイン'
+      + (caught ? '<br>借金取りに ' + fmt(taken) + ' コインを取り上げられた' : '')
+      + '<br>返済 <b>+' + fmt(final) + '</b> コイン'
+      + (loan.has ? '<br>' + (loan.left - final > 0 ? '残り ' + fmt(loan.left - final) + ' コイン' : '🎉 借金を返し終えました！') : '');
+    startBtn.textContent = caught ? 'RETRY' : 'もう一度';
+    msgBox.classList.remove('hidden');
+    earnedEl.textContent = '+' + fmt(final);
+    if (loan.has) debtEl.textContent = 'DEBT ' + fmt(Math.max(0, loan.left - final));
+    sendToApp({ type: 'gameover', score: final });
+  }
+  function gain(n, x, y) {
+    earned += n;
+    if (x !== undefined) popups.push({ x, y, text: '+' + n, life: 30 });
+    // 取り上げられない場合（返し終えた）は全額が返済になる
+    if (loan.has && loan.left > 0 && earned >= loan.left) { updateHud(); endGame(false); return true; }
+    return false;
+  }
+
+  // ---- 入力 ----
+  function jump() {
+    if (state !== 'PLAYING' || pl.stumble > 0) return;
+    if (pl.onGround) { pl.vy = JUMP; pl.onGround = false; pl.jumps = 1; pl.slide = false; puff(pl.x, GROUND); }
+    else if (pl.jumps < 2) { pl.vy = JUMP2; pl.jumps = 2; puff(pl.x, pl.y); }
+  }
+  const isJump = (e) => ['ArrowUp', 'KeyW', 'Space'].includes(e.code) || e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W' || e.key === ' ';
+  const isSlide = (e) => ['ArrowDown', 'KeyS'].includes(e.code) || e.key === 'ArrowDown' || e.key === 's' || e.key === 'S';
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
+    if (state !== 'PLAYING') {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); if (state === 'PAUSED') resumeGame(); else resetGame(); }
+      return;
+    }
+    if (isJump(e)) { e.preventDefault(); if (!e.repeat) jump(); }
+    else if (isSlide(e)) { e.preventDefault(); pl.slideHeld = true; }
+  });
+  window.addEventListener('keyup', (e) => { if (isSlide(e)) pl.slideHeld = false; });
+  let pointerSlide = false;
+  canvas.addEventListener('pointerdown', (e) => {
+    if (state !== 'PLAYING') return;
+    const rect = canvas.getBoundingClientRect();
+    const y = (e.clientY - rect.top) / rect.height * H;
+    if (y > H * 0.62) { pointerSlide = true; pl.slideHeld = true; } else jump();
+  });
+  const endPointer = () => { if (pointerSlide) { pointerSlide = false; pl.slideHeld = false; } };
+  window.addEventListener('pointerup', endPointer);
+  window.addEventListener('pointercancel', endPointer);
+  startBtn.addEventListener('click', () => { if (state === 'PAUSED') resumeGame(); else resetGame(); });
+
+  function puff(x, y) { for (let i = 0; i < 5; i++) dust.push({ x: x + Math.random() * 6, y: y - 1, vx: -0.5 - Math.random(), vy: -Math.random() * 0.8, life: 14 }); }
+
+  // ---- 出てくるもの ----
+  // 1区間ずつ置く：障害物1つと、その前後の小銭
+  function spawnChunk() {
+    const lvl = Math.min(1, dist / 1500);
+    const r = Math.random();
+    const x = spawnX;
+    let type;
+    if (r < 0.42) type = 'box';
+    else if (r < 0.42 + 0.18 + lvl * 0.1) type = 'barricade';
+    else type = 'sign';
+    if (type === 'box') obs.push({ type, x, w: 14, h: 14, y: GROUND - 14 });
+    else if (type === 'barricade') obs.push({ type, x, w: 12, h: 34, y: GROUND - 34 });
+    else obs.push({ type, x, w: 30, h: 26, y: GROUND - 44 }); // 看板：下の端は地面から18px（立っていると当たる。スライディングでくぐれる）
+    // 小銭：障害物の上の弧か、手前の地面に並べる
+    const n = 3 + Math.floor(Math.random() * 3);
+    if (type === 'sign') for (let i = 0; i < n; i++) coins.push({ x: x - 10 + i * 12, y: GROUND - 8 });
+    else for (let i = 0; i < n; i++) { const t = i / (n - 1); coins.push({ x: x - 22 + t * 58, y: GROUND - 16 - Math.sin(t * Math.PI) * (type === 'box' ? 34 : 54) }); }
+    if (Math.random() < 0.06) items.push({ x: x + 90, y: GROUND - 40 });
+    // 次の区間までの間隔（速いほど広く、だんだん詰まる）
+    spawnX = x + Math.max(120, 230 - lvl * 80 + Math.random() * 90) + speed * 8;
+  }
+
+  const hitbox = () => {
+    const h = pl.slide ? 11 : 22;
+    return { x: pl.x - 6, y: pl.y - h, w: 12, h };
+  };
+  const overlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+  function update() {
+    for (let i = popups.length - 1; i >= 0; i--) { popups[i].y -= 0.5; if (--popups[i].life <= 0) popups.splice(i, 1); }
+    for (let i = dust.length - 1; i >= 0; i--) { const d = dust[i]; d.x += d.vx; d.y += d.vy; if (--d.life <= 0) dust.splice(i, 1); }
+    if (state !== 'PLAYING') return;
+    frame++;
+    speed = Math.min(6.2, 2.6 + frame * 0.0012);
+    let sp = speed * (pl.stumble > 0 ? 0.45 : 1) * (pl.dash > 0 ? 1.35 : 1);
+    dist += sp / 10;
+    if (pl.stumble > 0) pl.stumble--;
+    if (pl.inv > 0) pl.inv--;
+    if (pl.dash > 0) pl.dash--;
+    // 借金取りとの距離
+    gap = Math.min(100, gap + (pl.dash > 0 ? 0.5 : pl.stumble > 0 ? -0.15 : 0.04));
+    if (gap <= 0) { gap = 0; endGame(true); return; }
+
+    // 自分
+    pl.slide = pl.slideHeld && pl.stumble === 0;
+    if (!pl.onGround) {
+      pl.vy += pl.slideHeld ? GRAV * 2.2 : GRAV; // 空中でスライディング = 早く降りる
+      pl.y += pl.vy;
+      if (pl.y >= GROUND) { pl.y = GROUND; pl.vy = 0; pl.onGround = true; pl.jumps = 0; puff(pl.x - 4, GROUND); }
+    }
+    if (pl.onGround && frame % (pl.slide ? 3 : 7) === 0) dust.push({ x: pl.x - 6, y: GROUND - 1, vx: -0.6, vy: -0.2, life: 10 });
+
+    // 流れる
+    spawnX -= sp;
+    while (spawnX < W + 80) spawnChunk();
+    for (const o of obs) o.x -= sp;
+    for (const c of coins) c.x -= sp;
+    for (const it of items) it.x -= sp;
+    obs = obs.filter((o) => o.x + o.w > -20);
+    coins = coins.filter((c) => c.x > -20 && !c.got);
+    items = items.filter((it) => it.x > -20 && !it.got);
+
+    const hb = hitbox();
+    for (const o of obs) {
+      if (o.hit || !overlap(hb, o)) continue;
+      if (pl.dash > 0) { o.hit = true; popups.push({ x: o.x, y: o.y - 4, text: 'ドーン！', life: 30 }); continue; }
+      if (pl.inv > 0) continue;
+      o.hit = true;
+      gap -= 30;
+      pl.stumble = 30; pl.inv = 90;
+      popups.push({ x: pl.x, y: pl.y - 30, text: '−30 よろけた！', life: 40, red: true });
+      if (gap <= 0) { gap = 0; endGame(true); return; }
+    }
+    for (const c of coins) {
+      if (c.got) continue;
+      const mag = pl.dash > 0 ? 18 : 0; // ダッシュ中は小銭を少し吸い寄せる
+      if (Math.abs(c.x - pl.x) < 8 + mag && Math.abs((c.y) - (hb.y + hb.h / 2)) < hb.h / 2 + 6 + mag) {
+        c.got = true; coinsGot++;
+        if (gain(coinValue(), c.x, c.y - 6)) return;
+      }
+    }
+    for (const it of items) {
+      if (!it.got && Math.abs(it.x - pl.x) < 10 && Math.abs(it.y - (hb.y + hb.h / 2)) < hb.h / 2 + 8) {
+        it.got = true; pl.dash = 180; pl.stumble = 0;
+        popups.push({ x: pl.x, y: pl.y - 34, text: 'ダッシュ！', life: 40 });
+      }
+    }
+    if (dist >= nextBonus) {
+      nextBonus += 100;
+      if (gain(10, pl.x, pl.y - 40)) return;
+    }
+    updateHud();
+  }
+
+  // ---- 描く ----
+  function drawRunner(x, y) {
+    x = Math.round(x); y = Math.round(y);
+    const blink = pl.inv > 0 && pl.dash === 0 && Math.floor(frame / 4) % 2 === 0;
+    if (blink) return;
+    ctx.fillStyle = pl.dash > 0 ? C.can : C.ink;
+    if (pl.slide && pl.onGround) {
+      ctx.fillRect(x - 7, y - 10, 6, 6);       // 頭
+      ctx.fillRect(x - 2, y - 7, 10, 5);       // 体
+      ctx.fillRect(x + 6, y - 3, 6, 2);        // 足
+      return;
+    }
+    const step = Math.floor(frame / 5) % 2;
+    ctx.fillRect(x - 3, y - 24, 7, 7);           // 頭
+    ctx.fillRect(x - 3, y - 16, 6, 9);           // 体
+    if (pl.onGround) {
+      ctx.fillRect(x + (step ? -4 : 1), y - 7, 3, 7);
+      ctx.fillRect(x + (step ? 2 : -3), y - 7, 3, 5);
+    } else { ctx.fillRect(x - 4, y - 7, 3, 5); ctx.fillRect(x + 2, y - 8, 3, 4); }
+    ctx.fillRect(x + 3, y - 15, 4, 2);           // 腕
+    if (pl.stumble > 0) { ctx.fillStyle = C.red; ctx.fillRect(x + 5, y - 28, 2, 3); ctx.fillRect(x + 5, y - 24, 2, 1); }
+  }
+  function drawCollector() {
+    // 距離 100 → 画面の外、0 → 自分の真後ろ
+    const x = Math.round(pl.x - 16 - gap * 1.0);
+    if (x < -24) return;
+    const step = Math.floor(frame / 6) % 2;
+    const y = GROUND;
+    ctx.fillStyle = C.suit;
+    ctx.fillRect(x - 5, y - 30, 10, 9);          // 頭（サングラス）
+    ctx.fillStyle = C.bg; ctx.fillRect(x - 1, y - 27, 6, 2);
+    ctx.fillStyle = C.suit;
+    ctx.fillRect(x - 6, y - 21, 12, 13);         // スーツ
+    ctx.fillRect(x + (step ? -5 : 1), y - 8, 4, 8);
+    ctx.fillRect(x + (step ? 2 : -4), y - 8, 4, 6);
+    ctx.fillRect(x + 6, y - 19, 7, 3);           // のばした手
+    ctx.fillStyle = C.red; ctx.fillRect(x - 1, y - 20, 2, 7); // ネクタイ
+    if (gap < 30 && Math.floor(frame / 10) % 2) { ctx.fillStyle = C.red; ctx.font = 'bold 9px monospace'; ctx.fillText('待てー！', x - 14, y - 34); }
+  }
+  function drawObstacle(o) {
+    const x = Math.round(o.x), y = Math.round(o.y);
+    ctx.fillStyle = C.ink;
+    if (o.type === 'box') {
+      ctx.fillRect(x, y, o.w, o.h);
+      ctx.fillStyle = C.bg; ctx.fillRect(x + 2, y + 2, o.w - 4, o.h - 4);
+      ctx.fillStyle = C.ink; ctx.fillRect(x + 2, y + 6, o.w - 4, 1); ctx.fillRect(x + 6, y + 2, 1, 4);
+    } else if (o.type === 'barricade') {
+      for (let k = 0; k < o.h; k += 6) { ctx.fillStyle = (k / 6) % 2 ? C.red : C.ink; ctx.fillRect(x, y + k, o.w, 6); }
+    } else {
+      ctx.fillRect(x + 3, y - 40, 2, 40); ctx.fillRect(x + o.w - 5, y - 40, 2, 40); // ひも
+      ctx.fillRect(x, y, o.w, o.h);
+      ctx.fillStyle = C.bg; ctx.fillRect(x + 2, y + 2, o.w - 4, o.h - 4);
+      ctx.fillStyle = C.red; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center'; ctx.fillText('高金利', x + o.w / 2, y + 16); ctx.textAlign = 'left';
+    }
+  }
+  function draw() {
+    ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+    // 遠くのビル
+    ctx.fillStyle = C.faint;
+    const off = (dist * 3) % 80;
+    for (let k = -1; k < 6; k++) { const bx = Math.round(k * 80 - off); ctx.fillRect(bx, 96, 30, GROUND - 96); ctx.fillRect(bx + 38, 120, 22, GROUND - 120); }
+    // 地面
+    ctx.fillStyle = C.ink; ctx.fillRect(0, GROUND, W, 1);
+    ctx.fillStyle = C.mid;
+    for (let k = 0; k < 18; k++) { const gx = Math.round(((k * 37 - dist * 10) % W + W) % W); ctx.fillRect(gx, GROUND + 4 + (k % 3) * 5, 3 + (k % 4), 1); }
+    for (const o of obs) drawObstacle(o);
+    for (const c of coins) {
+      const flip = Math.floor((frame + c.x) / 8) % 4;
+      ctx.fillStyle = C.gold;
+      const w = flip === 1 || flip === 3 ? 3 : 7;
+      ctx.fillRect(Math.round(c.x - w / 2), Math.round(c.y - 4), w, 8);
+    }
+    for (const it of items) {
+      ctx.fillStyle = C.can; ctx.fillRect(Math.round(it.x - 3), Math.round(it.y - 6), 7, 11);
+      ctx.fillStyle = C.bg; ctx.fillRect(Math.round(it.x - 1), Math.round(it.y - 3), 3, 4);
+    }
+    drawCollector();
+    drawRunner(pl.x, pl.y);
+    for (const d of dust) { ctx.fillStyle = C.mid; ctx.fillRect(Math.round(d.x), Math.round(d.y), 2, 2); }
+    ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+    for (const p of popups) { ctx.fillStyle = p.red ? C.red : C.gold; ctx.fillText(p.text, Math.round(p.x), Math.round(p.y)); }
+    // 距離ゲージ・メートル
+    ctx.textAlign = 'left';
+    ctx.fillStyle = C.ink; ctx.font = 'bold 10px monospace';
+    ctx.fillText('借金取りとの距離', 8, H - 6);
+    ctx.fillStyle = C.faint; ctx.fillRect(100, H - 13, 120, 7);
+    ctx.fillStyle = gap < 30 ? C.red : C.ink; ctx.fillRect(100, H - 13, Math.round(120 * gap / 100), 7);
+    ctx.textAlign = 'right'; ctx.fillStyle = C.ink;
+    ctx.fillText(fmt(dist) + 'm  1枚' + coinValue(), W - 8, H - 6);
+    ctx.textAlign = 'left';
+  }
+
+  let last = performance.now(), acc = 0;
+  function loop(t) {
+    acc += Math.min(100, t - last); last = t;
+    while (acc >= 1000 / 60) { update(); acc -= 1000 / 60; }
+    draw();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame((t) => { last = t; loop(t); });
+})();
+</script>
+  </template>
+
+  <!-- 皿洗い（借金の返済用のゲーム）
+       仕様：
+       - リズムゲーム。左右2本のレーンを、こする合図（泡）が上から流れてくる。下の線に重なった瞬間に、そのレーンのキー・側を押して皿をこする
+       - 判定：ぴったり（±55ms）= +3 コイン、いい感じ（±120ms）= +1 コイン。押さずに通り過ぎる = ミス。合図が無いときに押しても何も起きない
+       - 皿の汚れは8か所。こするたびに1か所ずつ落ち、8回で「ピカピカ！」+20 コイン（ひびが1つも無ければさらに +10）。次の皿が来る
+       - ミスすると皿にひびが入る。ひびが3つで皿が割れて、弁償 −50（稼ぎは0より下にならない）。次の皿が来る
+       - テンポ：はじめ BPM 96、20秒ごとに +8（最大 136）。30秒を過ぎると、裏拍（8分音符）の合図も混ざる
+       - 1シフト90秒（合図が来なくなって、最後の判定が終わったら終わり）
+       - 音：拍に合わせて小さくカチッと鳴る（右上の ♪ か M キーで消せる）
+       - 操作：← / A / F = 左、→ / D / J = 右、画面の左半分・右半分を押す
+       - 終わったときの「返済」= 稼いだ額（gameover の score）。index.html の DEBT_GAMES・loanGameRepay と合わせる -->
+  <template id="game-src-osara">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body { background: #ecfeff; color: #164e63; font-family: "Courier New", Courier, monospace; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
+  #game-wrapper { position: relative; width: min(420px, 100vw, calc(100vh * 210 / 375)); aspect-ratio: 210 / 375; border: 2px solid #164e63; overflow: hidden; background: #cffafe; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #ui-overlay { position: absolute; inset: 0; pointer-events: none; padding: 10px 12px; }
+  #score-bar { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; font-weight: bold; letter-spacing: 1px; padding-right: 22px; }
+  #earned { color: #b45309; }
+  #mute { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; padding: 0; font-size: 14px; pointer-events: auto; background: transparent; color: inherit; border: 1.5px solid currentColor; border-radius: 6px; }
+  #message-box { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; background: rgba(240, 253, 255, 0.96); border: 2px solid #164e63; padding: 16px; width: 88%; pointer-events: auto; }
+  #message-box h1 { font-size: 20px; margin-bottom: 10px; letter-spacing: 1px; }
+  #message-box p { font-size: 12.5px; line-height: 1.55; margin-bottom: 14px; }
+  #message-box .warn { color: #dc2626; font-weight: bold; }
+  button { background: #164e63; color: #fff; border: none; padding: 10px 22px; font-family: inherit; font-size: 16px; font-weight: bold; cursor: pointer; letter-spacing: 1px; }
+  .hidden { display: none !important; }
+  html.dark body { background: #121212; color: #a5f3fc; }
+  html.dark #game-wrapper { background: #082f3a; border-color: #67e8f9; }
+  html.dark #earned { color: #fde047; }
+  html.dark #message-box { background: rgba(8, 30, 40, 0.96); border-color: #67e8f9; color: #a5f3fc; }
+  html.dark #message-box .warn { color: #f87171; }
+  html.dark button { background: #a5f3fc; color: #082f3a; }
+  html.dark #mute { background: transparent; color: #a5f3fc; }
+</style>
+<div id="game-wrapper">
+  <canvas id="gameCanvas"></canvas>
+  <div id="ui-overlay"><div id="score-bar"><span id="debt">DEBT -----</span><span id="earned">+0</span></div></div>
+  <button id="mute" title="音のオン・オフ（M）">♪</button>
+  <div id="message-box">
+    <h1 id="msg-title">DISH WASH</h1>
+    <p id="msg-desc"></p>
+    <button id="start-btn">START</button>
+  </div>
+</div>
+<script>
+(function() {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const msgBox = document.getElementById('message-box');
+  const msgTitle = document.getElementById('msg-title');
+  const msgDesc = document.getElementById('msg-desc');
+  const startBtn = document.getElementById('start-btn');
+  const muteBtn = document.getElementById('mute');
+  const debtEl = document.getElementById('debt');
+  const earnedEl = document.getElementById('earned');
+
+  const W = 210, H = 375, SCALE = 2;
+  canvas.width = W * SCALE; canvas.height = H * SCALE;
+  ctx.scale(SCALE, SCALE);
+
+  const SHIFT_MS = 90000, TRAVEL = 1200, PERFECT = 55, GOOD = 120;
+  const SCRUBS = 8, MAX_CRACKS = 3;
+  const LANE_X = [62, 148], LANE_W = 64, TOP_Y = 212, HIT_Y = 334;
+  const DISH = { x: 105, y: 140, r: 54 };
+  const SINK_Y = 76, SINK_H = 128;
+
+  let C = {};
+  function applyPalette() {
+    const dark = document.documentElement.classList.contains('dark');
+    C = dark
+      ? { bg: '#082f3a', sink: '#0e4452', sinkEdge: '#155e75', lane: '#0b3b48', line: '#67e8f9', text: '#a5f3fc', sub: '#5eb8c8', dish: '#e2e8f0', rim: '#94a3b8', dirt: '#92400e', bubble: '#ecfeff', good: '#4ade80', perfect: '#fde047', bad: '#f87171', crack: '#1e293b' }
+      : { bg: '#cffafe', sink: '#a5f3fc', sinkEdge: '#22d3ee', lane: '#e0f7fa', line: '#0e7490', text: '#164e63', sub: '#0e7490', dish: '#ffffff', rim: '#94a3b8', dirt: '#a16207', bubble: '#ffffff', good: '#16a34a', perfect: '#d97706', bad: '#dc2626', crack: '#334155' };
+  }
+  applyPalette();
+
+  function sendToApp(msg) { try { parent.postMessage(Object.assign({ source: 'chatter-game' }, msg), '*'); } catch (e) {} }
+  let loan = { has: false, left: 0, overdue: false, known: false };
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== parent || !d || d.source !== 'chatter') return;
+    if (d.type === 'loan') { loan = { has: !!d.has, left: Math.max(0, Number(d.left) || 0), overdue: !!d.overdue, known: true }; updateHud(); if (state === 'START') showStart(); }
+    else if (d.type === 'pause') pauseGame();
+    else if (d.type === 'theme') { document.documentElement.classList.toggle('dark', !!d.dark); applyPalette(); }
+  });
+
+  // ---- 音（WebAudio。START を押したときに用意する）----
+  let audio = null, muted = false;
+  function initAudio() {
+    if (audio) { if (audio.state === 'suspended') audio.resume(); return; }
+    try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audio = null; }
+  }
+  function beep(freq, dur, vol, type = 'sine') {
+    if (!audio || muted) return;
+    const t = audio.currentTime, o = audio.createOscillator(), g = audio.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(audio.destination); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function setMuted(m) { muted = m; muteBtn.textContent = m ? '×' : '♪'; }
+  muteBtn.addEventListener('click', (e) => { e.stopPropagation(); setMuted(!muted); });
+
+  // ---- 状態 ----
+  let state = 'START';
+  let now = 0, earned = 0, combo = 0, bestCombo = 0, perfects = 0, goods = 0, misses = 0, cleanDishes = 0, broken = 0;
+  let notes = [], nextBeat = 0, beatIndex = 0, lastLane = 1, tickAt = 0;
+  let hold = 0; // 再開したときの待ち（ms）
+  let dish = null, dishIn = 0, popups = [], bubbles = [], shards = [], laneFlash = [0, 0], frame = 0;
+  const fmt = (n) => Math.floor(n).toLocaleString();
+  const bpmAt = (t) => Math.min(136, 96 + 8 * Math.floor(t / 20000));
+
+  function newDish() {
+    const spots = [];
+    for (let i = 0; i < SCRUBS; i++) {
+      const a = Math.random() * Math.PI * 2, d = 8 + Math.random() * 32;
+      spots.push({ x: Math.cos(a) * d, y: Math.sin(a) * d, r: 5 + Math.random() * 5, k: Math.random() });
+    }
+    dish = { spots, left: SCRUBS, cracks: [] };
+    dishIn = 20;
+  }
+
+  function updateHud() {
+    if (!loan.known) debtEl.textContent = 'DEBT -----';
+    else if (!loan.has) debtEl.textContent = 'DEBT 0';
+    else debtEl.textContent = 'DEBT ' + fmt(Math.max(0, loan.left - (state === 'PLAYING' || state === 'PAUSED' ? earned : 0)));
+    earnedEl.textContent = '+' + fmt(earned);
+  }
+  function showStart() {
+    msgTitle.textContent = 'DISH WASH';
+    const lines = [
+      '泡が下の線に重なったら、そのレーンを押してこする',
+      '← / A / F = 左 ・ → / D / J = 右（画面の左右を押してもOK）',
+      'ぴったり +3 ・ いい感じ +1 ・ 8回こすって ピカピカ +20',
+      'ミスでひび。ひび3つで割れて 弁償 −50',
+      '1シフト90秒。だんだんテンポが上がる',
+    ];
+    if (loan.known && !loan.has) lines.push('（いまは借金がありません。遊んでも返済には入りません）');
+    else if (loan.overdue) lines.push('<span class="warn">返済期限を過ぎています。返し終えるまで、返済用のゲームしか遊べません</span>');
+    msgDesc.innerHTML = lines.join('<br>');
+    startBtn.textContent = 'START';
+  }
+  showStart(); updateHud(); newDish(); dishIn = 0;
+
+  function resetGame() {
+    initAudio();
+    now = -1500; hold = 0; earned = 0; combo = 0; bestCombo = 0; perfects = 0; goods = 0; misses = 0; cleanDishes = 0; broken = 0;
+    notes = []; nextBeat = 0; beatIndex = 0; lastLane = 1; tickAt = 0;
+    popups = []; bubbles = []; shards = []; laneFlash = [0, 0];
+    newDish();
+    state = 'PLAYING';
+    msgBox.classList.add('hidden');
+    updateHud();
+    sendToApp({ type: 'start' });
+  }
+  function pauseGame() {
+    if (state !== 'PLAYING') return;
+    state = 'PAUSED';
+    msgTitle.textContent = 'PAUSE';
+    msgDesc.innerHTML = '稼ぎ +' + fmt(earned) + '<br>再開すると、1.5秒数えてから続きが始まります';
+    startBtn.textContent = 'RESUME';
+    msgBox.classList.remove('hidden');
+  }
+  function resumeGame() {
+    initAudio();
+    hold = 1500; // 再開したら1.5秒数えてから、止めたところの続きを始める
+    state = 'PLAYING';
+    msgBox.classList.add('hidden');
+  }
+  function endGame(clear) {
+    state = 'GAMEOVER';
+    const final = Math.floor(earned);
+    msgTitle.textContent = clear ? '完済！' : 'おつかれさま！';
+    msgDesc.innerHTML = 'ぴったり ' + perfects + ' ・ いい感じ ' + goods + ' ・ ミス ' + misses
+      + '<br>洗った皿 ' + cleanDishes + '枚 ・ 割った皿 ' + broken + '枚 ・ 最高連続 ' + bestCombo
+      + '<br>返済 <b>+' + fmt(final) + '</b> コイン'
+      + (loan.has ? '<br>' + (loan.left - final > 0 ? '残り ' + fmt(loan.left - final) + ' コイン' : '🎉 借金を返し終えました！') : '');
+    startBtn.textContent = clear ? 'もう一度' : '次のシフト';
+    msgBox.classList.remove('hidden');
+    earnedEl.textContent = '+' + fmt(final);
+    if (loan.has) debtEl.textContent = 'DEBT ' + fmt(Math.max(0, loan.left - final));
+    sendToApp({ type: 'gameover', score: final });
+  }
+  function gain(n) {
+    earned += n;
+    if (loan.has && loan.left > 0 && earned >= loan.left) { updateHud(); endGame(true); return true; }
+    updateHud();
+    return false;
+  }
+  function popup(x, y, text, color, size = 11) { popups.push({ x, y, text, color, size, life: 40 }); }
+
+  // ---- 合図を並べる ----
+  function schedule() {
+    while (nextBeat < SHIFT_MS && nextBeat < now + TRAVEL + 200) {
+      const beat = 60000 / bpmAt(nextBeat);
+      const lane = Math.random() < 0.2 ? lastLane : 1 - lastLane;
+      notes.push({ t: nextBeat, lane, judged: null });
+      lastLane = lane;
+      if (nextBeat > 30000 && Math.random() < 0.25) {
+        notes.push({ t: nextBeat + beat / 2, lane: 1 - lane, judged: null });
+        lastLane = 1 - lane;
+      }
+      nextBeat += beat;
+      beatIndex++;
+    }
+  }
+
+  // こする（lane：0 左 / 1 右）
+  function press(lane) {
+    if (state !== 'PLAYING') return;
+    laneFlash[lane] = 8;
+    let best = null;
+    for (const n of notes) {
+      if (n.judged || n.lane !== lane) continue;
+      const d = Math.abs(n.t - now);
+      if (d <= GOOD && (!best || d < Math.abs(best.t - now))) best = n;
+    }
+    if (!best) return;
+    const d = Math.abs(best.t - now);
+    best.judged = d <= PERFECT ? 'perfect' : 'good';
+    combo++; bestCombo = Math.max(bestCombo, combo);
+    const v = best.judged === 'perfect' ? 3 : 1;
+    if (best.judged === 'perfect') perfects++; else goods++;
+    popup(LANE_X[lane], HIT_Y - 18, best.judged === 'perfect' ? 'ぴったり +3' : 'いい感じ +1', best.judged === 'perfect' ? C.perfect : C.good);
+    beep(best.judged === 'perfect' ? 1320 : 990, 0.06, 0.05, 'triangle');
+    scrub();
+    if (gain(v)) return;
+  }
+  function scrub() {
+    if (!dish || dishIn > 0) return;
+    const s = dish.spots.find((p) => !p.gone);
+    if (s) {
+      s.gone = true; dish.left--;
+      for (let i = 0; i < 6; i++) bubbles.push({ x: DISH.x + s.x + (Math.random() - 0.5) * 10, y: DISH.y + s.y, vx: (Math.random() - 0.5) * 1.2, vy: -0.6 - Math.random(), r: 2 + Math.random() * 3, life: 30 });
+    }
+    if (dish.left <= 0) {
+      const v = 20 + (dish.cracks.length === 0 ? 10 : 0);
+      cleanDishes++;
+      popup(DISH.x, DISH.y - 8, 'ピカピカ！ +' + v, C.perfect, 13);
+      beep(1760, 0.15, 0.05, 'sine');
+      if (gain(v)) return;
+      newDish();
+    }
+  }
+  function miss(n) {
+    n.judged = 'miss';
+    misses++; combo = 0;
+    popup(LANE_X[n.lane], HIT_Y - 18, 'ミス', C.bad);
+    if (!dish || dishIn > 0) return;
+    const a = Math.random() * Math.PI * 2;
+    dish.cracks.push({ a, len: 22 + Math.random() * 20 });
+    beep(180, 0.1, 0.05, 'square');
+    if (dish.cracks.length >= MAX_CRACKS) {
+      broken++;
+      earned = Math.max(0, earned - 50);
+      popup(DISH.x, DISH.y - 8, 'パリン！ 弁償 −50', C.bad, 13);
+      for (let i = 0; i < 16; i++) { const b = Math.random() * Math.PI * 2; shards.push({ x: DISH.x, y: DISH.y, vx: Math.cos(b) * (1 + Math.random() * 2), vy: Math.sin(b) * (1 + Math.random() * 2) - 1, life: 40, rot: Math.random() * 6 }); }
+      beep(120, 0.25, 0.08, 'sawtooth');
+      updateHud();
+      newDish();
+    }
+  }
+
+  // ---- 入力 ----
+  const laneOf = (e) => {
+    const k = e.code || e.key;
+    if (k === 'ArrowLeft' || k === 'KeyA' || k === 'KeyF') return 0;
+    if (k === 'ArrowRight' || k === 'KeyD' || k === 'KeyJ') return 1;
+    const m = { a: 0, f: 0, d: 1, j: 1 }[String(e.key).toLowerCase()];
+    return m === undefined ? -1 : m;
+  };
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); sendToApp({ type: 'escape' }); return; }
+    if (e.key === 'm' || e.key === 'M') { setMuted(!muted); return; }
+    if ((e.key === ' ' || e.key === 'Enter') && state !== 'PLAYING') { e.preventDefault(); if (state === 'PAUSED') resumeGame(); else resetGame(); return; }
+    const l = laneOf(e);
+    if (l >= 0) { e.preventDefault(); if (!e.repeat) press(l); }
+  });
+  canvas.addEventListener('pointerdown', (e) => {
+    if (state !== 'PLAYING') return;
+    const rect = canvas.getBoundingClientRect();
+    press((e.clientX - rect.left) / rect.width < 0.5 ? 0 : 1);
+  });
+  startBtn.addEventListener('click', () => { if (state === 'PAUSED') resumeGame(); else resetGame(); });
+
+  function update(dt) {
+    frame++;
+    for (let i = popups.length - 1; i >= 0; i--) { popups[i].y -= 0.4; if (--popups[i].life <= 0) popups.splice(i, 1); }
+    for (let i = bubbles.length - 1; i >= 0; i--) { const b = bubbles[i]; b.x += b.vx; b.y += b.vy; if (--b.life <= 0) bubbles.splice(i, 1); }
+    for (let i = shards.length - 1; i >= 0; i--) { const s = shards[i]; s.x += s.vx; s.y += s.vy; s.vy += 0.15; s.rot += 0.2; if (--s.life <= 0) shards.splice(i, 1); }
+    for (let i = 0; i < 2; i++) if (laneFlash[i] > 0) laneFlash[i]--;
+    if (dishIn > 0) dishIn--;
+    if (state !== 'PLAYING') return;
+    if (hold > 0) { hold -= dt; return; }
+    const prev = now;
+    now += dt;
+    schedule();
+    // 拍のカチッ（合図の時刻を過ぎたとき）
+    for (const n of notes) if (n.t > prev && n.t <= now && !n.ticked) { n.ticked = true; beep(660, 0.03, 0.025, 'square'); }
+    for (const n of notes) if (!n.judged && now - n.t > GOOD) { miss(n); if (state !== 'PLAYING') return; }
+    notes = notes.filter((n) => now - n.t < 600);
+    if (now > SHIFT_MS + 400 && notes.every((n) => n.judged)) endGame(false);
+  }
+
+  function drawDish() {
+    if (!dish) return;
+    const slide = dishIn > 0 ? dishIn * 8 : 0;
+    const x = DISH.x + slide, y = DISH.y;
+    ctx.fillStyle = C.rim; ctx.beginPath(); ctx.arc(x, y + 2, DISH.r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = C.dish; ctx.beginPath(); ctx.arc(x, y, DISH.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = C.rim; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, DISH.r * 0.7, 0, Math.PI * 2); ctx.stroke();
+    for (const s of dish.spots) {
+      if (s.gone) continue;
+      ctx.fillStyle = C.dirt; ctx.globalAlpha = 0.75;
+      ctx.beginPath(); ctx.ellipse(x + s.x, y + s.y, s.r, s.r * (0.6 + s.k * 0.4), s.k * 3, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = C.crack; ctx.lineWidth = 1.6;
+    for (const c of dish.cracks) {
+      ctx.beginPath();
+      let px = x + Math.cos(c.a) * DISH.r, py = y + Math.sin(c.a) * DISH.r;
+      ctx.moveTo(px, py);
+      for (let k = 1; k <= 4; k++) {
+        const d = DISH.r - (c.len / 4) * k, j = (k % 2 ? 0.18 : -0.18);
+        ctx.lineTo(x + Math.cos(c.a + j) * d, y + Math.sin(c.a + j) * d);
+      }
+      ctx.stroke();
+    }
+    if (dish.left === 0 || (dish.spots.every((s) => s.gone))) {
+      ctx.fillStyle = C.perfect; ctx.fillRect(x - 30, y - 30, 3, 3); ctx.fillRect(x + 26, y - 20, 3, 3);
+    }
+  }
+  function draw() {
+    ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+    // シンク
+    ctx.fillStyle = C.sink; ctx.fillRect(10, SINK_Y, W - 20, SINK_H);
+    ctx.strokeStyle = C.sinkEdge; ctx.lineWidth = 3; ctx.strokeRect(10, SINK_Y, W - 20, SINK_H);
+    drawDish();
+    for (const b of bubbles) { ctx.strokeStyle = C.line; ctx.lineWidth = 1; ctx.fillStyle = C.bubble; ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    for (const s of shards) { ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.rot); ctx.fillStyle = C.dish; ctx.fillRect(-4, -2, 8, 4); ctx.strokeStyle = C.rim; ctx.strokeRect(-4, -2, 8, 4); ctx.restore(); }
+    // 皿の状態
+    ctx.fillStyle = C.text; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left';
+    ctx.fillText('汚れ ' + (dish ? dish.left : 0) + '/' + SCRUBS + '  ひび ' + (dish ? dish.cracks.length : 0) + '/' + MAX_CRACKS, 12, 68);
+    // レーン
+    for (let i = 0; i < 2; i++) {
+      ctx.fillStyle = laneFlash[i] ? C.sinkEdge : C.lane;
+      ctx.globalAlpha = laneFlash[i] ? 0.5 : 1;
+      ctx.fillRect(LANE_X[i] - LANE_W / 2, TOP_Y, LANE_W, HIT_Y - TOP_Y + 22);
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = C.line; ctx.fillRect(LANE_X[0] - LANE_W / 2, HIT_Y, LANE_X[1] - LANE_X[0] + LANE_W, 3);
+    // 合図（泡）
+    for (const n of notes) {
+      if (n.judged === 'perfect' || n.judged === 'good') continue;
+      const y = HIT_Y - ((n.t - now) / TRAVEL) * (HIT_Y - TOP_Y);
+      if (y < TOP_Y - 10 || y > HIT_Y + 30) continue;
+      ctx.globalAlpha = n.judged === 'miss' ? 0.3 : 1;
+      ctx.fillStyle = C.bubble; ctx.strokeStyle = C.line; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(LANE_X[n.lane], y, 11, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = C.line; ctx.beginPath(); ctx.arc(LANE_X[n.lane] - 3, y - 4, 2.5, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    // 下の表示
+    ctx.fillStyle = C.text; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('←  左', LANE_X[0], H - 10); ctx.fillText('右  →', LANE_X[1], H - 10);
+    ctx.textAlign = 'left'; ctx.font = 'bold 10px monospace';
+    const left = Math.max(0, SHIFT_MS - Math.max(0, now)) / 1000;
+    ctx.fillText('残り ' + Math.ceil(state === 'START' ? 90 : left) + 's', 12, 50);
+    ctx.textAlign = 'right';
+    ctx.fillText('BPM ' + bpmAt(Math.max(0, now)) + '  連続 ' + combo, W - 12, 50);
+    const wait = hold > 0 ? hold : now < 0 ? -now : 0;
+    if (wait > 0 && state === 'PLAYING') { ctx.textAlign = 'center'; ctx.font = 'bold 22px monospace'; ctx.fillStyle = C.text; ctx.fillText(String(Math.ceil(wait / 500)), W / 2, 274); }
+    ctx.textAlign = 'center';
+    for (const p of popups) { ctx.font = 'bold ' + p.size + 'px monospace'; ctx.fillStyle = p.color; ctx.globalAlpha = Math.min(1, p.life / 15); ctx.fillText(p.text, p.x, p.y); ctx.globalAlpha = 1; }
+    ctx.textAlign = 'left';
+  }
+
+  let last = performance.now();
+  function loop(t) {
+    const dt = Math.min(100, t - last); last = t;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame((t) => { last = t; loop(t); });
+})();
+</script>
+  </template>
+
   <template id="game-src-minesweeper">
 <style>
   :root {
@@ -15073,7 +17248,8 @@ draw();
       achievementsLoaded: false,
       wallet: null,           // Chatterコインとデコレーション { coins, pulls, decos }
       walletLoaded: false,
-      unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null, games: null, achievements: null, champions: null, wallet: null },
+      loan: null, loanReq: null, // 銀行からの借金（loans/{自分のID}）・借りたいという希望（loanRequests/{自分のID}）
+      unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null, games: null, achievements: null, champions: null, wallet: null, loan: null, loanReq: null },
     };
     let readMap = {};
     let readSentMap = {};     // 既読を記録した、管理者の最新メッセージの時刻（roomId -> ms）
@@ -15664,11 +17840,13 @@ draw();
         stickers: [], stickersLoaded: false, reads: new Map(), readsLoaded: false,
         stickerView: "mine", publicStickers: [], publicStickersLoaded: false, publicStickersError: false,
         publicLimit: PUBLIC_STICKER_PAGE, publicHasMore: false, publicSearch: "", partnerTyping: null,
-        gameStats: new Map(), gameStatsLoaded: false, achievements: new Map(), achievementsLoaded: false, wallet: null, walletLoaded: false,
-        unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null, games: null, achievements: null, champions: null, wallet: null },
+        gameStats: new Map(), gameStatsLoaded: false, achievements: new Map(), achievementsLoaded: false, wallet: null, walletLoaded: false, loan: null, loanReq: null,
+        unsub: { users: null, rooms: null, openChats: null, messages: null, stickers: null, publicStickers: null, reads: null, typing: null, games: null, achievements: null, champions: null, wallet: null, loan: null, loanReq: null },
       });
       closeGame();
       destroyAllGames();
+      clearTimeout(loanDueTimer); clearTimeout(loanPayTimer);
+      loanDueTimer = loanPayTimer = 0; loanPending = 0; loanWasActive = loanWasOverdue = false;
       adminKey = null;
       adminUnlock = null;
       signOut(auth).catch((e) => console.warn(e));
@@ -16155,6 +18333,7 @@ draw();
       );
       subscribeAchievements(); // 自分の実績
       subscribeWallet();       // Chatterコインとデコレーション
+      subscribeLoan();         // 銀行からの借金と、借りたいという希望
       subscribeChampions();    // 各ゲームのランキング1位（王冠の表示）
     }
 
@@ -16642,7 +18821,21 @@ draw();
     ];
     const casinoById = (id) => CASINO_GAMES.find((g) => g.id === id) || null;
     const isCasino = (id) => !!casinoById(id);
-    const playableById = (id) => gameById(id) || casinoById(id);
+    // 銀行の借金を返すための専用ゲーム（<template id="game-src-<id>">）。借金があるときだけ、借金の欄に出す。
+    // スコア・ランキング・特典の対象外で、終わったときに稼いだ分（gameover の score）がそのまま借金の返済に入る（loanGameRepay）。
+    // ゲームとのやりとりはどれも同じ：アプリ → { type: "loan", has, left, overdue } / "pause" / "theme"、ゲーム → "start" / { type: "gameover", score } / "escape"
+    const DEBT_GAMES = [
+      { id: "kaze", name: "風くだり", emoji: "🪂", desc: "風に流されながら下へ。🪙を拾って借金を返そう", bg: "from-sky-300 to-slate-600" },
+      { id: "kouzan", name: "地下鉱山", emoji: "⛏️", desc: "掘り進んで鉱石を集めよう。深いほど高く売れる。落盤に注意", bg: "from-amber-700 to-stone-800" },
+      { id: "naishoku", name: "内職ライン", emoji: "📦", desc: "流れてくる部品を正しい箱へ。速く正確なほど稼げる", bg: "from-orange-300 to-amber-600" },
+      { id: "nigero", name: "借金取りから逃げろ", emoji: "🏃", desc: "走って小銭を拾おう。捕まると一部を取り上げられる", bg: "from-rose-400 to-slate-700" },
+      { id: "osara", name: "皿洗い", emoji: "🍽️", desc: "リズムに合わせてこすって洗おう。割ると弁償", bg: "from-cyan-300 to-sky-600" },
+    ];
+    const DEBT_GAME = DEBT_GAMES[0];
+    const DEBT_GAME_NAMES = DEBT_GAMES.map((g) => `「${g.name}」`).join("");
+    const debtGameById = (id) => DEBT_GAMES.find((g) => g.id === id) || null;
+    const isDebtGame = (id) => !!debtGameById(id);
+    const playableById = (id) => gameById(id) || casinoById(id) || debtGameById(id);
     const gameThumb = (g, cls) => `<div class="${cls} shrink-0 rounded-2xl bg-gradient-to-br ${g.bg} grid place-items-center shadow-sm" aria-hidden="true">${g.emoji}</div>`;
     // 得点の合計（以前の記録で total が無いものは、少なくとも best はあるので best とみなす。ルールと同じ）
     const gameTotal = (s) => (s ? (Number.isInteger(s.total) ? s.total : s.best || 0) : 0);
@@ -18507,7 +20700,7 @@ draw();
     }
 
     function renderGameList() {
-      const picker = renderCoinBar();
+      const picker = renderCoinBar() + renderLoanCard();
       return picker + `
         <div class="flex items-center px-3 pt-1 pb-2">
           <p class="text-xs font-medium text-slate-400">遊ぶゲームを選んでください</p>
@@ -18524,12 +20717,13 @@ draw();
           const goal = !state.gameStatsLoaded ? ""
             : (next ? `次の枠「${next.label}」まで あと ${(g.tiers[tier] - gameTotal(s)).toLocaleString()}点` : "すべての枠を獲得済み 🎉");
           return `
-            <button type="button" data-action="open-game" data-id="${esc(g.id)}" class="list-row group ${g.id === state.activeGameId ? "is-active" : ""}">
+            <button type="button" data-action="open-game" data-id="${esc(g.id)}" class="list-row group ${g.id === state.activeGameId ? "is-active" : ""} ${loanOverdue() ? "opacity-50" : ""}">
               ${gameThumb(g, "w-12 h-12 text-2xl")}
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1.5 min-w-0">
                   <span class="font-semibold truncate text-slate-800">${esc(g.name)}</span>
                   ${isGameSuspended(g.id) ? `<span class="shrink-0 px-1.5 py-px rounded-md bg-indigo-50 text-indigo-600 text-[10px] font-semibold" title="開くと途中から再開します">中断中</span>` : ""}
+                  ${loanOverdue() ? LOAN_LOCK_BADGE : ""}
                 </div>
                 <div class="text-xs text-slate-500 truncate">${esc(g.desc)}</div>
                 <div class="text-xs text-slate-400 truncate mt-0.5">${record}</div>
@@ -18550,10 +20744,10 @@ draw();
         <p class="px-3 pt-4 text-xs font-medium text-slate-400">Chatterコインで遊ぶ${adminSettings.slotOn ? "" : `<span class="ml-1.5 px-1.5 py-px rounded-md bg-slate-100 text-slate-500 text-[10px] font-semibold">お休み中</span>`}</p>
         <p class="px-3 pb-2 text-[11px] text-amber-700">🪙 メダル1枚 = ${slotRate().toLocaleString()}コイン${medals > 0 ? ` ・ 持っているメダル ${medals.toLocaleString()}枚（どのゲームでも使えます）` : " ・ メダルはどのゲームでも共通"}</p>` +
         CASINO_GAMES.map((g) => `
-        <button type="button" data-action="open-game" data-id="${g.id}" class="list-row group ${g.id === state.activeGameId ? "is-active" : ""}">
+        <button type="button" data-action="open-game" data-id="${g.id}" class="list-row group ${g.id === state.activeGameId ? "is-active" : ""} ${loanOverdue() ? "opacity-50" : ""}">
           ${gameThumb(g, "w-12 h-12 text-2xl")}
           <div class="min-w-0 flex-1">
-            <div class="font-semibold truncate text-slate-800">${esc(g.name)}</div>
+            <div class="flex items-center gap-1.5 min-w-0"><span class="font-semibold truncate text-slate-800">${esc(g.name)}</span>${loanOverdue() ? LOAN_LOCK_BADGE : ""}</div>
             <div class="text-xs text-slate-500 truncate">${g.id === "chinchiro" ? `専用コイン（1枚 = ${CHIN_RATE}コイン）${chinCoins() > 0 ? ` ・ ${chinCoins().toLocaleString()}枚 持っています` : "で遊びます"}` : g.id === "numa" ? `専用コイン（1枚 = ${NUMA_RATE.toLocaleString()}コイン = ${NUMA_PER}玉）${numaBalls() > 0 ? ` ・ ${numaBalls().toLocaleString()}玉 持っています` : "で遊びます"}` : esc(g.desc)}</div>
           </div>
           <span class="w-9 h-9 shrink-0 rounded-full grid place-items-center text-slate-300 group-hover:text-indigo-500 group-hover:bg-indigo-50 transition">${icon("chevron", "w-5 h-5")}</span>
@@ -19024,6 +21218,34 @@ draw();
         { id: "right", label: "右へ動かす", keys: ["ArrowRight", "KeyD"] },
         { id: "start", label: "スタート・再開", keys: ["Space", "Enter"] },
       ],
+      kaze: [
+        { id: "left", label: "左へ動かす", keys: ["ArrowLeft", "KeyA"] },
+        { id: "right", label: "右へ動かす", keys: ["ArrowRight", "KeyD"] },
+        { id: "start", label: "スタート・再開", keys: ["Space", "Enter"] },
+      ],
+      kouzan: [
+        { id: "left", label: "左へ掘る・動く", keys: ["ArrowLeft", "KeyA"] },
+        { id: "right", label: "右へ掘る・動く", keys: ["ArrowRight", "KeyD"] },
+        { id: "down", label: "下へ掘る", keys: ["ArrowDown", "KeyS"] },
+        { id: "start", label: "スタート・再開", keys: ["Space", "Enter"] },
+      ],
+      naishoku: [
+        { id: "left", label: "ネジの箱へ", keys: ["ArrowLeft", "KeyA"] },
+        { id: "down", label: "ボタンの箱へ", keys: ["ArrowDown", "KeyS"] },
+        { id: "right", label: "バネの箱へ", keys: ["ArrowRight", "KeyD"] },
+        { id: "up", label: "不良品の箱へ", keys: ["ArrowUp", "KeyW"] },
+        { id: "start", label: "スタート・再開", keys: ["Space", "Enter"] },
+      ],
+      nigero: [
+        { id: "up", label: "ジャンプ（空中でもう1回）", keys: ["ArrowUp", "KeyW", "Space"] },
+        { id: "down", label: "スライディング", keys: ["ArrowDown", "KeyS"] },
+        { id: "start", label: "スタート・再開", keys: ["Enter"] },
+      ],
+      osara: [
+        { id: "left", label: "左にこする", keys: ["ArrowLeft", "KeyA", "KeyF"] },
+        { id: "right", label: "右にこする", keys: ["ArrowRight", "KeyD", "KeyJ"] },
+        { id: "start", label: "スタート・再開", keys: ["Space", "Enter"] },
+      ],
       breakout: [
         { id: "left", label: "左へ動かす", keys: ["ArrowLeft", "KeyA"] },
         { id: "right", label: "右へ動かす", keys: ["ArrowRight", "KeyD"] },
@@ -19275,8 +21497,20 @@ draw();
       const s = state.gameStats.get(g.id);
       $("#game-keys-btn").hidden = !GAME_KEYS[g.id];
       const restartBtn = document.querySelector('[data-action="restart-game"]');
-      if (restartBtn) restartBtn.hidden = isCasino(g.id);
+      if (restartBtn) restartBtn.hidden = isCasino(g.id) || isDebtGame(g.id);
       renderGamePad();
+      if (isDebtGame(g.id)) {
+        const L = state.loan;
+        $("#game-header-main").innerHTML = `
+          ${gameThumb(g, "w-10 h-10 text-xl")}
+          <div class="min-w-0">
+            <div class="font-semibold truncate text-slate-800">${esc(g.name)}<span class="ml-1.5 text-xs font-normal text-slate-400">借金の返済用</span></div>
+            <div class="text-xs truncate ${loanOverdue() ? "text-rose-600 font-semibold" : "text-slate-400"}">${loanActive()
+              ? `残り ${loanLeftCoins().toLocaleString()} コイン ・ 期限 ${esc(loanDueText(L.due))}${loanOverdue() ? "（過ぎています）" : ""}`
+              : "借金はありません"}</div>
+          </div>`;
+        return;
+      }
       if (isCasino(g.id)) {
         $("#game-header-main").innerHTML = `
           ${gameThumb(g, "w-10 h-10 text-xl")}
@@ -19319,6 +21553,12 @@ draw();
       frame.setAttribute("sandbox", "allow-scripts");
       frame.srcdoc = `<!DOCTYPE html><html lang="ja"${isDark() ? ` class="dark"` : ""}><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${esc(g.name)}</title><script>${KEYMAP_SCRIPT}(${JSON.stringify(keyTable(g.id))});<\/script></head><body>${src.innerHTML}</body></html>`;
       frame.addEventListener("load", () => {
+        if (isDebtGame(g.id)) {
+          const e = gameFrames.get(g.id);
+          if (e?.frame === frame) { e.loaded = true; sendLoanToGame(); }
+          if (state.activeGameId === g.id && !isCoarse()) frame.focus();
+          return;
+        }
         if (isCasino(g.id)) {
           const e = gameFrames.get(g.id);
           if (e?.frame === frame) { e.loaded = true; sendSlotConfig(g.id); }
@@ -19339,6 +21579,8 @@ draw();
       const src = document.getElementById(`game-src-${id}`);
       if (!g || !src || isRestricted(state.me)) return;
       if (isCasino(id) && !state.walletLoaded) { toast("Chatterコインを読み込み中です。少し待ってからもう一度開いてください"); return; }
+      // 借金の返済期限を過ぎている間は、返済用のゲーム（DEBT_GAMES）しか遊べない
+      if (loanOverdue() && !isDebtGame(id)) { toast("🏦 借金の返済期限を過ぎています。返し終えるまで、借金の欄にある返済用のゲームしか遊べません", "error"); return; }
       if (state.activeRoomId) closeRoom();
       if (state.activeGameId !== id) {
         if (state.activeGameId) pauseGame(state.activeGameId);
@@ -19347,6 +21589,7 @@ draw();
         if (entry) {
           entry.frame.hidden = false;
           if (isCasino(id)) sendSlotConfig(id); // ほかのゲームで増減したメダルを伝える
+          if (isDebtGame(id)) sendLoanToGame();
           postToGame(id, { type: "resume" });
           if (!isCoarse()) entry.frame.focus();
         } else {
@@ -19435,6 +21678,7 @@ draw();
       const entry = gameFrames.get(id);
       if (d.type === "progress" && Number.isInteger(d.score)) { entry.progress = d.score; entry.playing = true; }
       else if (d.type === "start") { entry.progress = 0; entry.playing = true; }
+      else if (d.type === "gameover" && isDebtGame(id)) { entry.progress = 0; entry.playing = false; loanGameRepay(d.score); }
       else if (d.type === "gameover") { entry.progress = 0; entry.playing = false; saveGameScore(id, d.score); }
       else if (d.type === "achieve" && typeof d.id === "string") unlockAchievement(id, d.id);
       else if (isCasino(id) && d.type === "slot-sync") { slotDelta(d.delta); casinoPlayed(id); }
@@ -24285,6 +26529,7 @@ draw();
             <button type="button" data-action="admin-plans" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}プランの加入状況</button>
             <button type="button" data-action="admin-grant" class="btn-secondary w-full">${icon("gift", "w-5 h-5")}コインを配る</button>
             <button type="button" data-action="admin-bank" class="btn-secondary w-full">${icon("bank", "w-5 h-5")}銀行</button>
+            <button type="button" data-action="admin-loans" class="btn-secondary w-full">${icon("bank", "w-5 h-5")}銀行の貸し出し・借りたい希望</button>
             <button type="button" data-action="admin-password" class="btn-secondary w-full">${icon("key", "w-5 h-5")}管理者パスワードを変更</button>
           </div>
           <div id="admin-lock-box" class="lg:col-span-2"></div>
@@ -24753,6 +26998,7 @@ draw();
             <button type="button" data-action="admin-menu" class="btn-secondary flex-1">戻る</button>
             <button type="submit" class="btn-primary flex-1">引き出す</button>
           </div>
+          <button type="button" data-action="admin-loans" class="btn-secondary w-full">🤝 貸し出し・借りたい希望</button>
         </form>`);
       const form = $("#form-admin-bank");
       form?.addEventListener("change", (e) => {
@@ -24885,6 +27131,535 @@ draw();
         ? `🏦 銀行から ${total.toLocaleString()} 枚を引き出して、${coins.toLocaleString()} コインを受け取りました`
         : `🏦 ${people}人に ${coins.toLocaleString()} コインずつ配りました（銀行から ${total.toLocaleString()} 枚）`);
       if (form?.isConnected) { form.medals.value = ""; renderBankForm(); }
+    }
+
+    // ============================================================
+    // 銀行からの借金（loans/{ユーザーID} = { id, medals, rate, paid, due, at, via, playAt, updatedAt }。firestore.rules の match /loans と合わせる）。
+    // 管理者が銀行のメダルを、借りたい人に貸す（メダル × rate のコインにして wallet/main に入れる）。返済期限（due）までに返す。
+    // 返し方：コインで返す（金額は自分で決める。ゲームで稼いだ・配られたコインなど、手元のコインならどれでも）／返済用のゲーム（DEBT_GAMES）で稼ぐ。
+    // 期限を過ぎても返し終えていないと、返し終えるまで返済用のゲーム以外は遊べない（ルールの debtFree でも止める）。
+    // 借りたいという希望：loanRequests/{ユーザーID} = { coins, days, message, status: 'open' | 'rejected', at }
+    // ============================================================
+    const LOAN_MAX_DAYS = 31;          // 返済期限は31日先まで（ルールと合わせる）
+    const LOAN_DAY_CHOICES = [1, 3, 7, 14, 30];
+    const LOAN_GAME_MAX = 10000;       // 返済用のゲームで1回に返せるコイン（ルールと合わせる）
+    const LOAN_GAME_GAP_MS = 15000;    // 返済用のゲームで返す間隔（ルールと合わせる）
+    const LOAN_REQ_MAX = 100000, LOAN_REQ_MSG = 200;
+    const LOAN_LOCK_BADGE = `<span class="shrink-0 px-1.5 py-px rounded-md bg-rose-50 text-rose-600 text-[10px] font-semibold" title="借金の返済期限を過ぎているので遊べません">🔒 返済まで遊べません</span>`;
+    const loanRef = (id) => doc(db, "loans", id);
+    const loanReqRef = (id) => doc(db, "loanRequests", id);
+    const loanLeft = (L = state.loan) => (L ? Math.max(0, (L.medals || 0) - (L.paid || 0)) : 0); // 残り（メダル）
+    const loanLeftCoins = (L = state.loan) => loanLeft(L) * (L?.rate || 0);
+    const loanActive = () => loanLeft() > 0;
+    const loanOverdue = (L = state.loan) => loanLeft(L) > 0 && Date.now() >= ms(L.due);
+    const WEEK_JA = "日月火水木金土";
+    function loanDueText(t) {
+      const d = toDate(t);
+      return d ? `${d.getMonth() + 1}/${d.getDate()}（${WEEK_JA[d.getDay()]}）${hhmm(d)}` : "";
+    }
+    // 期限までの残り時間（過ぎていれば「期限切れ」）
+    function loanRemainText(t) {
+      const left = ms(t) - Date.now();
+      if (left <= 0) return "期限切れ";
+      const d = Math.floor(left / 864e5), h = Math.floor((left % 864e5) / 36e5), m = Math.ceil((left % 36e5) / 6e4);
+      return d > 0 ? `あと${d}日${h ? `${h}時間` : ""}` : h > 0 ? `あと${h}時間${m < 60 ? `${m}分` : ""}` : `あと${m}分`;
+    }
+
+    let loanDueTimer = 0, loanWasOverdue = false, loanWasActive = false;
+    function subscribeLoan() {
+      const me = state.me;
+      state.unsub.loan = onSnapshot(loanRef(me.id), (snap) => {
+        if (state.me !== me) return;
+        state.loan = snap.exists() ? snap.data({ serverTimestamps: "estimate" }) : null;
+        onLoanChange();
+      }, (e) => console.warn(e));
+      state.unsub.loanReq = onSnapshot(loanReqRef(me.id), (snap) => {
+        if (state.me !== me) return;
+        state.loanReq = snap.exists() ? snap.data({ serverTimestamps: "estimate" }) : null;
+        if (state.tab === "games") renderSidebar();
+      }, (e) => console.warn(e));
+    }
+    // 借金が変わったとき・期限になったとき
+    function onLoanChange() {
+      clearTimeout(loanDueTimer); loanDueTimer = 0;
+      const active = loanActive(), overdue = loanOverdue();
+      if (active && !overdue) {
+        const wait = ms(state.loan.due) - Date.now() + 500;
+        if (wait < 2 ** 31 - 1) loanDueTimer = setTimeout(onLoanChange, Math.max(1000, wait));
+      }
+      if (loanWasActive && !active && state.loan) toast("🎉 銀行からの借金を返し終えました！");
+      if (overdue && !loanWasOverdue) {
+        // 期限を過ぎた：遊んでいるゲームが返済用のゲームでなければ閉じる
+        if (state.activeGameId && !isDebtGame(state.activeGameId)) closeGame();
+        toast("🏦 借金の返済期限を過ぎました。返し終えるまで、返済用のゲーム以外は遊べません", "error");
+      }
+      loanWasActive = active; loanWasOverdue = overdue;
+      if (state.tab === "games") renderSidebar();
+      if (isDebtGame(state.activeGameId)) renderGameHeader();
+      sendLoanToGame();
+      if ($("#form-loan-repay")) renderLoanRepay();
+    }
+    function sendLoanToGame() {
+      const msg = { type: "loan", has: loanActive(), left: Math.max(0, loanLeftCoins() - loanPending), overdue: loanOverdue() };
+      for (const g of DEBT_GAMES) if (gameFrames.get(g.id)?.loaded) postToGame(g.id, msg);
+    }
+
+    // ゲーム一覧の上：借金の状態（借金が無ければ「借りたい」の入口）
+    function renderLoanCard() {
+      if (!state.me || state.me.id === ADMIN_ID) return "";
+      const L = state.loan;
+      if (loanActive()) {
+        const over = loanOverdue();
+        const lent = (L.medals || 0) * (L.rate || 0), paid = (L.paid || 0) * (L.rate || 0);
+        const pct = lent ? Math.round((paid / lent) * 100) : 0;
+        return `
+          <div class="mx-2 mb-3 p-3 rounded-2xl ring-1 ${over ? "bg-rose-50 ring-rose-200" : "bg-indigo-50 ring-indigo-200"}">
+            <div class="flex items-center gap-2 px-1">
+              <span class="text-2xl leading-none">🏦</span>
+              <div class="min-w-0 flex-1">
+                <div class="text-[11px] text-slate-500 leading-tight">銀行からの借金（残り）</div>
+                <div class="text-lg font-bold tabular-nums leading-tight ${over ? "text-rose-600" : "text-indigo-700"}">${loanLeftCoins().toLocaleString()}<span class="text-xs font-semibold"> コイン</span></div>
+              </div>
+              <div class="text-right text-[11px] leading-tight ${over ? "text-rose-600 font-bold" : "text-slate-500"}">期限 ${esc(loanDueText(L.due))}<br>${esc(loanRemainText(L.due))}</div>
+            </div>
+            <div class="mt-2 mx-1 h-1.5 rounded-full bg-slate-200 overflow-hidden"><div class="h-full ${over ? "bg-rose-400" : "bg-indigo-400"}" style="width:${pct}%"></div></div>
+            <div class="mt-1 px-1 text-[11px] text-slate-500">借りた ${lent.toLocaleString()} ・ 返した ${paid.toLocaleString()} コイン（${pct}%）</div>
+            ${over ? `<p class="mt-2 mx-1 text-xs font-semibold text-rose-600 leading-relaxed">返済期限を過ぎました。返し終えるまで、下の返済用のゲーム以外は遊べません。</p>` : ""}
+            <button type="button" data-action="loan-repay" class="mt-2.5 w-full btn-chip justify-center py-2.5 text-sm text-white bg-gradient-to-r from-indigo-500 to-violet-500 shadow-md shadow-indigo-500/20 hover:brightness-110">🪙 コインで返す</button>
+            <div class="mt-3 px-1 text-[11px] font-medium text-slate-500">返済用のゲームで稼ぐ（稼いだ分がそのまま返済に入ります）</div>
+            <div class="mt-1.5 grid grid-cols-1 gap-1.5">
+              ${DEBT_GAMES.map((g) => `
+              <button type="button" data-action="open-game" data-id="${g.id}" class="flex items-center gap-2.5 p-1.5 pr-2 rounded-xl bg-white ring-1 ring-slate-200 hover:bg-slate-50 text-left ${state.activeGameId === g.id ? "ring-2 ring-indigo-400" : ""}">
+                ${gameThumb(g, "w-9 h-9 text-lg")}
+                <span class="min-w-0 flex-1"><span class="block text-sm font-semibold text-slate-800 truncate">${esc(g.name)}</span><span class="block text-[11px] text-slate-500 truncate">${esc(g.desc)}</span></span>
+                ${isGameSuspended(g.id) ? `<span class="shrink-0 px-1.5 py-px rounded-md bg-indigo-50 text-indigo-600 text-[10px] font-semibold">中断中</span>` : ""}
+              </button>`).join("")}
+            </div>
+          </div>`;
+      }
+      const R = state.loanReq;
+      const status = !R ? "" : R.status === "rejected"
+        ? `<span class="shrink-0 px-1.5 py-px rounded-md bg-slate-100 text-slate-500 text-[10px] font-semibold">見送られました</span>`
+        : `<span class="shrink-0 px-1.5 py-px rounded-md bg-amber-100 text-amber-700 text-[10px] font-semibold">希望を出しています</span>`;
+      return `
+        <button type="button" data-action="loan-request" class="mx-2 mb-3 w-[calc(100%-1rem)] flex items-center gap-2 px-3 py-2 rounded-2xl bg-white ring-1 ring-slate-200 hover:bg-slate-50 text-left">
+          <span class="text-lg leading-none">🏦</span>
+          <span class="flex-1 min-w-0 text-sm text-slate-700 truncate">${R ? `${Number(R.coins).toLocaleString()} コインを借りたい` : "銀行からコインを借りる"}</span>
+          ${status}
+          <span class="text-slate-300">${icon("chevron", "w-4 h-4")}</span>
+        </button>`;
+    }
+
+    // ---- 借りたいという希望（本人）----
+    function openLoanRequest() {
+      if (!state.me) return;
+      if (loanActive()) { openLoanRepay(); return; }
+      const R = state.loanReq;
+      openModal(`
+        ${modalHead("銀行からコインを借りる", "借りたいコインと、返す予定の日数を管理者に伝えます。管理者が貸すと、コインが届いて返済期限が決まります。")}
+        <form id="form-loan-request" class="px-6 pb-6 space-y-4">
+          ${R ? `<div class="rounded-2xl p-3 text-sm ${R.status === "rejected" ? "bg-slate-50 ring-1 ring-slate-200 text-slate-600" : "bg-amber-50 ring-1 ring-amber-200 text-amber-800"}">
+              ${R.status === "rejected" ? "前の希望は見送られました。内容を変えて出し直せます。" : `いま <b>${Number(R.coins).toLocaleString()} コイン</b>（${R.days}日で返す予定）の希望を出しています（${esc(relTime(R.at))}）。`}
+            </div>` : ""}
+          <div>
+            <label class="label" for="loan-req-coins">借りたいコイン</label>
+            <input id="loan-req-coins" name="coins" type="number" min="1" max="${LOAN_REQ_MAX}" step="1" inputmode="numeric" class="input" placeholder="例：5000" value="${R ? esc(R.coins) : ""}" required />
+            <p class="mt-1 text-xs text-slate-400">1〜${LOAN_REQ_MAX.toLocaleString()} コイン</p>
+          </div>
+          <div>
+            <label class="label" for="loan-req-days">返す予定</label>
+            <select id="loan-req-days" name="days" class="input">${LOAN_DAY_CHOICES.map((d) => `<option value="${d}" ${(R ? R.days : 7) === d ? "selected" : ""}>${d}日以内</option>`).join("")}</select>
+          </div>
+          <div>
+            <label class="label" for="loan-req-msg">ひとこと（なくてもOK）</label>
+            <textarea id="loan-req-msg" name="message" class="input" rows="2" maxlength="${LOAN_REQ_MSG}" placeholder="例：ガチャを引きたいです！">${R ? esc(R.message || "") : ""}</textarea>
+          </div>
+          <p class="text-xs text-slate-500 leading-relaxed bg-slate-50 rounded-xl px-3 py-2">返済期限を過ぎても返し終えていないと、返し終えるまで、返済用のゲーム（${esc(DEBT_GAME_NAMES)}）以外のゲームで遊べなくなります。</p>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-2">
+            ${R ? `<button type="button" data-action="loan-request-cancel" class="btn-secondary flex-1">取り下げる</button>` : `<button type="button" data-close class="btn-secondary flex-1">閉じる</button>`}
+            <button type="submit" class="btn-primary flex-1">${R ? "出し直す" : "希望を出す"}</button>
+          </div>
+        </form>`);
+    }
+    async function submitLoanRequest(fd) {
+      if (!state.me || isRestricted(state.me)) return;
+      const coins = Number(String(fd.get("coins") ?? "").trim());
+      const days = Number(fd.get("days"));
+      const message = String(fd.get("message") ?? "").trim();
+      if (!Number.isInteger(coins) || coins < 1 || coins > LOAN_REQ_MAX) throw new Error(`借りたいコインは 1〜${LOAN_REQ_MAX.toLocaleString()} の整数で入力してください。`);
+      if (!LOAN_DAY_CHOICES.includes(days)) throw new Error("返す予定を選んでください。");
+      if (message.length > LOAN_REQ_MSG) throw new Error(`ひとことは ${LOAN_REQ_MSG} 文字までです。`);
+      if (loanActive()) throw new Error("返し終えていない借金があるので、新しく借りられません。");
+      await setDoc(loanReqRef(state.me.id), { coins, days, message, status: "open", at: serverTimestamp() });
+      closeModal();
+      toast("🏦 借りたいという希望を管理者に出しました");
+    }
+    async function cancelLoanRequest() {
+      if (!state.me) return;
+      try {
+        await deleteDoc(loanReqRef(state.me.id));
+        closeModal();
+        toast("借りたいという希望を取り下げました");
+      } catch (e) {
+        console.error(e);
+        toast("取り下げられませんでした", "error");
+      }
+    }
+
+    // ---- コインで返す（本人。金額は自分で決める）----
+    function openLoanRepay() {
+      if (!loanActive()) { openLoanRequest(); return; }
+      openModal(`
+        ${modalHead("借金をコインで返す", "手元の Chatterコイン（ゲームで稼いだコインや、管理者から配られたコインなど）で、好きな金額を返せます。")}
+        <div class="px-6"><div id="loan-repay-summary"></div></div>
+        <form id="form-loan-repay" class="px-6 pt-4 pb-6 space-y-4" novalidate>
+          <div>
+            <label class="label" for="loan-repay-coins">返すコイン</label>
+            <div class="flex gap-2">
+              <input id="loan-repay-coins" name="coins" type="number" min="1" step="1" inputmode="numeric" class="input" placeholder="例：1000" />
+              <button type="button" data-action="loan-repay-max" class="btn-secondary shrink-0 px-4">できるだけ</button>
+            </div>
+            <p id="loan-repay-preview" class="mt-1.5 text-xs text-slate-500"></p>
+          </div>
+          <p class="form-error" hidden></p>
+          <div class="flex gap-2">
+            <button type="button" data-close class="btn-secondary flex-1">閉じる</button>
+            <button type="submit" class="btn-primary flex-1">返す</button>
+          </div>
+        </form>`);
+      $("#form-loan-repay").addEventListener("input", () => renderLoanRepay(false));
+      renderLoanRepay();
+    }
+    // 返せる最大（コイン）：残りと手元のコインの少ないほう（rate の倍数）
+    const loanRepayMax = () => { const L = state.loan; return L ? Math.min(loanLeftCoins(), Math.floor(walletCoins() / L.rate) * L.rate) : 0; };
+    function renderLoanRepay(summary = true) {
+      const L = state.loan, form = $("#form-loan-repay");
+      if (!form) return;
+      if (summary) {
+        const box = $("#loan-repay-summary");
+        if (box) box.innerHTML = !loanActive() ? `<div class="rounded-2xl bg-emerald-50 ring-1 ring-slate-100 p-4 text-sm text-emerald-700">🎉 借金を返し終えました！</div>` : `
+          <div class="rounded-2xl ${loanOverdue() ? "bg-rose-50 ring-rose-200" : "bg-slate-50 ring-slate-100"} ring-1 p-4">
+            <div class="text-xs text-slate-500">残り</div>
+            <div class="text-3xl font-bold tabular-nums ${loanOverdue() ? "text-rose-600" : "text-slate-800"}">${loanLeftCoins().toLocaleString()}<span class="text-sm font-semibold text-slate-600"> コイン</span></div>
+            <div class="mt-1 text-xs ${loanOverdue() ? "text-rose-600 font-semibold" : "text-slate-500"}">返済期限 ${esc(loanDueText(L.due))}（${esc(loanRemainText(L.due))}）</div>
+            <div class="mt-1 text-xs text-slate-500">手元のコイン ${state.walletLoaded ? walletCoins().toLocaleString() : "…"} 枚</div>
+          </div>`;
+      }
+      const pv = $("#loan-repay-preview");
+      if (!pv || !L) return;
+      const raw = form.coins.value.trim(), n = Number(raw);
+      form.coins.min = L.rate;
+      form.coins.step = L.rate;
+      if (!raw) { pv.className = "mt-1.5 text-xs text-slate-500"; pv.textContent = `${L.rate} コイン単位で返せます（いま返せるのは最大 ${loanRepayMax().toLocaleString()} コイン）`; return; }
+      const bad = !Number.isInteger(n) || n < L.rate || n % L.rate !== 0 || n > loanLeftCoins() || n > walletCoins();
+      pv.className = `mt-1.5 text-xs ${bad ? "text-rose-500" : "text-slate-500"}`;
+      pv.textContent = !Number.isInteger(n) || n < 1 ? "1以上の整数で入力してください"
+        : n % L.rate !== 0 ? `${L.rate} コイン単位で入力してください`
+        : n > loanLeftCoins() ? `残り（${loanLeftCoins().toLocaleString()} コイン）より多いです`
+        : n > walletCoins() ? `手元のコイン（${walletCoins().toLocaleString()} 枚）より多いです`
+        : `返したあと：借金 ${(loanLeftCoins() - n).toLocaleString()} コイン ・ 手元 ${(walletCoins() - n).toLocaleString()} 枚`;
+    }
+    function fillLoanRepayMax() {
+      const form = $("#form-loan-repay");
+      if (!form) return;
+      form.coins.value = loanRepayMax() || "";
+      renderLoanRepay(false);
+    }
+    // 返す：借金の paid・手元のコイン・銀行のメダルを1回の取引で変える
+    async function loanPayCoins(fd) {
+      const me = state.me, L = state.loan;
+      if (!me || !L || isRestricted(me)) return;
+      const coins = Number(String(fd.get("coins") ?? "").trim());
+      if (!Number.isInteger(coins) || coins < L.rate || coins % L.rate !== 0) throw new Error(`返すコインは ${L.rate} コイン単位で入力してください。`);
+      await flushSlot(); // 遊んでいる途中のメダルの記録を先に済ませる（同じ wallet/main を書くため）
+      const paidCoins = await runTransaction(db, async (tx) => {
+        const ls = await tx.get(loanRef(me.id));
+        const ws = await tx.get(walletRef());
+        const bs = await tx.get(bankRef());
+        if (!ls.exists()) throw new Error("借金が見つかりません。");
+        const l = ls.data(), w = ws.exists() ? ws.data() : { coins: 0 }, b = bs.exists() ? bs.data() : null;
+        const n = Math.min(coins / l.rate, l.medals - l.paid);
+        if (n <= 0) throw new Error("借金はもう返し終えています。");
+        if ((w.coins || 0) < n * l.rate) throw new Error(`手元のコインが足りません（${(w.coins || 0).toLocaleString()} 枚）。`);
+        if (!b) throw new Error("銀行が見つかりません。");
+        tx.update(loanRef(me.id), { paid: l.paid + n, via: "coins", updatedAt: serverTimestamp() });
+        tx.update(walletRef(), { coins: w.coins - n * l.rate, updatedAt: serverTimestamp() });
+        tx.update(bankRef(), { medals: (b.medals || 0) + n, returned: (b.returned || 0) + n, updatedAt: serverTimestamp() });
+        return n * l.rate;
+      });
+      toast(`🏦 ${paidCoins.toLocaleString()} コインを返しました`);
+      const form = $("#form-loan-repay");
+      if (form) { form.coins.value = ""; renderLoanRepay(); }
+    }
+
+    // ---- 返済用のゲームで稼いだ分を返す ----
+    // 稼いだコインはいったん loanPending にためて、前回から LOAN_GAME_GAP_MS あけて、1回 LOAN_GAME_MAX までずつ返す（rate に満たない端数は次に回す）
+    let loanPending = 0, loanPayTimer = 0, loanPaying = false, loanLastPlay = 0, loanPayErrors = 0;
+    function loanGameRepay(coins) {
+      if (!Number.isInteger(coins) || coins <= 0 || !loanActive()) return;
+      loanPending += coins;
+      sendLoanToGame();
+      flushLoanGame();
+    }
+    async function flushLoanGame() {
+      clearTimeout(loanPayTimer); loanPayTimer = 0;
+      const me = state.me, L = state.loan;
+      if (!me || loanPaying) return;
+      if (!L || !loanActive()) { loanPending = 0; return; }
+      if (loanPending < L.rate) return;
+      const wait = Math.max(ms(L.playAt), loanLastPlay) + LOAN_GAME_GAP_MS + 1000 - Date.now();
+      if (wait > 0) { loanPayTimer = setTimeout(flushLoanGame, wait); return; }
+      loanPaying = true;
+      try {
+        const coins = await runTransaction(db, async (tx) => {
+          const ls = await tx.get(loanRef(me.id));
+          const bs = await tx.get(bankRef());
+          if (!ls.exists() || !bs.exists()) return 0;
+          const l = ls.data(), b = bs.data();
+          const n = Math.min(Math.floor(loanPending / l.rate), l.medals - l.paid, Math.floor(LOAN_GAME_MAX / l.rate));
+          if (n <= 0) return 0;
+          tx.update(loanRef(me.id), { paid: l.paid + n, via: "game", playAt: serverTimestamp(), updatedAt: serverTimestamp() });
+          tx.update(bankRef(), { medals: (b.medals || 0) + n, returned: (b.returned || 0) + n, updatedAt: serverTimestamp() });
+          return n * l.rate;
+        });
+        loanLastPlay = Date.now();
+        loanPayErrors = 0;
+        if (state.me !== me) return;
+        loanPending = Math.max(0, loanPending - coins);
+        if (coins > 0) toast(`🏦 返済用のゲームで稼いだ ${coins.toLocaleString()} コインを返済しました`);
+      } catch (e) {
+        console.warn(e);
+        // 時計のずれなどで間隔が足りなかったときのために、少し待って3回まで試し直す
+        if (++loanPayErrors > 3) { loanPayErrors = 0; loanPending = 0; toast("返済を記録できませんでした", "error"); }
+        else loanLastPlay = Date.now();
+      } finally {
+        loanPaying = false;
+        if (state.me === me) { sendLoanToGame(); if (loanPending >= (state.loan?.rate || Infinity)) flushLoanGame(); }
+      }
+    }
+
+    // ---- 管理者：貸し出し・借りたいという希望 ----
+    let adminLoans = null; // { loans: [{ uid, ...}], reqs: [{ uid, ... }], bank }
+    let adminLoanPick = null; // 貸す相手（希望から選んだとき）
+    const loanUserName = (id) => { const u = state.users.get(id); return u ? `${u.name}` : id; };
+    async function openAdminLoans(pick = null) {
+      if (!isAdmin() || !adminKey) { openAdminUnlock(); return; }
+      adminLoanPick = pick;
+      const users = bankOthers();
+      const def = new Date(Date.now() + 7 * 864e5);
+      openAdminModal(`
+        ${modalHead("銀行の貸し出し", "銀行のメダルを、コインにして貸し出します。返済期限を過ぎても返し終えていない人は、返し終えるまで返済用のゲーム（${DEBT_GAMES.length}種類）しか遊べなくなります。")}
+        <div class="px-6 space-y-4 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-5">
+          <div class="space-y-4">
+            <div>
+              <div class="label">借りたいという希望</div>
+              <div id="loan-reqs" class="rounded-2xl ring-1 ring-slate-100 divide-y divide-slate-100 text-sm text-slate-400 p-3">読み込み中…</div>
+            </div>
+            <form id="form-admin-loan" class="space-y-3 rounded-2xl bg-slate-50 ring-1 ring-slate-100 p-4" novalidate>
+              <div class="text-sm font-semibold text-slate-800">貸す</div>
+              <div id="loan-bank" class="text-xs text-slate-500">銀行の残高を読み込み中…</div>
+              <label class="block text-xs text-slate-500">相手
+                <select name="user" class="input mt-1">
+                  <option value="">選んでください</option>
+                  ${users.map((u) => `<option value="${esc(u.id)}" ${pick?.uid === u.id ? "selected" : ""}>${esc(u.name)}（@${esc(u.id)}）</option>`).join("")}
+                </select></label>
+              <label class="block text-xs text-slate-500">貸すコイン
+                <input name="coins" type="number" min="${adminSettings.slotRate}" step="${adminSettings.slotRate}" inputmode="numeric" class="input mt-1" placeholder="例：5000" value="${pick ? esc(Math.ceil(pick.coins / adminSettings.slotRate) * adminSettings.slotRate) : ""}" /></label>
+              <p id="loan-preview" class="text-xs text-slate-500"></p>
+              <label class="block text-xs text-slate-500">返済期限
+                <input name="due" type="datetime-local" class="input mt-1" value="${esc(localDateTimeValue(pick ? new Date(Date.now() + pick.days * 864e5) : def))}" /></label>
+              <div class="flex flex-wrap gap-1.5">${LOAN_DAY_CHOICES.map((d) => `<button type="button" data-action="admin-loan-days" data-days="${d}" class="btn-chip py-1 text-xs bg-white ring-1 ring-slate-200 text-slate-600 hover:bg-slate-100">${d}日後</button>`).join("")}</div>
+              <p class="form-error" hidden></p>
+              <button type="submit" class="btn-primary w-full">貸す</button>
+            </form>
+          </div>
+          <div>
+            <div class="label">貸している人</div>
+            <div id="loan-list" class="rounded-2xl ring-1 ring-slate-100 divide-y divide-slate-100 text-sm text-slate-400 p-3 lg:max-h-[60vh] overflow-y-auto scroll-thin">読み込み中…</div>
+          </div>
+        </div>
+        <div class="px-6 pt-4 pb-6 flex gap-2">
+          <button type="button" data-action="admin-bank" class="btn-secondary flex-1">銀行へ</button>
+          <button type="button" data-action="admin-menu" class="btn-secondary flex-1">管理者メニュー</button>
+        </div>`, "lg:max-w-4xl");
+      $("#form-admin-loan")?.addEventListener("input", () => renderAdminLoanPreview());
+      renderAdminLoanPreview();
+      await loadAdminLoans();
+    }
+    // <input type="datetime-local"> の値（この端末の時刻）
+    function localDateTimeValue(d) {
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    async function loadAdminLoans() {
+      try {
+        const [ls, rs, bs] = await Promise.all([getDocs(collection(db, "loans")), getDocs(collection(db, "loanRequests")), getDoc(bankRef())]);
+        adminLoans = {
+          loans: ls.docs.map((d) => ({ uid: d.id, ...d.data() })),
+          reqs: rs.docs.map((d) => ({ uid: d.id, ...d.data() })).sort((a, b) => ms(b.at) - ms(a.at)),
+          bank: bs.exists() ? bs.data() : { medals: 0 },
+        };
+      } catch (e) {
+        console.warn(e);
+        const box = $("#loan-list");
+        if (box) box.innerHTML = `<span class="text-rose-500">読み込めませんでした（ルールが最新か確かめてください）</span>`;
+        return;
+      }
+      renderAdminLoans();
+    }
+    function renderAdminLoans() {
+      if (!adminLoans) return;
+      const rate = adminSettings.slotRate, bank = adminLoans.bank;
+      const out = adminLoans.loans.reduce((n, l) => n + loanLeft(l), 0);
+      const bankBox = $("#loan-bank");
+      if (bankBox) bankBox.innerHTML = `銀行の残高 <b class="text-slate-700 tabular-nums">${(bank.medals || 0).toLocaleString()}</b> 枚（＝ ${((bank.medals || 0) * rate).toLocaleString()} コイン）・ 貸している分 ${out.toLocaleString()} 枚`;
+      const reqBox = $("#loan-reqs");
+      if (reqBox) {
+        reqBox.className = "rounded-2xl ring-1 ring-slate-100 divide-y divide-slate-100";
+        reqBox.innerHTML = adminLoans.reqs.map((r) => `
+          <div class="p-3 ${r.status === "rejected" ? "opacity-60" : ""}">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="font-semibold text-slate-800 truncate">${esc(loanUserName(r.uid))}</span><span class="text-xs text-slate-400 truncate">@${esc(r.uid)}</span>
+              <span class="ml-auto shrink-0 text-xs text-slate-400">${esc(relTime(r.at))}</span>
+            </div>
+            <div class="text-sm text-slate-700"><b class="tabular-nums">${Number(r.coins).toLocaleString()}</b> コイン ・ ${r.days}日以内に返す予定${r.status === "rejected" ? `<span class="ml-1.5 text-xs text-slate-500">（見送り済み）</span>` : ""}</div>
+            ${r.message ? `<div class="mt-0.5 text-xs text-slate-500 whitespace-pre-wrap break-words">「${esc(r.message)}」</div>` : ""}
+            ${r.status === "rejected" ? "" : `<div class="mt-2 flex gap-1.5">
+              <button type="button" data-action="admin-loan-pick" data-id="${esc(r.uid)}" class="btn-chip py-1 text-xs bg-indigo-600 text-white hover:bg-indigo-500">この内容で貸す</button>
+              <button type="button" data-action="admin-loan-reject" data-id="${esc(r.uid)}" class="btn-chip py-1 text-xs bg-slate-100 text-slate-600 hover:bg-slate-200">見送る</button>
+            </div>`}
+          </div>`).join("") || `<p class="text-sm text-slate-400 text-center py-4">いまは希望がありません</p>`;
+      }
+      const list = $("#loan-list");
+      if (list) {
+        const rows = [...adminLoans.loans].sort((a, b) => (loanLeft(b) > 0) - (loanLeft(a) > 0) || ms(a.due) - ms(b.due));
+        list.className = "rounded-2xl ring-1 ring-slate-100 divide-y divide-slate-100 lg:max-h-[60vh] overflow-y-auto scroll-thin";
+        list.innerHTML = rows.map((l) => {
+          const left = loanLeftCoins(l), done = left === 0, over = loanOverdue(l);
+          return `
+          <div class="p-3 ${done ? "opacity-60" : ""}">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="font-semibold text-slate-800 truncate">${esc(loanUserName(l.uid))}</span><span class="text-xs text-slate-400 truncate">@${esc(l.uid)}</span>
+              <span class="ml-auto shrink-0 px-1.5 py-px rounded-md text-[10px] font-semibold ${done ? "bg-emerald-50 text-emerald-600" : over ? "bg-rose-100 text-rose-600" : "bg-indigo-50 text-indigo-600"}">${done ? "完済" : over ? "期限切れ" : "返済中"}</span>
+            </div>
+            <div class="text-xs text-slate-600 mt-0.5">貸した ${((l.medals || 0) * l.rate).toLocaleString()} ・ 返した ${((l.paid || 0) * l.rate).toLocaleString()} ・ <b class="${over ? "text-rose-600" : "text-slate-800"}">残り ${left.toLocaleString()}</b> コイン</div>
+            <div class="text-xs ${over ? "text-rose-600" : "text-slate-400"}">期限 ${esc(loanDueText(l.due))}${done ? "" : `（${esc(loanRemainText(l.due))}）`}${l.via ? ` ・ 最後は${l.via === "game" ? "返済用のゲーム" : "コイン"}で返済` : ""}</div>
+            ${done ? "" : `<div class="mt-2 flex flex-wrap gap-1.5">
+              <button type="button" data-action="admin-loan-extend" data-id="${esc(l.uid)}" data-days="1" class="btn-chip py-1 text-xs bg-slate-100 text-slate-600 hover:bg-slate-200">期限 +1日</button>
+              <button type="button" data-action="admin-loan-extend" data-id="${esc(l.uid)}" data-days="7" class="btn-chip py-1 text-xs bg-slate-100 text-slate-600 hover:bg-slate-200">期限 +7日</button>
+              <button type="button" data-action="admin-loan-forgive" data-id="${esc(l.uid)}" class="btn-chip py-1 text-xs bg-rose-50 text-rose-600 hover:bg-rose-100">帳消しにする</button>
+            </div>`}
+          </div>`;
+        }).join("") || `<p class="text-sm text-slate-400 text-center py-4">まだだれにも貸していません</p>`;
+      }
+      renderAdminLoanPreview();
+    }
+    function renderAdminLoanPreview() {
+      const form = $("#form-admin-loan"), pv = $("#loan-preview");
+      if (!form || !pv) return;
+      const rate = adminSettings.slotRate, raw = form.coins.value.trim(), c = Number(raw);
+      const bal = adminLoans?.bank?.medals ?? null;
+      if (!raw) { pv.className = "text-xs text-slate-500"; pv.textContent = `${rate} コイン単位（メダル1枚 = ${rate} コイン）・1人 ${GRANT_MAX_COINS.toLocaleString()} コインまで`; return; }
+      const m = c / rate;
+      const err = !Number.isInteger(c) || c < rate || c % rate !== 0 ? `${rate} コイン単位で入力してください`
+        : c > GRANT_MAX_COINS ? `1人 ${GRANT_MAX_COINS.toLocaleString()} コインまでです`
+        : bal !== null && m > bal ? `銀行の残高（${bal.toLocaleString()} 枚）より多いです` : "";
+      pv.className = `text-xs ${err ? "text-rose-500" : "text-slate-500"}`;
+      pv.textContent = err || `銀行からメダル ${m.toLocaleString()} 枚${bal !== null ? `（残り ${(bal - m).toLocaleString()} 枚）` : ""}`;
+    }
+    function setAdminLoanDays(days) {
+      const form = $("#form-admin-loan");
+      if (form) form.due.value = localDateTimeValue(new Date(Date.now() + Number(days) * 864e5));
+    }
+    function pickLoanRequest(uid) {
+      const r = adminLoans?.reqs.find((x) => x.uid === uid);
+      const form = $("#form-admin-loan");
+      if (!r || !form) return;
+      const rate = adminSettings.slotRate;
+      form.user.value = uid;
+      form.coins.value = Math.min(Math.ceil(r.coins / rate) * rate, Math.floor(GRANT_MAX_COINS / rate) * rate);
+      form.due.value = localDateTimeValue(new Date(Date.now() + r.days * 864e5));
+      renderAdminLoanPreview();
+      form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+    // 貸す：1回の取引で、銀行のメダルを減らし（lent を増やし）、相手にコインを入れ（grant）、loans/{相手} を作り、希望を消す
+    async function loanLend(fd) {
+      if (!isAdmin() || !adminKey) return;
+      const uid = String(fd.get("user") || "");
+      const rate = adminSettings.slotRate;
+      const coins = Number(String(fd.get("coins") ?? "").trim());
+      const due = new Date(String(fd.get("due") || ""));
+      const u = state.users.get(uid);
+      if (!u || u.deleted || uid === state.me.id) throw new Error("貸す相手を選んでください。");
+      if (!Number.isInteger(coins) || coins < rate || coins % rate !== 0 || coins > GRANT_MAX_COINS) throw new Error(`貸すコインは ${rate}〜${GRANT_MAX_COINS.toLocaleString()} の ${rate} コイン単位で入力してください。`);
+      if (isNaN(due) || due.getTime() < Date.now() + 10 * 6e4 || due.getTime() > Date.now() + LOAN_MAX_DAYS * 864e5 - 6e4) throw new Error(`返済期限は、10分後から${LOAN_MAX_DAYS}日後までにしてください。`);
+      const medals = coins / rate;
+      if (!window.confirm(`${u.name} さんに ${coins.toLocaleString()} コインを貸します（銀行からメダル ${medals.toLocaleString()} 枚）。返済期限は ${loanDueText(due)} です。よろしいですか？`)) return;
+      const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      const msg = `🏦 銀行から ${coins.toLocaleString()} コインを借りました。返済期限は ${loanDueText(due)} です。期限を過ぎても返し終えていないと、返し終えるまで返済用のゲーム以外で遊べなくなります。`;
+      try {
+        await runTransaction(db, async (tx) => {
+          const bs = await tx.get(bankRef());
+          const wref = doc(db, "users", uid, "wallet", "main");
+          const ws = await tx.get(wref);
+          const ls = await tx.get(loanRef(uid));
+          const rs = await tx.get(loanReqRef(uid));
+          const b = bs.exists() ? bs.data() : { medals: 0 };
+          if ((b.medals || 0) < medals) throw new Error(`銀行のメダルが足りません（必要 ${medals.toLocaleString()} 枚・残高 ${(b.medals || 0).toLocaleString()} 枚）。`);
+          if (ls.exists() && loanLeft(ls.data()) > 0) throw new Error("この人には、まだ返し終えていない借金があります。");
+          tx.set(doc(db, "admin", "secret"), { hash: adminKey, proof: adminKey, at: serverTimestamp() });
+          const before = ws.exists() ? (ws.data().coins || 0) : 0;
+          tx.set(wref, { coins: before + coins, grant: { id, coins, message: msg, at: serverTimestamp() }, updatedAt: serverTimestamp() }, { merge: true });
+          tx.update(bankRef(), { medals: b.medals - medals, lent: (b.lent || 0) + medals, updatedAt: serverTimestamp() });
+          tx.set(loanRef(uid), { id, medals, rate, paid: 0, due, at: serverTimestamp(), updatedAt: serverTimestamp() });
+          if (rs.exists()) tx.delete(loanReqRef(uid));
+        });
+      } catch (e) {
+        if (e.code === "permission-denied") throw new Error("権限エラーで貸せませんでした（ルールが最新か、管理者パスワードが正しいかを確かめてください）");
+        throw e;
+      }
+      toast(`🏦 ${u.name} さんに ${coins.toLocaleString()} コインを貸しました`);
+      const form = $("#form-admin-loan");
+      if (form) { form.user.value = ""; form.coins.value = ""; }
+      await loadAdminLoans();
+    }
+    // 管理者のパスワードを確かめながら1つの文書を変える（期限の変更・帳消し・見送り）
+    async function adminLoanWrite(el, fn, done) {
+      if (!isAdmin() || !adminKey) return;
+      if (el) el.disabled = true;
+      try {
+        await runTransaction(db, async (tx) => {
+          tx.set(doc(db, "admin", "secret"), { hash: adminKey, proof: adminKey, at: serverTimestamp() });
+          await fn(tx);
+        });
+        toast(done);
+      } catch (e) {
+        console.error(e);
+        toast(e.code === "permission-denied" ? ADMIN_PASSWORD_ERROR : e.message || "変更できませんでした", "error");
+      } finally {
+        if (el) el.disabled = false;
+      }
+      await loadAdminLoans();
+    }
+    function extendLoan(el) {
+      const uid = el.dataset.id, days = Number(el.dataset.days) || 1;
+      const l = adminLoans?.loans.find((x) => x.uid === uid);
+      if (!l) return;
+      // 期限切れなら今から、そうでなければ今の期限から延ばす（31日先まで）
+      const base = Math.max(ms(l.due), Date.now());
+      const due = new Date(Math.min(base + days * 864e5, Date.now() + LOAN_MAX_DAYS * 864e5 - 6e4));
+      adminLoanWrite(el, (tx) => tx.update(loanRef(uid), { due, updatedAt: serverTimestamp() }), `${loanUserName(uid)} さんの返済期限を ${loanDueText(due)} にしました`);
+    }
+    function forgiveLoan(el) {
+      const uid = el.dataset.id;
+      const l = adminLoans?.loans.find((x) => x.uid === uid);
+      if (!l || !window.confirm(`${loanUserName(uid)} さんの借金（残り ${loanLeftCoins(l).toLocaleString()} コイン）を帳消しにします。残りは銀行に戻りません。よろしいですか？`)) return;
+      adminLoanWrite(el, (tx) => tx.delete(loanRef(uid)), `${loanUserName(uid)} さんの借金を帳消しにしました`);
+    }
+    function rejectLoanRequest(el) {
+      const uid = el.dataset.id;
+      if (!window.confirm(`${loanUserName(uid)} さんの希望を見送りますか？`)) return;
+      adminLoanWrite(el, (tx) => tx.update(loanReqRef(uid), { status: "rejected" }), `${loanUserName(uid)} さんの希望を見送りました`);
     }
 
     function openAdminPlans() {
@@ -25463,6 +28238,16 @@ draw();
       "admin-grant": () => openAdminGrant(),
       "admin-bank": () => openAdminBank(),
       "admin-bank-max": () => fillBankMax(),
+      "admin-loans": () => openAdminLoans(),
+      "admin-loan-days": (el) => setAdminLoanDays(el.dataset.days),
+      "admin-loan-pick": (el) => pickLoanRequest(el.dataset.id),
+      "admin-loan-reject": (el) => rejectLoanRequest(el),
+      "admin-loan-extend": (el) => extendLoan(el),
+      "admin-loan-forgive": (el) => forgiveLoan(el),
+      "loan-request": () => openLoanRequest(),
+      "loan-request-cancel": () => cancelLoanRequest(),
+      "loan-repay": () => openLoanRepay(),
+      "loan-repay-max": () => fillLoanRepayMax(),
       "admin-plan-filter": (el) => { adminPlanFilter = el.dataset.plan; renderAdminPlanList(); },
       "admin-restrict-user": (el) => openRestrictUser(el.dataset.id),
       "admin-unrestrict": (el) => unrestrictUser(el),
@@ -25547,6 +28332,9 @@ draw();
       "form-admin-restrict": (fd) => restrictUser(fd.get("user"), fd.get("hours"), fd.get("minutes"), fd.get("direct") === "1"),
       "form-admin-slot": (fd) => saveSlotSettings(fd),
       "form-admin-bank": (fd) => bankPayout(fd),
+      "form-admin-loan": (fd) => loanLend(fd),
+      "form-loan-request": (fd) => submitLoanRequest(fd),
+      "form-loan-repay": (fd) => loanPayCoins(fd),
       "form-admin-grant": (fd) => grantCoinsToAll(fd.get("message"), fd.get("coins"), fd.get("target") === "some" ? fd.getAll("users") : null),
     };
 
