@@ -9755,7 +9755,7 @@ draw();
   // 画面と操作
   // ============================================================
   const CONFIG = { coinPerMedal: 10, lendMedals: 50, setting: 2, demoCoins: 10000 };
-  const DROP_GAP = 0.3, STOCK_MAX = 5, SHOWER_RATE = 14, MEDAL_MAX = 100000;
+  const DROP_GAP = 0.3, STOCK_MAX = 5, SHOWER_RATE = 14, MEDAL_MAX = 500000;
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => Math.floor(n).toLocaleString('ja-JP');
   const embedded = window.parent !== window;
@@ -10306,7 +10306,8 @@ draw();
   .counter.credit b { color: #34d399; }
   .counter.win b { color: var(--gold); }
 
-  .chips { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
+  .chips { display: grid; grid-template-columns: repeat(6, 1fr) 1.7fr; gap: 5px; }
+  .chip.allin:not(.active) { color: #fde68a; }
   .chip { height: 34px; border-radius: 999px; font-size: 12px; font-weight: 900; background: rgba(3, 8, 20, 0.6); border: 2px dashed rgba(255, 255, 255, 0.25); color: #e2e8f0; }
   .chip.active { background: radial-gradient(circle at 40% 30%, #fde68a, #f59e0b); color: #422006; border: 2px dashed #7c2d12; }
   .chip:disabled:not(.active) { opacity: 0.35; }
@@ -10458,7 +10459,7 @@ draw();
   const CONFIG = { coinPerMedal: 10, lendMedals: 50, setting: 2, demoCoins: 10000 };
   const RTP = [0.70, 0.954, 0.979, 1.003, 1.029, 1.059, 1.107];
   const BETS = [10, 20, 50, 100, 200, 500];
-  const MAX_WINS = 12, MEDAL_MAX = 100000;
+  const MAX_WINS = 12, MEDAL_MAX = 500000;
   const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
   const SUITS = ['♠', '♥', '♦', '♣'];
   const $ = (id) => document.getElementById(id);
@@ -10469,7 +10470,7 @@ draw();
   if (!embedded && matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
 
   let coins = CONFIG.demoCoins, credit = 0;
-  let bet = 10, chain = 0, wins = 0, phase = 'idle', paused = false; // idle | guess | reveal
+  let bet = 10, allIn = false, chain = 0, wins = 0, phase = 'idle', paused = false; // idle | guess | reveal
   let cur = null, ladder = [];
   let ready = !embedded, casinoOn = true, busy = false, known = 0;
   const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
@@ -10486,7 +10487,7 @@ draw();
   const drawCard = () => ({ r: 1 + Math.floor(Math.random() * 13), s: Math.floor(Math.random() * 4) });
 
   function setMsg(t, cls) { $('msg').textContent = t; $('msg').className = 'msg' + (cls ? ' ' + cls : ''); }
-  $('chips').innerHTML = BETS.map((b) => `<button class="chip" type="button" data-bet="${b}">${b}</button>`).join('');
+  $('chips').innerHTML = BETS.map((b) => `<button class="chip" type="button" data-bet="${b}">${b}</button>`).join('') + '<button class="chip allin" type="button" data-bet="all" title="手元のメダルを全部賭ける">ALL IN</button>';
   const chipEls = [...document.querySelectorAll('.chip')];
 
   function paintCard(el, c, { down = false, cls = '' } = {}) {
@@ -10504,13 +10505,14 @@ draw();
 
   function update() {
     const round = phase !== 'idle';
+    if (allIn && !round) bet = Math.max(1, credit); // ALL IN：手元のメダルを全部賭ける
     $('walletVal').textContent = fmt(coins);
     $('creditVal').textContent = fmt(credit);
     $('betLabel').textContent = round ? '連勝' : 'BET';
     $('betVal').textContent = round ? `${wins}` : fmt(bet);
     $('winVal').textContent = wins ? fmt1(chain) : '0';
     const canPlay = ready && !busy && casinoOn;
-    chipEls.forEach((c) => { const b = +c.dataset.bet; c.classList.toggle('active', b === bet); c.disabled = round || !canPlay || b > credit; });
+    chipEls.forEach((c) => { const all = c.dataset.bet === 'all', b = +c.dataset.bet; c.classList.toggle('active', all ? allIn : !allIn && b === bet); c.disabled = round || !canPlay || (all ? credit < 1 : b > credit); });
     const guessing = phase === 'guess' && !busy;
     const ph = cur ? pHigh(cur.r) : 0, pl = cur ? pLow(cur.r) : 0;
     $('highBtn').disabled = !guessing || ph === 0;
@@ -10536,6 +10538,7 @@ draw();
 
   function deal() {
     if (phase !== 'idle' || !ready || busy || !casinoOn) return;
+    if (allIn) bet = Math.max(1, credit);
     if (credit < bet) { setMsg(credit >= 1 ? `メダルが足りません（手元 ${fmt(credit)}枚）。賭ける枚数を下げるか、メダルを借りてください` : 'メダルがありません。「メダルを借りる」から', 'warn'); return; }
     credit -= bet; report();
     chain = bet; wins = 0; ladder = [];
@@ -10668,7 +10671,7 @@ draw();
   $('soundBtn').addEventListener('click', () => { soundOn = !soundOn; $('soundBtn').textContent = soundOn ? '🔊' : '🔇'; });
 
   // ---------- 入力 ----------
-  chipEls.forEach((c) => c.addEventListener('click', () => { if (phase === 'idle') { bet = +c.dataset.bet; update(); } }));
+  chipEls.forEach((c) => c.addEventListener('click', () => { if (phase === 'idle') { allIn = c.dataset.bet === 'all'; if (!allIn) bet = +c.dataset.bet; update(); } }));
   $('highBtn').addEventListener('click', () => guess('high'));
   $('lowBtn').addEventListener('click', () => guess('low'));
   $('mainBtn').addEventListener('click', () => (phase === 'guess' ? take() : deal()));
@@ -10819,7 +10822,8 @@ draw();
   .counter.credit b { color: #34d399; }
   .counter.win b { color: var(--gold); }
 
-  .chips { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
+  .chips { display: grid; grid-template-columns: repeat(6, 1fr) 1.7fr; gap: 5px; }
+  .chip.allin:not(.active) { color: #fde68a; }
   .chip { height: 34px; border-radius: 999px; font-size: 12px; font-weight: 900; background: rgba(3, 12, 10, 0.6); border: 2px dashed rgba(255, 255, 255, 0.25); color: #e2e8f0; }
   .chip.active { background: radial-gradient(circle at 40% 30%, #fde68a, #f59e0b); color: #422006; border: 2px dashed #7c2d12; }
   .chip:disabled:not(.active) { opacity: 0.35; }
@@ -10976,7 +10980,7 @@ draw();
   // 設定 0〜6 ごとの払い戻しの割合（スロットと同じ目安）
   const RTP = [0.70, 0.954, 0.979, 1.003, 1.029, 1.059, 1.107];
   const BETS = [10, 20, 50, 100, 200, 500];
-  const MAX_WINS = 10, MEDAL_MAX = 100000;
+  const MAX_WINS = 10, MEDAL_MAX = 500000;
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => Math.floor(n).toLocaleString('ja-JP');
   const fmt1 = (n) => (n < 1000 && n % 1 ? (Math.floor(n * 10) / 10).toLocaleString('ja-JP', { minimumFractionDigits: 1 }) : fmt(n));
@@ -10985,7 +10989,7 @@ draw();
   if (!embedded && matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
 
   let coins = CONFIG.demoCoins, credit = 0;
-  let bet = 10, chain = 0, wins = 0, phase = 'idle', paused = false;
+  let bet = 10, allIn = false, chain = 0, wins = 0, phase = 'idle', paused = false;
   const hist = [];
   let ready = !embedded, casinoOn = true, busy = false, known = 0;
   const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
@@ -10999,11 +11003,12 @@ draw();
   function setMsg(t, warn) { $('msg').textContent = t; $('msg').className = 'msg' + (warn ? ' warn' : ''); }
   function setResult(t, cls) { $('result').textContent = t; $('result').className = 'result' + (cls ? ' ' + cls : ''); }
 
-  $('chips').innerHTML = BETS.map((b) => `<button class="chip" type="button" data-bet="${b}">${b}</button>`).join('');
+  $('chips').innerHTML = BETS.map((b) => `<button class="chip" type="button" data-bet="${b}">${b}</button>`).join('') + '<button class="chip allin" type="button" data-bet="all" title="手元のメダルを全部賭ける">ALL IN</button>';
   const chipEls = [...document.querySelectorAll('.chip')];
 
   function update() {
     const idle = phase === 'idle', riding = chain > 0;
+    if (allIn && idle && !riding) bet = Math.max(1, credit); // ALL IN：手元のメダルを全部賭ける
     const m = mult();
     $('walletVal').textContent = fmt(coins);
     $('creditVal').textContent = fmt(credit);
@@ -11012,7 +11017,7 @@ draw();
     $('winLabel').textContent = riding ? '回収できる枚数' : 'WIN';
     $('winVal').textContent = fmt1(chain);
     const canPlay = idle && ready && !busy && casinoOn;
-    chipEls.forEach((c) => { const b = +c.dataset.bet; c.classList.toggle('active', b === bet); c.disabled = !canPlay || riding || b > credit; });
+    chipEls.forEach((c) => { const all = c.dataset.bet === 'all', b = +c.dataset.bet; c.classList.toggle('active', all ? allIn : !allIn && b === bet); c.disabled = !canPlay || riding || (all ? credit < 1 : b > credit); });
     const can = canPlay && (riding || credit >= bet);
     $('pickH').disabled = !can; $('pickT').disabled = !can;
     $('multH').textContent = $('multT').textContent = `×${m.toFixed(2)}`;
@@ -11038,6 +11043,7 @@ draw();
     if (phase !== 'idle' || !ready || busy || !casinoOn) return;
     let stake = chain;
     if (!chain) {
+      if (allIn) bet = Math.max(1, credit);
       if (credit < bet) { setMsg(credit >= 1 ? `メダルが足りません（手元 ${fmt(credit)}枚）。賭ける枚数を下げるか、メダルを借りてください` : 'メダルがありません。「メダルを借りる」から', true); return; }
       credit -= bet; stake = bet; report();
     }
@@ -11153,7 +11159,7 @@ draw();
   $('soundBtn').addEventListener('click', () => { soundOn = !soundOn; $('soundBtn').textContent = soundOn ? '🔊' : '🔇'; });
 
   // ---------- 入力 ----------
-  chipEls.forEach((c) => c.addEventListener('click', () => { if (phase === 'idle' && !chain) { bet = +c.dataset.bet; update(); } }));
+  chipEls.forEach((c) => c.addEventListener('click', () => { if (phase === 'idle' && !chain) { allIn = c.dataset.bet === 'all'; if (!allIn) bet = +c.dataset.bet; update(); } }));
   $('pickH').addEventListener('click', () => pick('h'));
   $('pickT').addEventListener('click', () => pick('t'));
   $('takeBtn').addEventListener('click', take);
@@ -12821,7 +12827,8 @@ draw();
   .opt { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; }
   .opt > span { font-size: 10px; font-weight: 800; color: var(--muted); width: 3.4em; }
   .row { display: grid; gap: 4px; }
-  .row.bets { grid-template-columns: repeat(6, 1fr); }
+  .row.bets { grid-template-columns: repeat(6, 1fr) 1.7fr; }
+  .chip.allin:not(.active) { color: #ddd6fe; }
   .row.mines { grid-template-columns: repeat(8, 1fr); }
   .chip { height: 30px; border-radius: 999px; font-size: 11.5px; font-weight: 900; background: rgba(6, 4, 14, 0.6); border: 1px solid rgba(255, 255, 255, 0.15); color: #e2e8f0; }
   .chip.active { background: linear-gradient(180deg, #c4b5fd, #7c3aed); color: #fff; border-color: #ede9fe; }
@@ -12965,7 +12972,7 @@ draw();
   const RTP = [0.70, 0.954, 0.979, 1.003, 1.029, 1.059, 1.107];
   const BETS = [10, 20, 50, 100, 200, 500];
   const MINE_OPTS = [1, 3, 5, 8, 10, 15, 20, 24];
-  const CELLS = 25, MEDAL_MAX = 100000;
+  const CELLS = 25, MEDAL_MAX = 500000;
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => Math.floor(n).toLocaleString('ja-JP');
   const embedded = window.parent !== window;
@@ -12973,7 +12980,7 @@ draw();
   if (!embedded && matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark');
 
   let coins = CONFIG.demoCoins, credit = 0;
-  let bet = 10, mineCount = 3, phase = 'idle', paused = false; // idle | play | over
+  let bet = 10, allIn = false, mineCount = 3, phase = 'idle', paused = false; // idle | play | over
   let mines = new Set(), opened = new Set(), lastLose = -1;
   let ready = !embedded, casinoOn = true, busy = false, known = 0;
   const send = (type, extra = {}) => { try { parent.postMessage(Object.assign({ source: 'chatter-game', type }, extra), '*'); } catch (e) {} };
@@ -12996,12 +13003,13 @@ draw();
   function setMsg(t, cls) { $('msg').textContent = t; $('msg').className = 'msg' + (cls ? ' ' + cls : ''); }
   $('grid').innerHTML = Array.from({ length: CELLS }, (_, i) => `<button class="tile" type="button" data-i="${i}" aria-label="マス ${i + 1}"></button>`).join('');
   const tiles = [...document.querySelectorAll('.tile')];
-  $('bets').innerHTML = BETS.map((b) => `<button class="chip" type="button" data-bet="${b}">${b}</button>`).join('');
+  $('bets').innerHTML = BETS.map((b) => `<button class="chip" type="button" data-bet="${b}">${b}</button>`).join('') + '<button class="chip allin" type="button" data-bet="all" title="手元のメダルを全部賭ける">ALL IN</button>';
   $('mines').innerHTML = MINE_OPTS.map((m) => `<button class="chip" type="button" data-m="${m}">${m}</button>`).join('');
   const betEls = [...document.querySelectorAll('[data-bet]')], mineEls = [...document.querySelectorAll('[data-m]')];
 
   function update() {
     const playing = phase === 'play';
+    if (allIn && !playing) bet = Math.max(1, credit); // ALL IN：手元のメダルを全部賭ける
     $('walletVal').textContent = fmt(coins);
     $('creditVal').textContent = fmt(credit);
     const k = opened.size;
@@ -13010,7 +13018,7 @@ draw();
     const left = CELLS - mineCount - k;
     $('nextInfo').innerHTML = playing && left > 0 ? `次の 💎 で <b>${fmtMult(multAt(k + 1))}</b><br>当たる見込み ${Math.round((left / (CELLS - k)) * 100)}%` : `💣 ${mineCount}個 ・ 最初の 💎 で <b>${fmtMult(multAt(1))}</b>`;
     const canPlay = ready && !busy && casinoOn;
-    betEls.forEach((c) => { const b = +c.dataset.bet; c.classList.toggle('active', b === bet); c.disabled = playing || !canPlay || b > credit; });
+    betEls.forEach((c) => { const all = c.dataset.bet === 'all', b = +c.dataset.bet; c.classList.toggle('active', all ? allIn : !allIn && b === bet); c.disabled = playing || !canPlay || (all ? credit < 1 : b > credit); });
     mineEls.forEach((c) => { const m = +c.dataset.m; c.classList.toggle('active', m === mineCount); c.disabled = playing || !canPlay; });
     tiles.forEach((t, i) => { t.disabled = !playing || opened.has(i); });
     $('randBtn').disabled = !playing;
@@ -13033,6 +13041,7 @@ draw();
 
   function start() {
     if (phase === 'play' || !ready || busy || !casinoOn) return;
+    if (allIn) bet = Math.max(1, credit);
     if (credit < bet) { setMsg(credit >= 1 ? `メダルが足りません（手元 ${fmt(credit)}枚）。賭ける枚数を下げるか、メダルを借りてください` : 'メダルがありません。「メダルを借りる」から', 'warn'); return; }
     credit -= bet; report();
     mines = new Set();
@@ -13159,7 +13168,7 @@ draw();
 
   // ---------- 入力 ----------
   tiles.forEach((t, i) => t.addEventListener('click', () => open(i)));
-  betEls.forEach((c) => c.addEventListener('click', () => { if (phase !== 'play') { bet = +c.dataset.bet; update(); } }));
+  betEls.forEach((c) => c.addEventListener('click', () => { if (phase !== 'play') { allIn = c.dataset.bet === 'all'; if (!allIn) bet = +c.dataset.bet; update(); } }));
   mineEls.forEach((c) => c.addEventListener('click', () => { if (phase !== 'play') { mineCount = +c.dataset.m; update(); } }));
   $('mainBtn').addEventListener('click', () => (phase === 'play' ? take() : start()));
   $('randBtn').addEventListener('click', randomOpen);
@@ -17220,7 +17229,7 @@ draw();
     // day：日本時間の日付の通し番号 / spent・got：その日に借りた・精算したコイン / last：最後に精算したメダルの枚数
     // コインが動くのは「借りる」「精算」のときだけ。遊んでいる間のメダルの数は、少し待ってまとめて記録する
     // ============================================================
-    const SLOT_LEND = 50, SLOT_MEDALS_MAX = 100000, SLOT_SYNC_MS = 4000;
+    const SLOT_LEND = 50, SLOT_MEDALS_MAX = 500000, SLOT_SYNC_MS = 4000;
     const SLOT_RATES = [5, 10, 20, 50];
     const SLOT_CAPS = [0, 5000, 10000, 20000, 50000, 100000];
     const SLOT_RTP = ["約70%", "約95%", "約98%", "約100%", "約103%", "約106%", "約111%"];
