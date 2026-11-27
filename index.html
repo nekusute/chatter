@@ -18835,6 +18835,82 @@ draw();
     const DEBT_GAME_NAMES = DEBT_GAMES.map((g) => `「${g.name}」`).join("");
     const debtGameById = (id) => DEBT_GAMES.find((g) => g.id === id) || null;
     const isDebtGame = (id) => !!debtGameById(id);
+    // 返済用のゲームの遊び方（いつでも見られる。ゲームの中身を変えたら、ここも合わせる）
+    const DEBT_GAME_RULES = {
+      kaze: {
+        how: "マウス・タップ（ドラッグ）・左右キー（A / D）で左右に動く",
+        rules: [
+          "パラシュートで風に流されながら、どんどん下へ降りていく。風は数秒ごとに向きと強さが変わり、変わる前に「GUST」の予告が出る",
+          "🪙 = 10 コイン。300m ごとに値打ちが上がる（最大 50）。お金の袋 = 🪙10枚分",
+          "100m ごとに距離のボーナス",
+          "☂️ 傘：しばらくの間、1回だけぶつかっても平気 ／ 風車：8秒間、風がやむ",
+          "トゲ・カラス・岩棚にぶつかると終わり。だんだん速くなる",
+        ],
+      },
+      kouzan: {
+        how: "左右キー・下キー（A / D / S）／画面の、坑夫の左・右・下あたりを押す（押しっぱなしで続けて掘る）",
+        rules: [
+          "左右と下に掘り進む（上には掘れない）。1マス = 1m",
+          "土は1回・石は2回・かたい岩は4回たたくと壊れる。深いほど石と岩が増える",
+          "鉱石：銅 10・銀 25（12m〜）・金 60（35m〜）・ダイヤ 200（70m〜）コイン。30m ごとに +25% の深さ倍率がかかる",
+          "ランタンの油：はじめ45秒（最大60秒）。油の缶で +10秒。25m ごとに深さボーナス（+5秒とコイン）",
+          "油が切れたら終わり（カバンの中身を全部もらえる）",
+          "ひびの入った岩（8m〜）は、下が空くとゆれてから落ちてくる。下敷きになると終わり（カバンの中身の半分だけ）",
+          "深いほど暗くなり、ランタンの明かりの届く範囲しか見えない",
+        ],
+      },
+      naishoku: {
+        how: "← ↓ → ↑ キー（A S D W）／画面下の4つの箱を押す",
+        rules: [
+          "ベルトで流れてくる部品のうち、いちばん先頭のものを箱に入れる：← ネジ ／ ↓ ボタン ／ → バネ ／ ↑ 不良品",
+          "10秒を過ぎると、ひびと赤い×の付いた不良品が混ざる。種類に関係なく「不良品」の箱へ",
+          "正しい箱 = 10 コイン（連続正解10回ごとに +2、最大30）。不良品を正しく捨てる = 15",
+          "間違えた箱 = −20、端から落とした = −10（どちらも連続が切れる。稼ぎは0より下にならない）",
+          "1シフト60秒。一度も間違えず落とさなければ「皆勤手当」+100",
+        ],
+      },
+      nigero: {
+        how: "↑ / W / スペース / 画面の上のほう = ジャンプ（空中でもう1回）、↓ / S / 画面の下のほう（押している間）= スライディング",
+        rules: [
+          "自動で右へ走る。後ろから借金取りが追ってくる（下の「距離」ゲージ。0で捕まる）",
+          "距離ははじめ70（最大100）。ぶつからずに走ると広がり、障害物にぶつかると −30",
+          "段ボール = ジャンプ ／ バリケード = 早めにジャンプか2段ジャンプ ／ 看板 = スライディングでくぐる",
+          "小銭1枚 = 3 コイン（400m ごとに +1、最大8）。100m ごとに +10。🥤 で3秒間ダッシュ（無敵）",
+          "だんだん速くなる。捕まると、拾ったお金の30%を取り上げられ、残り70%が返済になる",
+        ],
+      },
+      osara: {
+        how: "← / A / F = 左、→ / D / J = 右／画面の左半分・右半分を押す。♪ か M キーで音を消せる",
+        rules: [
+          "リズムゲーム。左右のレーンを流れてくる泡が下の線に重なった瞬間に、そのレーンを押してこする",
+          "ぴったり = +3 コイン、いい感じ = +1 コイン。押さずに通り過ぎるとミス",
+          "8回こするとピカピカ！で +20（ひびが無ければさらに +10）。次の皿へ",
+          "ミスで皿にひび。ひび3つで割れて弁償 −50（稼ぎは0より下にならない）",
+          "テンポは20秒ごとに速くなり、30秒を過ぎると裏拍の泡も混ざる。1シフト90秒",
+        ],
+      },
+    };
+    function openDebtRules(focusId = "") {
+      openModal(`
+        ${modalHead("返済用のゲームの遊び方", "どのゲームも、終わったときに稼いだ分がそのまま借金の返済に入ります（1回に返せるのは 10,000 コインまで・15秒あけて）。借金が無いときに遊んでも返済には入りません。")}
+        <div class="px-6 pb-6 space-y-3 max-h-[70vh] overflow-y-auto">
+          ${DEBT_GAMES.map((g) => {
+            const R = DEBT_GAME_RULES[g.id];
+            return `
+            <section id="debt-rules-${g.id}" class="p-3 rounded-2xl ring-1 ${focusId === g.id ? "ring-2 ring-indigo-400 bg-indigo-50" : "ring-slate-200 bg-white"}">
+              <div class="flex items-center gap-2.5">
+                ${gameThumb(g, "w-9 h-9 text-lg")}
+                <h3 class="text-sm font-bold text-slate-800">${esc(g.name)}</h3>
+              </div>
+              <p class="mt-2 text-xs text-slate-600 leading-relaxed"><span class="font-semibold text-slate-700">操作：</span>${esc(R.how)}</p>
+              <ul class="mt-1.5 space-y-1 text-xs text-slate-600 leading-relaxed list-disc pl-4">
+                ${R.rules.map((r) => `<li>${esc(r)}</li>`).join("")}
+              </ul>
+            </section>`;
+          }).join("")}
+        </div>`);
+      if (focusId) setTimeout(() => document.getElementById("debt-rules-" + focusId)?.scrollIntoView({ block: "nearest" }), 0);
+    }
     const playableById = (id) => gameById(id) || casinoById(id) || debtGameById(id);
     const gameThumb = (g, cls) => `<div class="${cls} shrink-0 rounded-2xl bg-gradient-to-br ${g.bg} grid place-items-center shadow-sm" aria-hidden="true">${g.emoji}</div>`;
     // 得点の合計（以前の記録で total が無いものは、少なくとも best はあるので best とみなす。ルールと同じ）
@@ -27226,7 +27302,7 @@ draw();
             <div class="mt-1 px-1 text-[11px] text-slate-500">借りた ${lent.toLocaleString()} ・ 返した ${paid.toLocaleString()} コイン（${pct}%）</div>
             ${over ? `<p class="mt-2 mx-1 text-xs font-semibold text-rose-600 leading-relaxed">返済期限を過ぎました。返し終えるまで、下の返済用のゲーム以外は遊べません。</p>` : ""}
             <button type="button" data-action="loan-repay" class="mt-2.5 w-full btn-chip justify-center py-2.5 text-sm text-white bg-gradient-to-r from-indigo-500 to-violet-500 shadow-md shadow-indigo-500/20 hover:brightness-110">🪙 コインで返す</button>
-            <div class="mt-3 px-1 text-[11px] font-medium text-slate-500">返済用のゲームで稼ぐ（稼いだ分がそのまま返済に入ります）</div>
+            <div class="mt-3 px-1 flex items-center gap-2"><span class="flex-1 text-[11px] font-medium text-slate-500">返済用のゲームで稼ぐ（稼いだ分がそのまま返済に入ります）</span><button type="button" data-action="debt-rules" class="shrink-0 text-[11px] font-semibold text-indigo-600 hover:underline">📖 遊び方</button></div>
             <div class="mt-1.5 grid grid-cols-1 gap-1.5">
               ${DEBT_GAMES.map((g) => `
               <button type="button" data-action="open-game" data-id="${g.id}" class="flex items-center gap-2.5 p-1.5 pr-2 rounded-xl bg-white ring-1 ring-slate-200 hover:bg-slate-50 text-left ${state.activeGameId === g.id ? "ring-2 ring-indigo-400" : ""}">
@@ -27247,7 +27323,8 @@ draw();
           <span class="flex-1 min-w-0 text-sm text-slate-700 truncate">${R ? `${Number(R.coins).toLocaleString()} コインを借りたい` : "銀行からコインを借りる"}</span>
           ${status}
           <span class="text-slate-300">${icon("chevron", "w-4 h-4")}</span>
-        </button>`;
+        </button>
+        <div class="-mt-2 mb-3 px-3 text-right"><button type="button" data-action="debt-rules" class="text-[11px] font-semibold text-indigo-600 hover:underline">📖 返済用のゲームの遊び方</button></div>`;
     }
 
     // ---- 借りたいという希望（本人）----
@@ -28245,6 +28322,7 @@ draw();
       "admin-loan-extend": (el) => extendLoan(el),
       "admin-loan-forgive": (el) => forgiveLoan(el),
       "loan-request": () => openLoanRequest(),
+      "debt-rules": (el) => openDebtRules(el.dataset.id || ""),
       "loan-request-cancel": () => cancelLoanRequest(),
       "loan-repay": () => openLoanRepay(),
       "loan-repay-max": () => fillLoanRepayMax(),
