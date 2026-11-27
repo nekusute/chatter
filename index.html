@@ -12054,6 +12054,15 @@ draw();
   .pot .odds b { font-size: 14px; color: #fecaca; text-shadow: none; }
 
   .board-wrap { position: relative; z-index: 1; border-radius: 18px; overflow: hidden; border: 1px solid rgba(245, 158, 11, 0.35); background: #000; }
+  /* 盤面の上：いま当たればもらえる額（銀行が変わるたびに更新） */
+  .board-pot { position: absolute; top: 34%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; padding: 4px 14px 5px; border-radius: 14px; background: rgba(0, 0, 0, 0.55); border: 1px solid rgba(245, 158, 11, 0.5); white-space: nowrap; }
+  .board-pot small { display: block; font-size: 10px; font-weight: 800; color: #fca5a5; letter-spacing: 0.12em; }
+  .board-pot b { display: block; font-size: clamp(24px, 4.2vh, 32px); font-weight: 900; color: #fde68a; line-height: 1.05; text-shadow: 0 0 14px rgba(245, 158, 11, 0.85), 0 2px 0 #000; }
+  .board-pot span { display: block; font-size: 11px; font-weight: 800; color: #fcd34d; }
+  .board-pot em { display: block; font-style: normal; font-size: 10px; font-weight: 700; color: #d6d3d1; }
+  .board-pot.closed b, .board-pot.closed span { opacity: 0.5; text-shadow: none; }
+  .board-pot.flash { animation: potFlash 0.9s ease-out; }
+  @keyframes potFlash { 0% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.9); transform: translate(-50%, -50%) scale(1.12); } 100% { box-shadow: 0 0 0 14px rgba(251, 191, 36, 0); transform: translate(-50%, -50%) scale(1); } }
   canvas.board { display: block; width: 100%; height: clamp(190px, 31vh, 270px); }
   canvas.krun { display: block; width: 100%; height: clamp(120px, 18vh, 150px); }
   .krun-wrap { position: relative; z-index: 1; border-radius: 18px; overflow: hidden; border: 1px solid rgba(220, 38, 38, 0.4); background: #000; }
@@ -12183,10 +12192,12 @@ draw();
     <div class="zawa" id="zawa" aria-hidden="true"></div>
     <div class="title-row"><div class="title">沼<small>3段クルーン</small></div><div class="state" id="stateInfo">-</div></div>
     <div class="pot">
-      <div><label>沼の払い（銀行の8割）</label><b class="num" id="potVal">-</b><small class="num" id="potNote">-</small></div>
+      <div><label>いま当たればもらえる額（銀行の8割）</label><b class="num" id="potVal">-</b><small class="num" id="potNote">-</small></div>
       <div class="odds"><label>大当たり確率</label><b class="num" id="oddsVal">-</b><small id="oddsNote">1玉あたり</small></div>
     </div>
-    <div class="board-wrap"><canvas class="board" id="board"></canvas></div>
+    <div class="board-wrap"><canvas class="board" id="board"></canvas>
+      <div class="board-pot closed" id="boardPot"><small>いま当たれば</small><b class="num" id="bpVal">-</b><span class="num" id="bpCoins">-</span><em id="bpNote"></em></div>
+    </div>
     <div class="krun-wrap"><canvas class="krun" id="krun"></canvas></div>
     <div class="counters">
       <div class="counter balls"><label>所持玉</label><b class="num" id="ballsVal">0</b></div>
@@ -12273,7 +12284,7 @@ draw();
   let coins = embedded ? 0 : 100000, balls = embedded ? 0 : 1000, known = balls;
   let ready = !embedded, casinoOn = true, busy = false, paused = false, setting = 2;
   // 銀行の払い（専用コイン）・沼が開くまでの玉・今日はもう大当たりしたか（アプリの numa-config。単体で開いたときは見本の値）
-  let pot = embedded ? 0 : 800, bankKnown = !embedded, need = 0, jpToday = false;
+  let pot = embedded ? 0 : 800, bankKnown = !embedded, need = 0, jpToday = false, shownPot = null;
   let power = 1, auto = false, queue = 0;
   const st = { fired: 0, won: 0, krun: 0, s1: 0, s2: 0, s3: 0 };
 
@@ -12322,6 +12333,13 @@ draw();
     $('st1').textContent = fmt(st.s1); $('st2').textContent = fmt(st.s2); $('st3').textContent = fmt(st.s3);
     $('potVal').textContent = !bankKnown ? '-' : pot ? `${fmt(pot)}枚` : '0枚';
     $('potNote').textContent = !bankKnown ? '銀行を確認中' : pot ? `${fmt(pot * NC)}コイン分` : '銀行が空のため払い出しなし';
+    // 盤面の上の表示：いま当たればもらえる額。沼が閉じているときは薄くして、理由を出す
+    const bp = $('boardPot'), [why, open0] = stateText();
+    $('bpVal').textContent = !bankKnown ? '-' : `${fmt(pot)}枚`;
+    $('bpCoins').textContent = !bankKnown ? '銀行を確認中' : pot ? `= ${fmt(pot * NC)}コイン` : '銀行が空：当たっても払い出しなし';
+    $('bpNote').textContent = open0 && pot ? '' : why;
+    bp.classList.toggle('closed', !bankKnown || !open0 || !pot);
+    if (bankKnown && pot !== shownPot) { if (shownPot !== null) { bp.classList.remove('flash'); void bp.offsetWidth; bp.classList.add('flash'); } shownPot = pot; }
     const q = jpQ();
     $('oddsVal').textContent = q ? `1/${fmt(Math.round(1 / q))}` : '-';
     $('oddsNote').textContent = q ? (pot ? '1玉あたり' : '払い出しなし') : '沼は閉じている';
@@ -12367,7 +12385,7 @@ draw();
       pts.push([x, y]);
     }
     pts.push([into ? entrance()[0] : x, into ? entrance()[1] : BH + 10]);
-    const segT = pts.map((p, i) => (i === 0 ? 0 : i <= steps ? 22 : 75));
+    const segT = pts.map((p, i) => (i === 0 ? 0 : i <= steps ? RAIL_MS : PIN_MS));
     boardBalls.push({ pts, segT, i: 0, t: 0, into, e });
     sfx.shot(power);
   }
@@ -12431,7 +12449,7 @@ draw();
     const dur = [1300, 1900, 3600][i] + Math.random() * 300;
     dishBalls.push({ stage: i, hit, hole, tease, t: 0, dur, a0: Math.random() * Math.PI * 2, turns: 2 + Math.floor(Math.random() * 2) + i, said: false });
     if (i === 2) {
-      $('machine').classList.add('tense'); cutin('ザワ…ザワ…', '最終関門', false); sfx.zawa();
+      $('machine').classList.add('tense'); cutin(jpQ() && pot ? `ザワ…ザワ…　当たれば ${fmt(pot)}枚（${fmt(pot * NC)}コイン）` : 'ザワ…ザワ…', '最終関門', false); sfx.zawa();
     }
   }
   function stepDishes(dt) {
@@ -12533,19 +12551,21 @@ draw();
     launch();
     return true;
   }
+  // 射出の間隔（ms）：10発・連打は FIRE_GAP ごと、オートは AUTO_GAP ごと（約11発/秒）。玉の速さ：レール1区間 RAIL_MS、釘1段 PIN_MS
+  const FIRE_GAP = 55, AUTO_GAP = 90, RAIL_MS = 12, PIN_MS = 42;
   let fireClock = 0, autoClock = 0;
   function stepFire(dt) {
     fireClock -= dt * 1000; autoClock -= dt * 1000;
     if (queue > 0 && fireClock <= 0) {
-      if (fireOne()) { queue--; fireClock = 140; } else queue = 0;
+      if (fireOne()) { queue--; fireClock = FIRE_GAP; } else queue = 0;
       update();
     }
     if (auto && queue === 0 && autoClock <= 0) {
       if (!canFire()) { auto = false; if (ready && balls <= 0) setMsg('玉がなくなりました。専用コインを買ってください', 'warn'); update(); }
-      else { queue = 1; autoClock = 260; }
+      else { queue = 1; autoClock = AUTO_GAP; }
     }
   }
-  function shoot(n) { if (!canFire()) return; queue = Math.min(30, queue + n); if (fireClock > 140) fireClock = 0; }
+  function shoot(n) { if (!canFire()) return; queue = Math.min(30, queue + n); if (fireClock > FIRE_GAP) fireClock = 0; }
   function toggleAuto() { if (!auto && !canFire()) return; auto = !auto; if (!auto) queue = 0; update(); }
 
   // ---------- 購入・精算 ----------
@@ -12595,7 +12615,7 @@ draw();
     el.hidden = false;
     clearTimeout(cutTimer); cutTimer = setTimeout(() => { el.hidden = true; }, 1800);
   }
-  let audio = null, soundOn = true;
+  let audio = null, soundOn = true, pinAt = 0;
   function tone(f, d, type = 'square', v = 0.05, when = 0, f2 = 0) {
     if (!soundOn) return;
     if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; } }
@@ -12607,7 +12627,7 @@ draw();
   }
   const sfx = {
     shot: (p) => tone(260 + p * 60, 0.05, 'triangle', 0.025, 0, 520 + p * 90),
-    pin: () => tone(2400 + Math.random() * 600, 0.02, 'triangle', 0.012),
+    pin: () => { const t = performance.now(); if (t - pinAt < 30) return; pinAt = t; tone(2400 + Math.random() * 600, 0.02, 'triangle', 0.012); },
     hit: (i) => [784, 988, 1319].slice(0, 2 + i).forEach((f, k) => tone(f, 0.09, 'square', 0.035, k * 0.07)),
     miss: () => tone(196, 0.12, 'triangle', 0.025),
     zawa: () => { for (let k = 0; k < 6; k++) tone(90 + Math.random() * 40, 0.25, 'sawtooth', 0.02, k * 0.18); },
@@ -12733,7 +12753,7 @@ draw();
     } else if (m.type === 'pause') paused = true;
     else if (m.type === 'resume') paused = false;
   });
-  // 銀行の払い額は、遊んでいる間 20秒ごとに聞き直す
+  // 銀行の払い額はアプリが銀行の変化を見て送ってくる。念のため 20秒ごとにも聞き直す
   setInterval(() => { if (embedded && ready && !paused && !document.hidden) send('numa-pot'); }, 20000);
   document.addEventListener('visibilitychange', () => { paused = document.hidden; if (document.hidden) report(); });
   window.addEventListener('resize', resizeAll);
@@ -17206,8 +17226,9 @@ draw();
     function sendSlotConfig(id = null) {
       if (!state.walletLoaded) return;
       const msg = { type: "slot-config", setting: adminSettings.slotSetting, rate: slotRate(), coins: walletCoins(), on: adminSettings.slotOn, capLeft: slotCapLeft() };
-      if (id) { if (gameFrames.get(id)?.loaded) postToGame(id, { ...msg, medals: slotMedals(), chin: chinCoins() }); if (id === "numa") sendNumaConfig(id); return; }
+      if (id) { if (gameFrames.get(id)?.loaded) postToGame(id, { ...msg, medals: slotMedals(), chin: chinCoins() }); if (id === "numa") { watchNumaBank(true); sendNumaConfig(id); } return; }
       for (const [gid, e] of gameFrames) if (isCasino(gid) && e.loaded) postToGame(gid, msg);
+      if (gameFrames.get("numa")?.loaded) sendNumaConfig("numa"); // slotRate・slotOn が変わると払い額・沼の状態も変わる
     }
     const walletRef = () => doc(db, "users", state.me.id, "wallet", "main");
     // 銀行（admin/bank = { medals, earned, paid, updatedAt }。firestore.rules の match /admin/bank と合わせる）。
@@ -17473,6 +17494,16 @@ draw();
     const NUMA_EMPTY = { balls: 0, day: 0, spent: 0, got: 0, last: 0, gain: 0, dep: 0, owe: 0, jpDep: 0, jpDay: 0, jpPay: 0 };
     const walletNuma = () => state.wallet?.numa || null;
     let numaLocal = null, numaTimer = 0, numaChain = Promise.resolve();
+    // 沼パチンコを開いている間だけ、銀行（admin/bank）の残高を購読して、変わるたびに払い額をゲームに送る
+    let numaBankUnsub = null, numaBankMedals = null;
+    function watchNumaBank(on) {
+      if (on && !numaBankUnsub && state.me) {
+        numaBankUnsub = onSnapshot(bankRef(), (snap) => {
+          numaBankMedals = snap.exists() ? snap.data().medals || 0 : 0;
+          sendNumaConfig("numa");
+        }, (e) => { console.warn(e); numaBankUnsub = null; numaBankMedals = null; });
+      } else if (!on && numaBankUnsub) { numaBankUnsub(); numaBankUnsub = null; numaBankMedals = null; }
+    }
     // いま持っている玉（遊んでいる間はこのブラウザの数。まだ記録していない分も含む）
     const numaBalls = () => numaLocal ?? (walletNuma()?.balls || 0);
     // 大当たりの払い額（専用コイン）：銀行のコイン換算（medals × slotRate）の8割を1000で割って切り捨て。上限 2000枚、10枚未満なら 0（大当たりなし）。
@@ -17531,8 +17562,8 @@ draw();
     // resync：ゲームの玉の数を、アプリの数に合わせ直させる（1日の上限で記録できなかった分を消したとき）
     async function sendNumaConfig(id, resync = false) {
       if (!state.me || !gameFrames.get(id)?.loaded) return;
-      let medals = null;
-      try { const s = await getDoc(bankRef()); medals = s.exists() ? s.data().medals || 0 : 0; } catch (e) { console.warn(e); }
+      let medals = numaBankMedals;
+      if (medals === null) { try { const s = await getDoc(bankRef()); medals = s.exists() ? s.data().medals || 0 : 0; } catch (e) { console.warn(e); } }
       const n = { ...NUMA_EMPTY, ...(walletNuma() || {}) };
       postToGame(id, {
         type: "numa-config", balls: numaBalls(), resync, coins: walletCoins(), on: adminSettings.slotOn,
@@ -19265,7 +19296,8 @@ draw();
       const entry = gameFrames.get(id);
       if (!entry) return;
       if (record && entry.progress > 0) saveGameScore(id, entry.progress);
-      if (isCasino(id) && record) { flushSlot(); flushChin(); }
+      if (isCasino(id) && record) { flushSlot(); flushChin(); flushNuma(); }
+      if (id === "numa") watchNumaBank(false);
       entry.frame.remove();
       gameFrames.delete(id);
     }
@@ -19274,6 +19306,8 @@ draw();
       for (const id of [...gameFrames.keys()]) destroyGame(id, false);
       clearTimeout(slotTimer); slotTimer = 0; slotLocal = null;
       clearTimeout(chinTimer); chinTimer = 0; chinLocal = null;
+      clearTimeout(numaTimer); numaTimer = 0; numaLocal = null;
+      watchNumaBank(false);
     }
 
     // 遊んでいるゲームを最初からやり直す（途中のスコアは記録する）
