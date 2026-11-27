@@ -16838,6 +16838,8 @@ draw();
     // ============================================================
     // 実績（users/{id}/achievements/{実績ID} = { at }。ゲームから { type: "achieve", id } が届いたら記録する）。
     // 実績を増やすときは、ここと、ゲームの中の送るところと、firestore.rules の achievements の一覧に足す
+    // 注意：カジノの実績（game: "casino"）を増やすときは、firestore.rules の casinoAchIds() にも ID を足す。
+    //   足さないと、その実績は解除できても、実績画面で報酬のメダル（ACH_MEDALS 枚）を受け取れない（ルールに断られる）
     // ============================================================
     const ACHIEVEMENTS = [
       { id: "suika-pineapple", game: "suika", name: "南国の味", desc: "パイナップルを作った" },
@@ -17107,7 +17109,7 @@ draw();
       const me = state.me;
       try {
         await setDoc(doc(db, "users", me.id, "achievements", id), { at: serverTimestamp() });
-        if (state.me === me) toast(`🏅 実績「${a.name}」を解除しました！（${a.desc}）`);
+        if (state.me === me) toast(`🏅 実績「${a.name}」を解除しました！（${a.desc}）${a.game === ACH_CASINO ? ` 実績画面でメダル ${ACH_MEDALS}枚を受け取れます` : ""}`);
       } catch (e) {
         console.error(e);
       } finally {
@@ -17134,15 +17136,28 @@ draw();
       count.textContent = `${ACHIEVEMENTS.filter((a) => state.achievements.has(a.id)).length} / ${ACHIEVEMENTS.length}`;
       // ゲームごとのタブと、最後に「隠し」のタブ
       const inTab = (a, tab) => (tab === ACH_SECRET ? !!a.hidden : !a.hidden && a.game === tab);
+      const unclaimed = unclaimedCasinoAchs(), paid = state.wallet?.achPaid || {};
       tabs.innerHTML = [...GAMES, { id: ACH_CASINO, emoji: "🎰" }, { id: ACH_SECRET, emoji: "✨" }].map((g) => {
         const all = ACHIEVEMENTS.filter((a) => inTab(a, g.id));
         const got = all.filter((a) => state.achievements.has(a.id)).length;
+        const dot = g.id === ACH_CASINO && unclaimed.length ? `<span class="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500" aria-label="受け取れるメダルがあります"></span>` : "";
         return `
-          <button type="button" data-action="ach-game" data-id="${esc(g.id)}" class="tab-btn flex-col gap-0.5 py-1.5 text-[11px] ${g.id === achView.gameId ? "is-active" : ""}" role="tab" aria-selected="${g.id === achView.gameId}">
-            <span class="text-lg leading-none">${g.emoji}</span><span>${got}/${all.length}</span>
+          <button type="button" data-action="ach-game" data-id="${esc(g.id)}" class="relative tab-btn flex-col gap-0.5 py-1.5 text-[11px] ${g.id === achView.gameId ? "is-active" : ""}" role="tab" aria-selected="${g.id === achView.gameId}">
+            <span class="text-lg leading-none">${g.emoji}</span><span>${got}/${all.length}</span>${dot}
           </button>`;
       }).join("");
-      body.innerHTML = `${achView.gameId === ACH_SECRET ? `<p class="text-xs text-slate-500 mb-2">ゲーム以外で解除できる、ひみつの実績です。解除するまで内容は「？？？」です。</p>` : ""}<div class="space-y-2">${ACHIEVEMENTS.filter((a) => inTab(a, achView.gameId)).map((a, i, list) => {
+      // カジノのタブ：実績1つにつきメダル500枚。まだ受け取っていない分を、ボタンでまとめて受け取る
+      const n = unclaimed.length;
+      const claimBox = achView.gameId !== ACH_CASINO ? "" : `
+        <div class="mb-3 p-3 rounded-2xl bg-amber-50 ring-1 ring-amber-200 flex items-center gap-3">
+          <div class="text-2xl" aria-hidden="true">🎁</div>
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-bold text-slate-800">${n ? `メダル ${(n * ACH_MEDALS).toLocaleString()}枚を受け取れます` : "受け取れるメダルはありません"}</div>
+            <div class="text-xs text-slate-500">カジノの実績1つにつきメダル ${ACH_MEDALS}枚${n ? `（未受け取り ${n}件）` : ""}・メダルはどのカジノでも使えます</div>
+          </div>
+          <button type="button" data-action="ach-claim" class="shrink-0 px-3.5 py-2 rounded-xl text-sm font-bold text-white bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:hover:bg-amber-500" ${n && !achClaiming ? "" : "disabled"}>${achClaiming ? "受け取り中…" : "受け取る"}</button>
+        </div>`;
+      body.innerHTML = `${achView.gameId === ACH_SECRET ? `<p class="text-xs text-slate-500 mb-2">ゲーム以外で解除できる、ひみつの実績です。解除するまで内容は「？？？」です。</p>` : ""}${claimBox}<div class="space-y-2">${ACHIEVEMENTS.filter((a) => inTab(a, achView.gameId)).map((a, i, list) => {
         const got = state.achievements.get(a.id);
         // カジノのタブは、ゲームごとに見出しを付ける
         const sub = a.sub && a.sub !== list[i - 1]?.sub ? (a.sub === "all" ? { emoji: "🎰", name: "カジノ全体" } : casinoById(a.sub)) : null;
@@ -17155,7 +17170,7 @@ draw();
               <div class="text-sm font-bold ${got ? "text-slate-800" : "text-slate-500"}">${secret ? "？？？" : esc(a.name)}</div>
               <div class="text-xs text-slate-500">${secret ? "まだ見つかっていない隠し実績です" : esc(a.desc)}</div>
             </div>
-            ${got ? `<div class="shrink-0 text-[11px] text-amber-700">${esc(relTime(got.at))}</div>` : ""}
+            ${got ? `<div class="shrink-0 text-right text-[11px] text-amber-700">${esc(relTime(got.at))}${a.game === ACH_CASINO ? `<div class="${paid[a.id] ? "text-slate-400" : "font-bold text-rose-600"}">${paid[a.id] ? "🪙 受取済み" : `🪙 ${ACH_MEDALS}枚 未受取`}</div>` : ""}</div>` : ""}
           </div>`;
       }).join("")}</div>`;
     }
@@ -17271,6 +17286,8 @@ draw();
     async function flushSlot() {
       clearTimeout(slotTimer); slotTimer = 0;
       if (slotLocal === null || !state.me) return;
+      // 実績の報酬を受け取っている間は記録しない（受け取った 500 枚を古い枚数で上書きしないため）。少し待ってから記録する
+      if (achClaiming) { slotTimer = setTimeout(flushSlot, 1000); return; }
       const s = walletSlot();
       if (!s || s.medals === slotLocal) return;
       const medals = slotLocal, lost = s.medals - medals;
@@ -17287,6 +17304,73 @@ draw();
       }
     }
     const slotResult = (id, msg) => postToGame(id, { type: "slot-result", coins: walletCoins(), ...msg });
+    // メダルを借りる・精算する・実績の報酬を受け取る取引は、1つずつ順番に行う（同時に走ると、手元の枚数を古い値で書いてしまうため）
+    let slotChain = Promise.resolve();
+    const slotSerial = (fn) => (slotChain = slotChain.then(fn, fn));
+
+    // ============================================================
+    // カジノの実績の報酬（firestore.rules の achRewardOk と合わせる）。解除したカジノの実績1つにつき 500メダルを、手元のメダル（slot.medals）に足す。
+    // wallet/main.achPaid（{ 実績ID: true }）に受け取った実績を記録する。受け取るのは実績画面（カジノのタブ）の「受け取る」ボタンから。
+    // 前から解除していた実績も、まだ受け取っていなければ受け取れる（1つずつ取引する）
+    // ============================================================
+    const ACH_MEDALS = 500;
+    let achClaiming = false;
+    // 解除したが、まだメダルを受け取っていないカジノの実績
+    const unclaimedCasinoAchs = () => {
+      const paid = state.wallet?.achPaid || {};
+      return ACHIEVEMENTS.filter((a) => a.game === ACH_CASINO && state.achievements.has(a.id) && !paid[a.id]);
+    };
+    function claimCasinoAchRewards() {
+      if (!state.me || !state.walletLoaded || !state.achievementsLoaded || achClaiming) return;
+      if (isRestricted(state.me)) { toast("今は受け取れません"); return; }
+      const todo = unclaimedCasinoAchs();
+      if (!todo.length) return;
+      achClaiming = true;
+      if (achView) renderAchievements();
+      slotSerial(async () => {
+        const me = state.me;
+        let got = 0, full = false;
+        try {
+          clearTimeout(slotTimer); slotTimer = 0;
+          achClaiming = false; await flushSlot(); achClaiming = true;
+          for (const a of todo) {
+            if (state.me !== me) break;
+            const r = await runTransaction(db, async (tx) => {
+              const snap = await tx.get(walletRef());
+              if (!snap.exists()) return "skip";
+              const w = snap.data();
+              if (w.achPaid?.[a.id]) return "skip";
+              const b = w.slot || { medals: 0, rate: 0, day: 0, spent: 0, got: 0, last: 0 };
+              if (b.medals + ACH_MEDALS > SLOT_MEDALS_MAX) return "full";
+              const rate = b.medals === 0 ? adminSettings.slotRate : b.rate;
+              tx.update(walletRef(), {
+                slot: { medals: b.medals + ACH_MEDALS, rate, day: b.day || 0, spent: b.spent || 0, got: b.got || 0, last: b.last || 0 },
+                achPaid: { ...(w.achPaid || {}), [a.id]: true },
+                achLast: a.id,
+                updatedAt: serverTimestamp(),
+              });
+              return "ok";
+            });
+            if (r === "full") { full = true; break; }
+            if (r === "ok") { got++; if (slotLocal !== null) slotLocal = Math.min(SLOT_MEDALS_MAX, slotLocal + ACH_MEDALS); }
+          }
+        } catch (e) {
+          console.warn(e);
+          if (!got) toast("メダルを受け取れませんでした。もう一度お試しください");
+        } finally {
+          achClaiming = false;
+        }
+        if (state.me !== me) return;
+        if (achView) renderAchievements();
+        if (got) {
+          toast(`🏅 カジノの実績 ${got}件の報酬として、メダル ${(got * ACH_MEDALS).toLocaleString()}枚を受け取りました`);
+          // 開いているメダルのカジノに、増えた枚数を伝える
+          for (const [gid, e] of gameFrames) if (isCasino(gid) && e.loaded && gid !== "chinchiro" && gid !== "numa") sendSlotConfig(gid);
+          if (state.tab === "games") renderSidebar();
+        }
+        if (full) toast(`手元のメダルが ${SLOT_MEDALS_MAX.toLocaleString()}枚を超えてしまうため、残りはメダルを減らしてから受け取れます`);
+      });
+    }
     // 1回に借りられる枚数（ゲームの「メダルを借りる」の選択肢。firestore.rules は 50 枚単位・1000 枚までを認める）
     const SLOT_LEND_CHOICES = [50, 100, 200, 500, 1000];
     async function slotLend(id, want) {
@@ -17670,6 +17754,7 @@ draw();
           if (gachaView) renderGacha();
           sendSlotConfig();
           showGrantNotice();
+          if (achView) renderAchievements(); // カジノの実績の報酬（受け取った・まだの表示）
         },
         (e) => { console.warn(e); state.walletLoaded = true; },
       );
@@ -19344,8 +19429,8 @@ draw();
       else if (d.type === "gameover") { entry.progress = 0; entry.playing = false; saveGameScore(id, d.score); }
       else if (d.type === "achieve" && typeof d.id === "string") unlockAchievement(id, d.id);
       else if (isCasino(id) && d.type === "slot-sync") { slotDelta(d.delta); casinoPlayed(id); }
-      else if (isCasino(id) && d.type === "slot-lend") slotLend(id, d.medals);
-      else if (isCasino(id) && d.type === "slot-cashout") slotCashout(id);
+      else if (isCasino(id) && d.type === "slot-lend") slotSerial(() => slotLend(id, d.medals));
+      else if (isCasino(id) && d.type === "slot-cashout") slotSerial(() => slotCashout(id));
       else if (id === "chinchiro" && d.type === "chin-sync") { chinDelta(d.delta); casinoPlayed(id); }
       else if (id === "chinchiro" && d.type === "chin-buy") chinBuy(id, d.coins);
       else if (id === "chinchiro" && d.type === "chin-cashout") chinCashout(id);
@@ -25254,6 +25339,7 @@ draw();
       "set-chat-bg": (el) => (el.getAttribute("aria-disabled") === "true" ? openFrameInfo() : setChatBg(el.dataset.bg)), // まだ獲得していない背景は、獲得条件を出す
       "toggle-crown": () => toggleCrown(),
       "open-achievements": () => openAchievements(),
+      "ach-claim": () => claimCasinoAchRewards(),
       "ach-game": (el) => { if (achView && (gameById(el.dataset.id) || el.dataset.id === ACH_SECRET || el.dataset.id === ACH_CASINO)) { achView.gameId = el.dataset.id; renderAchievements(); } },
       "open-ranking": (el) => openRanking(el.dataset.id || undefined),
       "restart-game": () => restartGame(),
