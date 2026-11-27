@@ -11497,7 +11497,7 @@ draw();
       <li>あなたはいつも「子」です。親は 班長 → 古株 → 新入り の順に回り、2周（6回）で一勝負です。</li>
       <li>子は親が振る前に、賭ける専用コインを決めます（10 / 50 / 100 / ALL IN か、数を入力）。</li>
       <li>サイコロは3つ。役も目も出なければ「目なし」で、3回まで振り直せます。3回とも目なしなら「目なし」で確定です。</li>
-      <li>振るたびに 3% で「ションベン」（サイコロがどんぶりの外へ）。目に関係なく、すぐ負けで確定します。</li>
+      <li>振るたびに 1% で「ションベン」（サイコロがどんぶりの外へ）。目に関係なく、すぐ負けで確定します。</li>
       <li>親が役（ピンゾロ・アラシ・シゴロ）を出すと子から総取り、ヒフミ・目なし・ションベンなら子に総払い。普通の目なら、子が順に振って親の目と比べます（同じ目は引き分けで、賭けは戻ります）。</li>
       <li>親は勝つか引き分けなら、もう1回続けるかパスするかを選びます（続けられるのは2回まで）。</li>
       <li>負けが手元より多いときは、手元が0になるまでです。CPU が払いきれないときは、払えるだけ払います。</li>
@@ -11519,7 +11519,7 @@ draw();
 (() => {
   'use strict';
   const RATE = 100, CHIN_MAX = 10000, BUY = [10, 50, 100], PRESETS = [10, 50, 100];
-  const SHONBEN = 0.03, TURNS = 6, CPU_MIN = 500;
+  const SHONBEN = 0.01, TURNS = 6, CPU_MIN = 500;
   const $ = (id) => document.getElementById(id);
   const fmt = (n) => Math.floor(n).toLocaleString('ja-JP');
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -14840,7 +14840,7 @@ draw();
 
     async function enterApp(user) {
       state.uid = auth.currentUser.uid;
-      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null, frame: user.frame ?? null, header: user.header ?? null, crown: user.crown ?? null, chatBg: user.chatBg ?? null, deco: user.deco ?? null, decos: user.decos ?? null, nameColor: user.nameColor ?? null, sendFx: user.sendFx ?? null };
+      state.me = { id: user.id, name: user.name || user.id, icon: user.icon ?? null, restrictedUntil: user.restrictedUntil ?? null, plan: user.plan ?? null, badge: user.badge ?? null, frame: user.frame ?? null, header: user.header ?? null, crown: user.crown ?? null, chatBg: user.chatBg ?? null, deco: user.deco ?? null, decos: user.decos ?? null, nameColor: user.nameColor ?? null, sendFx: user.sendFx ?? null, bio: user.bio ?? null };
       document.querySelectorAll('#screen-login input[type="password"]').forEach((el) => { el.value = ""; });
       syncAppFont();
       readMap = store.json(`chatter:read:${user.id}`, {});
@@ -15306,7 +15306,7 @@ draw();
             return;
           }
           if (mine && mine.uid !== state.uid && !snap.metadata.fromCache) { signOutForReset(); return; } // 管理者がパスワードをリセットした
-          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; state.me.frame = mine.frame ?? null; state.me.header = mine.header ?? null; state.me.crown = mine.crown ?? null; state.me.chatBg = mine.chatBg ?? null; state.me.deco = mine.deco ?? null; state.me.decos = mine.decos ?? null; state.me.nameColor = mine.nameColor ?? null; state.me.sendFx = mine.sendFx ?? null; applyChatBg(); syncAppFont(); }
+          if (mine) { state.me.name = mine.name; state.me.icon = mine.icon ?? null; state.me.restrictedUntil = mine.restrictedUntil ?? null; state.me.plan = mine.plan ?? null; state.me.badge = mine.badge ?? null; state.me.frame = mine.frame ?? null; state.me.header = mine.header ?? null; state.me.crown = mine.crown ?? null; state.me.chatBg = mine.chatBg ?? null; state.me.deco = mine.deco ?? null; state.me.decos = mine.decos ?? null; state.me.nameColor = mine.nameColor ?? null; state.me.sendFx = mine.sendFx ?? null; state.me.bio = mine.bio ?? null; applyChatBg(); syncAppFont(); }
           state.usersLoaded = true;
           applyRestriction();
           renderSidebar();
